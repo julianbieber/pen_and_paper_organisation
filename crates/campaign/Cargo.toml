@@ -1,0 +1,20 @@
+[package]
+name = "campaign"
+description = "A campaign directory: its manifest, the layout it fixes, and the terrain it names."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+ron.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+watershed.workspace = true
+
+[dev-dependencies]
+glam.workspace = true
+tempfile.workspace = true
+
+[lints]
+workspace = true

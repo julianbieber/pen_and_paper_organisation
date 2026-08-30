@@ -1,6 +1,66 @@
-[package]
-name = "pen_and_paper_organisation"
+[workspace]
+members = ["crates/campaign", "crates/campaign_editor"]
+resolver = "3"
+
+[workspace.package]
 version = "0.1.0"
 edition = "2024"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/julianbieber/pen_and_paper_organisation"
 
-[dependencies]
+[workspace.dependencies]
+campaign = { path = "crates/campaign" }
+watershed = { git = "https://github.com/julianbieber/watershed", rev = "cd82a30155d41e131dd8e9ceebbe6889aef54950" }
+bevy = { version = "0.19", features = ["bevy_feathers"] }
+glam = { version = "0.32", features = ["serde"] }
+ron = "0.12"
+serde = { version = "1.0", features = ["derive"] }
+thiserror = "2.0"
+tempfile = "3"
+# Set max log levels. This helps avoid unwanted low-severity log spam, which can affect performance.
+log = { version = "0.4", features = [
+    "max_level_debug",
+    "release_max_level_warn",
+] }
+tracing = { version = "0.1", features = [
+    "max_level_debug",
+    "release_max_level_warn",
+] }
+
+# Idiomatic Bevy code often triggers these lints, and the CI workflow treats them as errors.
+[workspace.lints.clippy]
+# Bevy supplies arguments to systems via dependency injection, so it's natural for systems to
+# request more than 7 arguments -- which triggers this lint.
+too_many_arguments = "allow"
+# Queries that access many components may trigger this lint.
+type_complexity = "allow"
+
+# Enable a small amount of optimization in the dev profile.
+[profile.dev]
+opt-level = 1
+
+# Enable a large amount of optimization in the dev profile for dependencies.
+[profile.dev.package."*"]
+opt-level = 3
+
+# Remove expensive debug assertions due to <https://github.com/bevyengine/bevy/issues/14291>
+[profile.dev.package.wgpu-types]
+debug-assertions = false
+
+[profile.release]
+# Compile the entire crate as one unit.
+# Slows compile times, marginal improvements.
+codegen-units = 1
+# Do a second optimization pass over the entire program, including dependencies.
+# Slows compile times, marginal improvements.
+lto = "thin"
+
+# Optimize for build time in CI.
+[profile.ci]
+inherits = "dev"
+opt-level = 0
+debug = "line-tables-only"
+codegen-units = 4
+
+[profile.ci.package."*"]
+opt-level = 0

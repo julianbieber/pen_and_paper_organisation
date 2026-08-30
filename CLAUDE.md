@@ -11,7 +11,9 @@ lives there and the faction that runs the docks.
 
 ## State
 
-The repo is a `cargo new` skeleton. The milestone is filed as issues #1–#11; the design
+The workspace and the campaign directory are in (#1): `crates/campaign` opens and creates
+one, `crates/campaign_editor` builds the `pnp` binary and shows a dialog when it has no
+campaign. Nothing draws a map yet. The milestone is filed as issues #1–#11; the design
 behind them is in the plan at
 `~/fun_repos/hobby-mimisbrunnr/notes/pen_and_paper_organisation/init/pen_and_paper_plan/plan-2026-08-30-campaign-map-and-notes.md`.
 
@@ -78,6 +80,26 @@ The crate split is the one `watershed` uses and exists for the same reason: the 
 testable without a window. **Anything that can live in `campaign` does.** A rule that
 needs a GPU to test is a rule that will not be tested.
 
+`terrain/` and `world.ron` sitting inside the campaign directory is the **convention the
+dialog pre-fills, not a guarantee the layout enforces**: `Campaign::create` writes neither.
+It records where a terrain is — which may be an absolute path anywhere on the machine —
+and the world document belongs to #3. **One terrain per campaign**: `campaign.ron` has a
+single `terrain` field, and `open` loads it eagerly, so a second would be a second load.
+
+**A `Campaign` is immutable after `open`.** It holds what is on disk — root, manifest,
+terrain. The undo stack, the dirty flag, the notebook handle and any tile cache are
+editor-session state and never fields of it, so #3's mutable world document is its own
+type rather than a `ResMut<Campaign>` serialising against #2's terrain reads every frame.
+
+**An absent `world.ron` is an empty world, not an error** — `create` writes none, so #3
+reads "missing" as "default" rather than inventing a migration.
+
+**Nothing in this repo ever calls `Terrain::save_to_dir`.** It deletes `layer_<n>.png`
+files it does not name, and terrain here is read-only.
+
+`create` makes a plain `notes/` directory. Making it a `zk` notebook and installing the
+templates is #6's — `crates/campaign` must not need `zk` on `PATH` to pass its tests.
+
 ## Conventions
 
 - **Coordinates are terrain cells** everywhere in a world document, so a feature and a
@@ -86,11 +108,17 @@ needs a GPU to test is a rule that will not be tested.
 - **Bevy 0.19. All UI is `bevy_feathers`** — the toolkit `watershed_editor` uses, so its
   chrome and idioms carry over. No `egui`.
 - `watershed` comes in by **git URL with a pinned `rev`**, never a path — the repo has to
-  build without a sibling checkout. Local watershed work is an uncommitted `[patch]`:
+  build without a sibling checkout. Local watershed work goes in `.cargo/config.toml`,
+  which is gitignored, as it is in `watershed` itself. It cannot go in the root
+  `Cargo.toml`: that file is tracked, so "uncommitted" would mean leaving it permanently
+  dirty.
   ```toml
+  # .cargo/config.toml — never committed
   [patch."https://github.com/julianbieber/watershed"]
   watershed = { path = "../watershed/crates/watershed" }
   ```
+  An active patch rewrites `Cargo.lock`, which **is** committed — check `git diff
+  Cargo.lock` before committing while one is in place.
 - A `zk` invocation is a subprocess: run it on the async task pool and land the result,
   as `watershed_editor/src/document.rs` lands its jobs. The map must not stutter because
   a query is in flight.
