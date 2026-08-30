@@ -1,0 +1,57 @@
+//! The names this campaign format fixes, and the joins onto a campaign root, so that
+//! no consumer of the format ever spells one of them.
+//!
+//! The terrain directory is deliberately not among them: a campaign's manifest names
+//! where its terrain is, which is what lets a terrain live outside the campaign
+//! directory. A constant here would shadow that field and quietly make the layout
+//! authoritative over the manifest.
+
+use std::path::{Path, PathBuf};
+
+/// The manifest every campaign directory holds, and the only name a reader knows
+/// without being told it.
+pub const MANIFEST_FILE: &str = "campaign.ron";
+
+/// The world map document. This crate does not read or write it; the name lives here
+/// so that whoever does is not the one deciding it.
+pub const WORLD_FILE: &str = "world.ron";
+
+/// Child map documents, one file each.
+pub const DUNGEONS_DIR: &str = "dungeons";
+
+/// Backdrop images imported into the campaign, copied in so the directory stays
+/// portable.
+pub const IMAGES_DIR: &str = "images";
+
+/// The `zk` notebook. A campaign directory carries the directory; making it a
+/// notebook is not this crate's business.
+pub const NOTES_DIR: &str = "notes";
+
+/// Every subdirectory a campaign directory holds, in the order they are created.
+pub const SUBDIRS: [&str; 3] = [DUNGEONS_DIR, IMAGES_DIR, NOTES_DIR];
+
+/// Where the manifest sits under `root`.
+pub fn manifest(root: &Path) -> PathBuf {
+    root.join(MANIFEST_FILE)
+}
+
+/// Where the world document sits under `root`, whether or not it exists — an absent
+/// world document is an empty world, not an error.
+pub fn world(root: &Path) -> PathBuf {
+    root.join(WORLD_FILE)
+}
+
+/// Where child map documents sit under `root`.
+pub fn dungeons(root: &Path) -> PathBuf {
+    root.join(DUNGEONS_DIR)
+}
+
+/// Where imported backdrops sit under `root`.
+pub fn images(root: &Path) -> PathBuf {
+    root.join(IMAGES_DIR)
+}
+
+/// Where the notebook sits under `root`.
+pub fn notes(root: &Path) -> PathBuf {
+    root.join(NOTES_DIR)
+}

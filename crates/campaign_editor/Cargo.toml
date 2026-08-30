@@ -1,0 +1,20 @@
+[package]
+name = "campaign_editor"
+description = "Bevy editor for a pen-and-paper campaign: the world map, its features and its notes."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "pnp"
+path = "src/main.rs"
+
+[dependencies]
+campaign.workspace = true
+bevy.workspace = true
+log.workspace = true
+tracing.workspace = true
+
+[lints]
+workspace = true
