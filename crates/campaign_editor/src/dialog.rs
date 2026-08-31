@@ -18,7 +18,7 @@ use bevy::text::{EditableText, TextEditChange};
 use bevy::ui_widgets::Activate;
 use campaign::{Campaign, CampaignError, CampaignManifest};
 
-use crate::OpenCampaign;
+use crate::{OpenCampaign, StatusLine};
 
 /// The dialog and everything behind it: the typed paths, the load in flight, and the
 /// systems that land it. Its systems run only while no campaign is open.
@@ -65,18 +65,19 @@ impl OpenJob {
 pub struct DialogStatus(pub String);
 
 #[derive(Component, Default, Clone)]
-struct StatusLine;
-
-#[derive(Component, Default, Clone)]
 struct RootInput;
 
 #[derive(Component, Default, Clone)]
 struct TerrainInput;
 
-/// The dialog's scene: two paths, two actions and a status line.
+/// The dialog's scene: two paths and two actions.
+///
+/// The status line is deliberately not part of it: the map reports a failure there
+/// long after the dialog has been closed.
 pub fn dialog() -> impl Scene {
     bsn! {
         Node {
+            position_type: PositionType::Absolute,
             width: percent(100),
             height: percent(100),
             display: Display::Flex,
@@ -176,8 +177,7 @@ pub fn dialog() -> impl Scene {
                         })
                     )
                 ]
-            ),
-            (Text("") ThemedText StatusLine)
+            )
         ]
     }
 }

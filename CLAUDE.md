@@ -13,7 +13,8 @@ lives there and the faction that runs the docks.
 
 The workspace and the campaign directory are in (#1): `crates/campaign` opens and creates
 one, `crates/campaign_editor` builds the `pnp` binary and shows a dialog when it has no
-campaign. Nothing draws a map yet. The milestone is filed as issues #1–#11; the design
+campaign. The terrain draws as a tile map (#2): `campaign::tiles` decides every tile,
+`campaign_editor/src/map` streams them. The milestone is filed as issues #1–#11; the design
 behind them is in the plan at
 `~/fun_repos/hobby-mimisbrunnr/notes/pen_and_paper_organisation/init/pen_and_paper_plan/plan-2026-08-30-campaign-map-and-notes.md`.
 
@@ -148,8 +149,41 @@ render.** A terrain with no height field is the one case worth refusing outright
 
 Rivers are `accumulation` above a threshold — that threshold is the one control deciding
 whether the map reads as a drainage basin or a puddle, so it is adjustable at runtime.
+Compare with `>`, never `WaterView::channel_at`, which is `>=`: `accumulation` answers
+`0.0` off the edge of the terrain, so `>=` at a threshold of zero makes everything a river.
 
 Worked example: `~/fun_repos/watershed/crates/watershed/examples/load_terrain.rs`.
+
+## How the terrain is drawn
+
+**Hand-drawn pixel-art tiles, not a procedural ramp.** Height picks one of `LAND_BANDS`
+tiles, the water solve picks water, river and coastline tiles, and relief comes from a
+per-tile hillshade **tint** rather than from tiles of its own — so slope costs no art.
+
+The renderer is bevy's own `bevy_sprite_render::tilemap_chunk`: one `TilemapChunk` entity
+per `CHUNK_CELLS`-square block of terrain cells, one draw call each, streamed so only what
+the camera can see is resident.
+
+**The tileset is drawn by hand in `bevy_sprite_editor`** (`~/fun_repos/bevy_sprite_editor`)
+and lives at `crates/campaign_editor/assets/terrain_tiles.png` with its
+`.atlas.json` sidecar. That tool only ever grows an atlas rightwards, so the file is a
+**single row** of square tiles, row-major over the whole image. Bevy loads that strip
+straight into the array texture the tilemap material wants, via
+`ImageArrayLayout::GridCount { columns, rows: 1 }` — which walks tiles row-major, so
+**a tile's column is its array layer is its index**. Nothing here ever writes either file.
+
+The strip's columns are listed on `TileKind` in `crates/campaign/src/tiles.rs`, which is
+also the only place a tile number is written. **A redraw that reorders the strip renders
+happily and wrongly**, so the order is the contract: 6 land bands low to high, shallow
+water, deep water, river, then 15 coastline tiles indexed by which of a cell's four
+neighbours are water (N, E, S, W from the low bit). There is no tile for "no wet
+neighbour" — that cell is a band, not a coast — so the coastline tiles start at mask 1
+and `TILE_COUNT` is 24, not 25.
+
+**Every decision lives in `crates/campaign`** — which tile, which cells a chunk covers,
+where the terrain's rows land — and is tested without a GPU. `crates/campaign_editor/map`
+owns only ECS and pixels. A terrain's rows run top to bottom and a tilemap chunk's run
+bottom to top; that flip is written once, in `map::view`, and everything goes through it.
 
 ## The zk contract
 
