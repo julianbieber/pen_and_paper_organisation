@@ -1,6 +1,6 @@
 [package]
 name = "campaign"
-description = "A campaign directory: its manifest, the layout it fixes, and the terrain it names."
+description = "A campaign: the directory it lives in, the terrain it names, and the features the GM has drawn on it."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
