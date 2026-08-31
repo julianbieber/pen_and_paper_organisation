@@ -23,7 +23,7 @@ pub mod view;
 use crate::{EditorSet, OpenCampaign};
 use load::{MapAssets, MapState, MapTerrain, TilesetRoot};
 use panel::RiverThreshold;
-use pointer::MapPointer;
+use pointer::{MapPointer, PointerOverride};
 
 /// Everything that turns an opened campaign into a map on screen.
 pub struct MapPlugin;
@@ -33,6 +33,7 @@ impl Plugin for MapPlugin {
         app.init_resource::<RiverThreshold>()
             .init_resource::<chunks::MapChunks>()
             .init_resource::<MapPointer>()
+            .init_resource::<PointerOverride>()
             .insert_resource(TilesetRoot(tileset_root()))
             .add_systems(Startup, camera::spawn_camera)
             .add_systems(

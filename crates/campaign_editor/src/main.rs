@@ -20,6 +20,7 @@ use bevy::prelude::*;
 use bevy::window::{ExitCondition, WindowCloseRequested};
 use campaign::Campaign;
 
+mod control;
 mod dialog;
 mod features;
 mod map;
@@ -78,6 +79,7 @@ fn main() {
     .add_plugins(FeathersPlugins)
     .insert_resource(UiTheme(create_dark_theme()))
     .init_resource::<StatusMessage>()
+    .add_plugins(control::ControlPlugin)
     .add_plugins(dialog::DialogPlugin)
     .add_plugins(map::MapPlugin)
     .add_plugins(features::FeaturesPlugin)

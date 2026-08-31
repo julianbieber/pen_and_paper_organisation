@@ -58,6 +58,15 @@ impl MapPointer {
     }
 }
 
+/// A cell the pointer is to be treated as being over, whatever the cursor is doing.
+///
+/// Set by the control socket so a scripted run can put the pointer somewhere without a
+/// real mouse. Empty in an ordinary session, and [`track_pointer`] then reads the cursor
+/// as it always did — the override is a way to answer the same question, never a second
+/// path into the authoring systems.
+#[derive(Resource, Debug, Default)]
+pub struct PointerOverride(pub Option<CellPoint>);
+
 /// Turns the cursor into a terrain cell, and states what a screen pixel is worth in cells.
 ///
 /// Reads the camera's own [`Transform`] and its projection scale rather than
@@ -70,6 +79,7 @@ pub fn track_pointer(
     assets: Res<MapAssets>,
     window: Single<&Window>,
     camera: Single<(&Transform, &Projection, &Camera), With<MapCamera>>,
+    forced: Res<PointerOverride>,
     mut pointer: ResMut<MapPointer>,
 ) {
     let (transform, projection, camera) = camera.into_inner();
@@ -82,10 +92,12 @@ pub fn track_pointer(
     let view = MapView::new(terrain.width, terrain.height, assets.tile_size as f32);
 
     let cells_per_pixel = orthographic.scale * window.scale_factor() / view.cell_size;
-    let cell = cursor_offset(&window, viewport).map(|offset| {
-        let world = transform.translation.truncate() + offset * orthographic.scale;
-        let cell = view.world_to_cell(world);
-        CellPoint::new(cell.x, cell.y)
+    let cell = forced.0.or_else(|| {
+        cursor_offset(&window, viewport).map(|offset| {
+            let world = transform.translation.truncate() + offset * orthographic.scale;
+            let cell = view.world_to_cell(world);
+            CellPoint::new(cell.x, cell.y)
+        })
     });
 
     if pointer.cell != cell || pointer.cells_per_pixel != cells_per_pixel {
