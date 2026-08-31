@@ -12,7 +12,7 @@ use campaign::atlas::{self, AtlasMeta};
 use campaign::tiles::{self, HeightRamp};
 
 use crate::OpenCampaign;
-use crate::StatusLine;
+use crate::StatusMessage;
 
 /// The tileset shipped with the tool, relative to the assets directory.
 ///
@@ -150,11 +150,9 @@ pub fn watch_tileset(
 }
 
 /// Puts whatever [`MapState`] says on the status line the dialog also writes to.
-pub fn show_map_state(state: Res<MapState>, mut lines: Query<&mut Text, With<StatusLine>>) {
-    for mut text in lines.iter_mut() {
-        if text.0 != state.message {
-            text.0.clone_from(&state.message);
-        }
+pub fn show_map_state(state: Res<MapState>, mut status: ResMut<StatusMessage>) {
+    if status.0 != state.message {
+        status.0.clone_from(&state.message);
     }
 }
 

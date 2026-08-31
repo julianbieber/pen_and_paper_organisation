@@ -18,7 +18,7 @@ use bevy::text::{EditableText, TextEditChange};
 use bevy::ui_widgets::Activate;
 use campaign::{Campaign, CampaignError, CampaignManifest};
 
-use crate::{OpenCampaign, StatusLine};
+use crate::{OpenCampaign, StatusMessage};
 
 /// The dialog and everything behind it: the typed paths, the load in flight, and the
 /// systems that land it. Its systems run only while no campaign is open.
@@ -27,11 +27,10 @@ pub struct DialogPlugin;
 impl Plugin for DialogPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<DialogFields>()
-            .init_resource::<DialogStatus>()
             .init_resource::<OpenJob>()
             .add_systems(
                 Update,
-                (finish_open, sync).run_if(not(resource_exists::<OpenCampaign>)),
+                finish_open.run_if(not(resource_exists::<OpenCampaign>)),
             );
     }
 }
@@ -59,10 +58,6 @@ impl OpenJob {
         self.0.is_some()
     }
 }
-
-/// What to tell the GM: the last failure, or what is happening now.
-#[derive(Resource, Default)]
-pub struct DialogStatus(pub String);
 
 #[derive(Component, Default, Clone)]
 struct RootInput;
@@ -161,7 +156,7 @@ pub fn dialog() -> impl Scene {
                         on(|_: On<Activate>,
                             fields: Res<DialogFields>,
                             mut job: ResMut<OpenJob>,
-                            mut status: ResMut<DialogStatus>| {
+                            mut status: ResMut<StatusMessage>| {
                             start_open(&fields, &mut job, &mut status);
                         })
                     ),
@@ -172,7 +167,7 @@ pub fn dialog() -> impl Scene {
                         on(|_: On<Activate>,
                             fields: Res<DialogFields>,
                             mut job: ResMut<OpenJob>,
-                            mut status: ResMut<DialogStatus>| {
+                            mut status: ResMut<StatusMessage>| {
                             start_create(&fields, &mut job, &mut status);
                         })
                     )
@@ -182,7 +177,7 @@ pub fn dialog() -> impl Scene {
     }
 }
 
-fn start_open(fields: &DialogFields, job: &mut OpenJob, status: &mut DialogStatus) {
+fn start_open(fields: &DialogFields, job: &mut OpenJob, status: &mut StatusMessage) {
     if job.busy() {
         return;
     }
@@ -198,7 +193,7 @@ fn start_open(fields: &DialogFields, job: &mut OpenJob, status: &mut DialogStatu
     job.0 = Some(task);
 }
 
-fn start_create(fields: &DialogFields, job: &mut OpenJob, status: &mut DialogStatus) {
+fn start_create(fields: &DialogFields, job: &mut OpenJob, status: &mut StatusMessage) {
     if job.busy() {
         return;
     }
@@ -213,7 +208,7 @@ fn start_create(fields: &DialogFields, job: &mut OpenJob, status: &mut DialogSta
 fn finish_open(
     mut commands: Commands,
     mut job: ResMut<OpenJob>,
-    mut status: ResMut<DialogStatus>,
+    mut status: ResMut<StatusMessage>,
 ) {
     let Some(task) = job.0.as_mut() else {
         return;
@@ -232,17 +227,6 @@ fn finish_open(
         Err(error) => {
             error!("{error}");
             status.0 = error.to_string();
-        }
-    }
-}
-
-fn sync(status: Res<DialogStatus>, mut lines: Query<&mut Text, With<StatusLine>>) {
-    if !status.is_changed() {
-        return;
-    }
-    for mut text in lines.iter_mut() {
-        if text.0 != status.0 {
-            text.0 = status.0.clone();
         }
     }
 }
