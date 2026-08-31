@@ -11,14 +11,20 @@ pub mod atlas;
 pub mod campaign;
 /// A world under authorship: its undo and redo stacks, and whether it is unsaved.
 pub mod document;
+/// A shape part-way through being drawn, and the feature it becomes.
+pub mod draft;
 /// The vocabulary of change, and every reason one is refused.
 pub mod edit;
 /// What the GM draws: a feature's identity, shape and kind.
 pub mod feature;
+/// The single Edit one authoring gesture becomes.
+pub mod gesture;
 /// The names the campaign format fixes, and the joins onto a campaign root.
 pub mod layout;
 /// What `campaign.ron` says, and reading it back off disk.
 pub mod manifest;
+/// What a position in cells lands on, what a rectangle encloses, and where a vertex snaps.
+pub mod pick;
 /// Which tile a terrain cell is drawn as, and how brightly it is lit.
 pub mod tiles;
 /// The set of features a map holds, and every rule a set of them must satisfy.
@@ -27,9 +33,12 @@ pub mod world;
 pub use atlas::{AtlasError, AtlasMeta};
 pub use campaign::{Campaign, CampaignError};
 pub use document::{Document, UNDO_LIMIT};
+pub use draft::{Draft, DraftShape};
 pub use edit::{Edit, EditError};
 pub use feature::{CellPoint, Feature, FeatureId, FeatureKind, Geometry};
+pub use gesture::Orphans;
+pub use pick::{Hit, Landing, Snap};
 pub use manifest::{
     CAMPAIGN_VERSION, CampaignManifest, DEFAULT_UNIT, DEFAULT_UNITS_PER_CELL, MAX_MANIFEST_BYTES,
 };
-pub use world::{MAX_WORLD_BYTES, ParentProblem, WORLD_VERSION, WorldError};
+pub use world::{MAX_WORLD_BYTES, ParentProblem, WORLD_VERSION, World, WorldError};
