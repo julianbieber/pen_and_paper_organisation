@@ -73,6 +73,9 @@ pub fn frame_terrain(
 
 /// Pans the map by drag, zooms it about the cursor by wheel, and clamps both to what
 /// the terrain allows.
+///
+/// Pans on the **middle or right** button. The left one authors — it selects, drags a
+/// vertex, box-selects and places one — so panning cannot also be on it.
 pub fn drive_camera(
     terrain: Res<MapTerrain>,
     assets: Res<MapAssets>,
@@ -92,7 +95,8 @@ pub fn drive_camera(
     let view = MapView::new(terrain.width, terrain.height, assets.tile_size as f32);
     let per_pixel = orthographic.scale * window.scale_factor();
 
-    if buttons.pressed(MouseButton::Left) && motion.delta != Vec2::ZERO {
+    let panning = buttons.pressed(MouseButton::Middle) || buttons.pressed(MouseButton::Right);
+    if panning && motion.delta != Vec2::ZERO {
         transform.translation.x -= motion.delta.x * per_pixel;
         transform.translation.y += motion.delta.y * per_pixel;
     }
@@ -102,11 +106,7 @@ pub fn drive_camera(
         let before = orthographic.scale;
         let after = (before * ZOOM_STEP.powf(-scroll.delta.y)).clamp(low, high);
         if after != before {
-            let anchor = window
-                .cursor_position()
-                .map(|cursor| cursor * window.scale_factor() - viewport / 2.0)
-                .map(|offset| Vec2::new(offset.x, -offset.y))
-                .unwrap_or(Vec2::ZERO);
+            let anchor = crate::map::pointer::cursor_offset(&window, viewport).unwrap_or(Vec2::ZERO);
             let shift = anchor * (before - after);
             transform.translation.x += shift.x;
             transform.translation.y += shift.y;

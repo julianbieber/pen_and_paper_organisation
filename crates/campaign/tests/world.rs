@@ -362,3 +362,38 @@ fn children_of_names_what_hangs_off_a_feature() {
     assert_eq!(world.children_of(ids[0]).count(), 0);
 }
 
+
+// A save that reports success and then cannot be reopened is indistinguishable from
+// losing the work, so the one asymmetry between save and load is closed here.
+#[test]
+fn a_world_too_large_to_read_back_is_refused_before_it_is_written() {
+    use campaign::world::MAX_WORLD_BYTES;
+
+    let mut world = World::default();
+    let id = world.fresh_id();
+    let vertices: Vec<CellPoint> = (0..60_000).map(|n| CellPoint::new(n as f32, 0.5)).collect();
+    Edit::Add {
+        id,
+        feature: Feature {
+            kind: FeatureKind::Road,
+            geometry: Geometry::Polyline(vertices),
+            label: String::new(),
+            note: None,
+            parent: None,
+        },
+    }
+    .apply(&mut world)
+    .expect("the fixture must be addable");
+
+    assert!(
+        world.to_ron().expect("it serializes").len() as u64 > MAX_WORLD_BYTES,
+        "the fixture must actually exceed the limit, or this tests nothing"
+    );
+
+    let directory = tempfile::tempdir().expect("a temporary directory");
+    let path = directory.path().join("world.ron");
+    let refusal = world.save(&path).expect_err("a world this large must be refused");
+
+    assert!(matches!(refusal, WorldError::WorldTooLarge { .. }), "{refusal}");
+    assert!(!path.exists(), "nothing is written when the save is refused");
+}

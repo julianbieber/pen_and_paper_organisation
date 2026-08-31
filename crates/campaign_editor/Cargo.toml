@@ -5,15 +5,23 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
+# Two binaries now, and `cargo run -p campaign_editor` is the documented way to open a
+# campaign, so the editor stays the one that runs without a --bin.
+default-run = "pnp"
 
 [[bin]]
 name = "pnp"
 path = "src/main.rs"
 
+[[bin]]
+name = "pnp-ctl"
+path = "src/bin/pnp-ctl.rs"
+
 [dependencies]
 campaign.workspace = true
 bevy.workspace = true
 log.workspace = true
+serde_json.workspace = true
 tracing.workspace = true
 
 [lints]

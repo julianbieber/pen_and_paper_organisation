@@ -15,12 +15,15 @@ pub mod chunks;
 pub mod load;
 /// The one runtime control over what counts as a river.
 pub mod panel;
+/// Where the cursor is, in terrain cells.
+pub mod pointer;
 /// The one conversion between terrain cells and world units.
 pub mod view;
 
-use crate::OpenCampaign;
+use crate::{EditorSet, OpenCampaign};
 use load::{MapAssets, MapState, MapTerrain, TilesetRoot};
 use panel::RiverThreshold;
+use pointer::{MapPointer, PointerOverride};
 
 /// Everything that turns an opened campaign into a map on screen.
 pub struct MapPlugin;
@@ -29,6 +32,8 @@ impl Plugin for MapPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<RiverThreshold>()
             .init_resource::<chunks::MapChunks>()
+            .init_resource::<MapPointer>()
+            .init_resource::<PointerOverride>()
             .insert_resource(TilesetRoot(tileset_root()))
             .add_systems(Startup, camera::spawn_camera)
             .add_systems(
@@ -44,8 +49,14 @@ impl Plugin for MapPlugin {
                         camera::frame_terrain.run_if(resource_exists::<MapTerrain>),
                     ),
                     panel::land_threshold,
-                    camera::drive_camera
-                        .run_if(resource_exists::<MapTerrain>.and_then(not(pointer_is_over_ui))),
+                    camera::drive_camera.run_if(
+                        resource_exists::<MapTerrain>
+                            .and_then(not(pointer_is_over_ui))
+                            .and_then(not(crate::features::prompt::a_question_is_up)),
+                    ),
+                    pointer::track_pointer.run_if(
+                        resource_exists::<MapTerrain>.and_then(resource_exists::<MapAssets>),
+                    ),
                     chunks::stream_chunks
                         .run_if(resource_exists::<MapTerrain>.and_then(load::tileset_is_ready)),
                     chunks::refill_chunks.run_if(
@@ -53,12 +64,25 @@ impl Plugin for MapPlugin {
                     ),
                 )
                     .chain()
+                    .in_set(EditorSet::Map)
                     .before(bevy::sprite_render::update_tilemap_chunk_indices),
             );
     }
 }
 
-fn pointer_is_over_ui(hovered: Res<bevy::picking::hover::HoverMap>, nodes: Query<(), With<Node>>) -> bool {
+/// Whether the pointer is over any UI node.
+///
+/// Public because authoring needs the same answer: a second implementation of "is the
+/// pointer over the UI" is a second answer to it, and the two would disagree the first
+/// time a widget changed.
+///
+/// This is a *hover* test, rebuilt every frame with no notion of a drag having been
+/// captured — so it is the right question to ask of a press, and the wrong one to ask of
+/// a drag already in flight.
+pub fn pointer_is_over_ui(
+    hovered: Res<bevy::picking::hover::HoverMap>,
+    nodes: Query<(), With<Node>>,
+) -> bool {
     hovered
         .values()
         .flat_map(|hits| hits.keys())

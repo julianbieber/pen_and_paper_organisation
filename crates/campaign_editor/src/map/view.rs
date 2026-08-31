@@ -12,9 +12,12 @@ use campaign::tiles::CHUNK_CELLS;
 
 /// The depth the terrain is drawn at.
 ///
-/// It is the backdrop, so it is the floor: everything a later issue authors on top of
-/// it takes a greater z.
+/// It is the backdrop, so it is the floor: everything authored on top of it takes a
+/// greater z.
 pub const TERRAIN_Z: f32 = 0.0;
+
+/// The depth authored features are drawn at, above the terrain.
+pub const FEATURE_Z: f32 = 1.0;
 
 /// How a terrain's cells sit in the world.
 #[derive(Debug, Clone, Copy, PartialEq)]

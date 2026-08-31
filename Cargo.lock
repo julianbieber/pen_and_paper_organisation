@@ -1976,6 +1976,7 @@ dependencies = [
  "bevy",
  "campaign",
  "log",
+ "serde_json",
  "tracing",
 ]
 

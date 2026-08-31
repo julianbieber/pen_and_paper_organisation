@@ -1,0 +1,62 @@
+# Draws one of everything issue #4 names, drags a vertex, undoes and redoes it, and saves.
+#
+#   cargo run -p campaign --example make_demo -- /tmp/demo-campaign
+#   PNP_CONTROL=/tmp/pnp.sock cargo run -p campaign_editor -- /tmp/demo-campaign &
+#   PNP_CONTROL=/tmp/pnp.sock cargo run -p campaign_editor --bin pnp-ctl -- run \
+#       crates/campaign_editor/scenarios/authoring.scenario
+#
+# Every step goes through the pointer and the buttons, so what this proves is what a GM
+# doing the same thing by hand would get.
+
+ping
+fixed-delta 0.016
+step 60                       # the terrain loads and the chrome appears
+
+# A city
+tool area
+kind settlement
+click 20 20
+click 60 20
+click 60 60
+click 20 60
+key enter
+
+# A tavern inside it — parented to the city without being told
+tool point
+kind poi
+click 40 40
+
+# A road
+tool line
+kind road
+click 0 100
+click 50 105
+click 100 110
+key enter
+
+# A region
+tool area
+kind territory
+click 120 120
+click 200 120
+click 200 200
+click 120 200
+key enter
+
+observe world
+capture /tmp/pnp-drawn.png
+
+# Reshape the road, then unwind and replay it
+tool select
+click 50 105
+observe selection
+drag 50 105 55 130
+observe world
+undo
+observe world
+redo
+
+save
+observe world
+capture /tmp/pnp-saved.png
+quit
