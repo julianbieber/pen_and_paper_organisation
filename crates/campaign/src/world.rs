@@ -104,6 +104,21 @@ pub enum WorldError {
         #[source]
         source: std::io::Error,
     },
+
+    /// The document would serialize to more than this build reads back.
+    ///
+    /// Refused at the point of writing rather than discovered on the next open, because a
+    /// save that reports success and then cannot be reopened is indistinguishable from
+    /// losing the work.
+    #[error(
+        "`{}` would be {bytes} bytes, over the {limit} byte limit this build reads back",
+        .path.display()
+    )]
+    WorldTooLarge {
+        path: PathBuf,
+        bytes: u64,
+        limit: u64,
+    },
 }
 
 #[derive(Deserialize)]
@@ -170,6 +185,10 @@ impl World {
     /// document is the only copy of everything the GM has drawn, and truncating it in
     /// place is the one unrecoverable way to lose that.
     ///
+    /// Refuses [`WorldError::WorldTooLarge`] for a world that would serialize to more than
+    /// [`MAX_WORLD_BYTES`], so that a world this build writes is always one it reads back.
+    /// Nothing is written in that case — the document already on disk is left alone.
+    ///
     /// Fails [`WorldError::WorldUnwritable`] naming `path`.
     pub fn save(&self, path: &Path) -> Result<(), WorldError> {
         use std::io::Write as _;
@@ -183,6 +202,14 @@ impl World {
             path: path.to_owned(),
             source: std::io::Error::other(error),
         })?;
+
+        if text.len() as u64 > MAX_WORLD_BYTES {
+            return Err(WorldError::WorldTooLarge {
+                path: path.to_owned(),
+                bytes: text.len() as u64,
+                limit: MAX_WORLD_BYTES,
+            });
+        }
 
         let temporary = temporary_beside(path);
         let mut file = std::fs::File::create(&temporary).map_err(unwritable)?;
