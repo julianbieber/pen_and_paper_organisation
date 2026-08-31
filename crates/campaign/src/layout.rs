@@ -12,8 +12,10 @@ use std::path::{Path, PathBuf};
 /// without being told it.
 pub const MANIFEST_FILE: &str = "campaign.ron";
 
-/// The world map document. This crate does not read or write it; the name lives here
-/// so that whoever does is not the one deciding it.
+/// The world map document, read and written by [`World`](crate::world::World) — the one
+/// name here whose contents this crate understands. A campaign that has never been
+/// authored holds no such file, and that is not a gap: an absent world document is an
+/// empty world.
 pub const WORLD_FILE: &str = "world.ron";
 
 /// Child map documents, one file each.
