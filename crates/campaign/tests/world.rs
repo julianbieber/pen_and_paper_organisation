@@ -14,11 +14,8 @@ fn point(x: f32, y: f32) -> Geometry {
 
 fn feature(kind: FeatureKind, geometry: Geometry, label: &str) -> Feature {
     Feature {
-        kind,
-        geometry,
         label: label.to_owned(),
-        note: None,
-        parent: None,
+        ..Feature::plain(kind, geometry)
     }
 }
 
@@ -374,13 +371,7 @@ fn a_world_too_large_to_read_back_is_refused_before_it_is_written() {
     let vertices: Vec<CellPoint> = (0..60_000).map(|n| CellPoint::new(n as f32, 0.5)).collect();
     Edit::Add {
         id,
-        feature: Feature {
-            kind: FeatureKind::Road,
-            geometry: Geometry::Polyline(vertices),
-            label: String::new(),
-            note: None,
-            parent: None,
-        },
+        feature: Feature::plain(FeatureKind::Road, Geometry::Polyline(vertices)),
     }
     .apply(&mut world)
     .expect("the fixture must be addable");
@@ -396,4 +387,117 @@ fn a_world_too_large_to_read_back_is_refused_before_it_is_written() {
 
     assert!(matches!(refusal, WorldError::WorldTooLarge { .. }), "{refusal}");
     assert!(!path.exists(), "nothing is written when the save is refused");
+}
+
+// A rank and a reveal scale are new fields on an old format, and there is no migration
+// path — so a document written before they existed has to read back as one where they are
+// simply absent, and mean "no rank" and "revealed at every zoom".
+#[test]
+fn a_document_written_before_the_new_fields_reads_back_with_both_absent() {
+    let text = r#"(
+    version: 1,
+    next_id: 2,
+    features: {
+        0: (
+            kind: Settlement,
+            geometry: Polygon([(x: 0.0, y: 0.0), (x: 4.0, y: 0.0), (x: 4.0, y: 4.0)]),
+            label: "Riverford",
+        ),
+        1: (
+            kind: Poi,
+            geometry: Point((x: 1.0, y: 1.0)),
+            label: "the Eel",
+            parent: Some(0),
+        ),
+    },
+)"#;
+    let world = World::from_ron(text, Path::new("world.ron")).expect("an older document must load");
+
+    for id in [FeatureId(0), FeatureId(1)] {
+        let feature = world.feature(id).expect("both features are there");
+        assert_eq!(feature.rank, None);
+        assert_eq!(feature.max_cells_per_pixel, None);
+    }
+}
+
+// Both new fields are optional and skipped when absent, so adding them must not have
+// changed the bytes of a document that sets neither — which is what makes an old file and
+// a newly saved one comparable at all.
+#[test]
+fn a_feature_setting_neither_new_field_writes_neither() {
+    let mut world = World::default();
+    add(&mut world, feature(FeatureKind::Poi, point(1.0, 1.0), "the Eel"));
+    let text = world.to_ron().expect("serialize");
+
+    assert!(!text.contains("rank"), "an unset rank was written: {text}");
+    assert!(
+        !text.contains("max_cells_per_pixel"),
+        "an unset reveal scale was written: {text}"
+    );
+}
+
+// A reveal threshold is compared against the map's scale every frame. A NaN compares false
+// against everything and would hide the feature for the life of the document with nothing
+// on screen to say why, so it is refused at the door as a non-finite coordinate already is.
+#[test]
+fn a_document_carrying_an_unusable_reveal_scale_is_refused() {
+    for scale in ["0.0", "-1.0"] {
+        let text = format!(
+            r#"(
+    version: 1,
+    next_id: 1,
+    features: {{
+        0: (
+            kind: Poi,
+            geometry: Point((x: 1.0, y: 1.0)),
+            label: "the Eel",
+            max_cells_per_pixel: Some({scale}),
+        ),
+    }},
+)"#
+        );
+        match World::from_ron(&text, Path::new("world.ron")) {
+            Err(WorldError::BadRevealScale { feature, .. }) => {
+                assert_eq!(feature, FeatureId(0));
+            }
+            other => panic!("a reveal scale of {scale} was not refused: {other:?}"),
+        }
+    }
+}
+
+// The round trip has to carry the new fields too, or a rank set in the panel would be lost
+// the next time the campaign was opened.
+#[test]
+fn a_rank_and_a_reveal_scale_survive_the_round_trip() {
+    let mut world = World::default();
+    let city = add(
+        &mut world,
+        feature(
+            FeatureKind::Settlement,
+            Geometry::Polygon(vec![
+                CellPoint::new(0.0, 0.0),
+                CellPoint::new(4.0, 0.0),
+                CellPoint::new(4.0, 4.0),
+            ]),
+            "Riverford",
+        ),
+    );
+    Edit::SetRank {
+        id: city,
+        rank: Some(campaign::Rank::City),
+    }
+    .apply(&mut world)
+    .expect("a rank must apply");
+    Edit::SetMaxCellsPerPixel {
+        id: city,
+        scale: Some(0.75),
+    }
+    .apply(&mut world)
+    .expect("a reveal scale must apply");
+
+    let text = world.to_ron().expect("serialize");
+    let back = World::from_ron(&text, Path::new("world.ron")).expect("its own output must load");
+    assert_eq!(back, world);
+    assert_eq!(back.feature(city).unwrap().rank, Some(campaign::Rank::City));
+    assert_eq!(back.feature(city).unwrap().max_cells_per_pixel, Some(0.75));
 }

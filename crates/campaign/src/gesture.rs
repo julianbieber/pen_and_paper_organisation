@@ -174,7 +174,15 @@ fn deepest_first(world: &World, ids: &mut [FeatureId]) {
     ids.sort_by(|a, b| depth(world, *b).cmp(&depth(world, *a)).then(b.cmp(a)));
 }
 
-fn depth(world: &World, id: FeatureId) -> usize {
+/// How many parents lie between `id` and the top of its chain.
+///
+/// Zero for a feature with no parent. Bounded by the feature count rather than trusting
+/// the document to be a forest, so this terminates on a world that somehow holds a cycle
+/// instead of hanging the frame that asked.
+///
+/// Shared with [`crate::label`], which folds it into a label's priority: a second walk
+/// there would be a second answer to how deeply nested a feature is.
+pub fn depth(world: &World, id: FeatureId) -> usize {
     let mut depth = 0;
     let mut walked = 0;
     let mut current = world.feature(id).and_then(|feature| feature.parent);

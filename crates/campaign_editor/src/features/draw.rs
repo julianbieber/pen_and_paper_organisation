@@ -69,12 +69,13 @@ pub fn draw_features(
         .as_ref()
         .map(|draft| draft.vertices().to_vec())
         .unwrap_or_default();
-    let snap = pick::snap(
-        doc.document.world(),
-        &drafted,
-        cell,
-        pointer.slack(SNAP_SLACK_PIXELS),
-    );
+    let snap = {
+        let cells_per_pixel = pointer.cells_per_pixel;
+        let areas = &doc.areas;
+        let world = doc.document.world();
+        let drawn = |id| campaign::lod::is_pickable(world, areas, cells_per_pixel, id, &[]);
+        pick::snap(world, &drafted, cell, pointer.slack(SNAP_SLACK_PIXELS), &drawn)
+    };
     drafting.snap = Some(snap);
 
     if keys.just_pressed(KeyCode::Backspace)
@@ -197,9 +198,7 @@ mod tests {
                 cell: Some(at(0.0, 0.0)),
                 cells_per_pixel: 1.0,
             })
-            .insert_resource(WorldDoc {
-                document: Document::new(World::default()),
-            })
+            .insert_resource(WorldDoc::new(Document::new(World::default())))
             .add_systems(Update, draw_features);
         app
     }

@@ -15,11 +15,8 @@ fn point(world: &mut World, parent: Option<FeatureId>) -> FeatureId {
     Edit::Add {
         id,
         feature: Feature {
-            kind: FeatureKind::Poi,
-            geometry: Geometry::Point(at(0.0, 0.0)),
-            label: String::new(),
-            note: None,
             parent,
+            ..Feature::plain(FeatureKind::Poi, Geometry::Point(at(0.0, 0.0)))
         },
     }
     .apply(world)
@@ -128,11 +125,8 @@ fn a_translate_moves_every_vertex_by_the_same_offset_in_one_batch() {
     Edit::Add {
         id,
         feature: Feature {
-            kind: FeatureKind::Road,
-            geometry: Geometry::Polyline(vertices),
-            label: String::new(),
-            note: None,
-            parent: None,
+            label: "Riverford".to_owned(),
+            ..Feature::plain(FeatureKind::Road, Geometry::Polyline(vertices))
         },
     }
     .apply(&mut world)
@@ -160,13 +154,10 @@ fn placing_a_point_inside_a_settlement_parents_it_in_one_edit() {
     let city = world.fresh_id();
     Edit::Add {
         id: city,
-        feature: Feature {
-            kind: FeatureKind::Settlement,
-            geometry: Geometry::Polygon(vec![at(0.0, 0.0), at(10.0, 0.0), at(10.0, 10.0)]),
-            label: "Riverford".to_owned(),
-            note: None,
-            parent: None,
-        },
+        feature: Feature::plain(
+            FeatureKind::Settlement,
+            Geometry::Polygon(vec![at(0.0, 0.0), at(10.0, 0.0), at(10.0, 10.0)]),
+        ),
     }
     .apply(&mut world)
     .expect("the city must be addable");
@@ -176,11 +167,9 @@ fn placing_a_point_inside_a_settlement_parents_it_in_one_edit() {
         &world,
         tavern,
         Feature {
-            kind: FeatureKind::Poi,
-            geometry: Geometry::Point(at(5.0, 2.0)),
             label: "the Eel".to_owned(),
-            note: None,
             parent: None,
+            ..Feature::plain(FeatureKind::Poi, Geometry::Point(at(5.0, 2.0)))
         },
     );
     assert!(matches!(edit, Edit::Add { .. }), "a placement is one add");

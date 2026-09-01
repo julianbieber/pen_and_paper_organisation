@@ -1,4 +1,4 @@
-//! The selected feature's label, kind, parent and note link.
+//! The selected feature's label, kind, rank, reveal scale, parent and note link.
 //!
 //! The label is the one property that cannot be landed as it is typed. A text field
 //! reports every character, so an edit per report would spend a fifth of the undo stack on
@@ -18,17 +18,20 @@ use bevy::prelude::*;
 use bevy::text::{EditableText, TextEdit, TextEditChange};
 use bevy::ui_widgets::Activate;
 use campaign::edit::Edit;
-use campaign::feature::{FeatureId, FeatureKind};
+use campaign::feature::{FeatureId, FeatureKind, Rank};
 
 use crate::StatusMessage;
 use crate::features::doc::{self, WorldDoc};
 use crate::features::select::Selection;
-use crate::features::tool::kind_label;
+use crate::features::tool::{kind_label, rank_label};
+use crate::map::pointer::MapPointer;
 
 /// Which property a line of the panel shows.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Property {
     Kind,
+    Rank,
+    Reveal,
     Parent,
     Note,
 }
@@ -53,6 +56,17 @@ pub struct SetKindButton {
     pub kind: FeatureKind,
 }
 
+/// A button that sets the selected feature's rank.
+#[derive(Component, Debug, Clone, Copy, PartialEq)]
+pub struct SetRankButton {
+    pub rank: Rank,
+}
+
+/// The button that records the map's current scale as the selected feature's reveal
+/// threshold.
+#[derive(Component, Default, Clone)]
+pub struct RevealHereButton;
+
 /// A button that clears one of the selection's links.
 #[derive(Component, Debug, Clone, Copy, PartialEq)]
 pub struct ClearButton {
@@ -74,7 +88,8 @@ pub fn build_property_panel(mut commands: Commands) {
     commands.spawn_scene(panel());
 }
 
-/// Puts the selected feature's label, kind, parent and note link into the panel.
+/// Puts the selected feature's label, kind, rank, reveal scale, parent and note link into
+/// the panel.
 ///
 /// Runs only when the selection or the document changed, and writes only where the text
 /// differs: a panel rewritten every frame re-lays-out the UI for the life of the process.
@@ -101,6 +116,14 @@ pub fn show_properties(
             (None, Property::Kind) => "nothing selected".to_owned(),
             (None, _) => String::new(),
             (Some(feature), Property::Kind) => kind_label(feature.kind).to_owned(),
+            (Some(feature), Property::Rank) => match feature.rank {
+                Some(rank) => rank_label(rank).to_owned(),
+                None => "no rank".to_owned(),
+            },
+            (Some(feature), Property::Reveal) => match feature.max_cells_per_pixel {
+                Some(scale) => format!("revealed at {scale:.3} cells/px or finer"),
+                None => "revealed at every zoom".to_owned(),
+            },
             (Some(feature), Property::Parent) => match feature.parent {
                 Some(parent) => format!("inside {}", name_of(world, parent)),
                 None => "no parent".to_owned(),
@@ -169,6 +192,8 @@ fn name_of(world: &campaign::world::World, id: FeatureId) -> String {
         .unwrap_or_else(|| id.to_string())
 }
 
+const RANKS: [Rank; 3] = Rank::all();
+
 const KINDS: [FeatureKind; 8] = [
     FeatureKind::Settlement,
     FeatureKind::DungeonEntry,
@@ -214,6 +239,8 @@ fn panel() -> impl Scene {
                 ]
             ),
             (Text("") ThemedText PropertyReadout { property: {Property::Kind} }),
+            (Text("") ThemedText PropertyReadout { property: {Property::Rank} }),
+            (Text("") ThemedText PropertyReadout { property: {Property::Reveal} }),
             (Text("") ThemedText PropertyReadout { property: {Property::Parent} }),
             (Text("") ThemedText PropertyReadout { property: {Property::Note} }),
             (
@@ -228,6 +255,32 @@ fn panel() -> impl Scene {
                     kind_button(KINDS[0]), kind_button(KINDS[1]), kind_button(KINDS[2]),
                     kind_button(KINDS[3]), kind_button(KINDS[4]), kind_button(KINDS[5]),
                     kind_button(KINDS[6]), kind_button(KINDS[7])
+                ]
+            ),
+            (
+                Node {
+                    display: Display::Flex,
+                    flex_direction: FlexDirection::Row,
+                    flex_wrap: FlexWrap::Wrap,
+                    column_gap: px(4),
+                    row_gap: px(4),
+                }
+                Children [
+                    rank_button(RANKS[0]), rank_button(RANKS[1]), rank_button(RANKS[2]),
+                    clear_button("Clear rank", Property::Rank)
+                ]
+            ),
+            (
+                Node {
+                    display: Display::Flex,
+                    flex_direction: FlexDirection::Row,
+                    flex_wrap: FlexWrap::Wrap,
+                    column_gap: px(4),
+                    row_gap: px(4),
+                }
+                Children [
+                    reveal_here_button(),
+                    clear_button("Always reveal", Property::Reveal)
                 ]
             ),
             (
@@ -273,6 +326,60 @@ fn kind_button(kind: FeatureKind) -> impl Scene {
     }
 }
 
+fn rank_button(rank: Rank) -> impl Scene {
+    bsn! {
+        @FeathersButton {
+            @caption: bsn! { Text({rank_label(rank).to_string()}) ThemedText },
+        }
+        SetRankButton { rank: {rank} }
+        on(|activate: On<Activate>,
+            buttons: Query<&SetRankButton>,
+            selection: Res<Selection>,
+            mut doc: ResMut<WorldDoc>,
+            mut status: ResMut<StatusMessage>| {
+            let (Ok(button), Some(id)) = (buttons.get(activate.event_target()), selection.only())
+            else {
+                return;
+            };
+            let already = doc
+                .document
+                .world()
+                .feature(id)
+                .is_some_and(|feature| feature.rank == Some(button.rank));
+            if already {
+                return;
+            }
+            doc::apply(&mut doc, &mut status, Edit::SetRank { id, rank: Some(button.rank) });
+        })
+    }
+}
+
+fn reveal_here_button() -> impl Scene {
+    bsn! {
+        @FeathersButton {
+            @caption: bsn! { Text("Reveal from here") ThemedText },
+        }
+        RevealHereButton
+        on(|_activate: On<Activate>,
+            selection: Res<Selection>,
+            pointer: Res<MapPointer>,
+            mut doc: ResMut<WorldDoc>,
+            mut status: ResMut<StatusMessage>| {
+            let Some(id) = selection.only() else {
+                return;
+            };
+            doc::apply(
+                &mut doc,
+                &mut status,
+                Edit::SetMaxCellsPerPixel {
+                    id,
+                    scale: Some(pointer.cells_per_pixel),
+                },
+            );
+        })
+    }
+}
+
 fn clear_button(caption: &'static str, property: Property) -> impl Scene {
     bsn! {
         @FeathersButton {
@@ -291,6 +398,8 @@ fn clear_button(caption: &'static str, property: Property) -> impl Scene {
             let edit = match button.property {
                 Property::Parent => Edit::SetParent { id, parent: None },
                 Property::Note => Edit::SetNote { id, note: None },
+                Property::Rank => Edit::SetRank { id, rank: None },
+                Property::Reveal => Edit::SetMaxCellsPerPixel { id, scale: None },
                 Property::Kind => return,
             };
             doc::apply(&mut doc, &mut status, edit);
@@ -311,6 +420,12 @@ impl Default for SetKindButton {
         Self {
             kind: FeatureKind::Poi,
         }
+    }
+}
+
+impl Default for SetRankButton {
+    fn default() -> Self {
+        Self { rank: Rank::Hamlet }
     }
 }
 

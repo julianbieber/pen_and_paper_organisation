@@ -172,6 +172,51 @@ pub enum FeatureKind {
     Poi,
 }
 
+impl FeatureKind {
+    /// Every kind, in the order a chooser offers them: the things a place is, then the
+    /// lines between them, then the areas around them.
+    ///
+    /// Written out rather than derived, and the array length is the count — adding a
+    /// variant without extending this fails to compile, which is the same guarantee the
+    /// enum's lack of `#[non_exhaustive]` gives a `match`.
+    pub const fn all() -> [Self; 8] {
+        [
+            Self::Settlement,
+            Self::DungeonEntry,
+            Self::Poi,
+            Self::Road,
+            Self::River,
+            Self::Trail,
+            Self::Landcover,
+            Self::Territory,
+        ]
+    }
+}
+
+/// How big a settlement is, which decides the size of its icon and how early its label
+/// wins a collision.
+///
+/// Only settlements carry one in practice, but nothing refuses it elsewhere: the styling
+/// table answers for every kind-and-rank pair, so a rank on a road is a fact the table
+/// simply does not consult rather than a document that fails to load.
+///
+/// Deliberately not derived from the polygon's area. A capital drawn small is still a
+/// capital, and an area-derived rank would change what a settlement *is* every time the
+/// GM adjusted its outline.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum Rank {
+    Hamlet,
+    Town,
+    City,
+}
+
+impl Rank {
+    /// Every rank, smallest first.
+    pub const fn all() -> [Self; 3] {
+        [Self::Hamlet, Self::Town, Self::City]
+    }
+}
+
 /// One authored thing on a map: a geometry, what kind of thing it is, what it is called,
 /// and what it hangs off.
 ///
@@ -196,6 +241,55 @@ pub struct Feature {
     /// The feature this one sits inside, if any.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parent: Option<FeatureId>,
+    /// How big a settlement this is, if it is one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rank: Option<Rank>,
+    /// The coarsest map scale this feature is drawn at, in terrain cells per logical
+    /// pixel, or `None` to be drawn at every scale its parents allow.
+    ///
+    /// Logical rather than physical pixels so that a document authored on one display
+    /// reveals identically on another. Constrained by [`reveal_refusal`] wherever it is
+    /// stored: a value that is not a finite positive number would make its own comparison
+    /// meaningless.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_cells_per_pixel: Option<f32>,
+}
+
+impl Feature {
+    /// A feature of `kind` at `geometry`, with nothing else set.
+    ///
+    /// Every optional field is absent, which is what a freshly drawn shape carries: a
+    /// label, a note, a parent, a rank and a reveal scale are all things the GM adds
+    /// afterwards. Exists so that adding an optional field does not mean editing every
+    /// struct literal in the workspace.
+    pub fn plain(kind: FeatureKind, geometry: Geometry) -> Self {
+        Self {
+            kind,
+            geometry,
+            label: String::new(),
+            note: None,
+            parent: None,
+            rank: None,
+            max_cells_per_pixel: None,
+        }
+    }
+}
+
+/// Why `scale` is not one a feature may carry as its reveal threshold, or `None` if it is
+/// fine.
+///
+/// A threshold is compared against the map's current cells-per-pixel every frame, so it
+/// has to be a number that compares: `NaN` compares false against everything and would
+/// hide the feature for ever, and zero or a negative value names a scale no camera
+/// reaches.
+pub fn reveal_refusal(scale: f32) -> Option<&'static str> {
+    if !scale.is_finite() {
+        return Some("is not a finite number");
+    }
+    if scale <= 0.0 {
+        return Some("is not greater than zero, and names a scale no camera reaches");
+    }
+    None
 }
 
 /// Why `path` is not one a feature may carry as its note, or `None` if it is fine.

@@ -8,6 +8,11 @@
 //! Because the gesture outlives the press, the "is the pointer over the UI" gate applies
 //! to the press alone. Applied to the whole system it would abandon a drag the moment it
 //! crossed the tool strip, and the release would never be seen at all.
+//!
+//! Every hit test here is filtered by the same detail the draw pass used, so a press
+//! cannot land on a feature that frame declined to draw. The filter is built once per
+//! gesture from [`pickable`] and handed to `campaign::pick`, which does not otherwise know
+//! what is on screen.
 
 use bevy::prelude::*;
 use campaign::edit::Edit;
@@ -144,6 +149,11 @@ impl Dragging {
 /// and the dirty flag alone, so closing after only looking at a feature does not prompt.
 /// A press on an edge of an already-selected feature inserts a vertex there immediately
 /// rather than on release, because dragging that new vertex is the next gesture.
+///
+/// A press lands only on a feature the map is currently drawing, judged by the same
+/// [`campaign::lod`] answer the draw pass used — so a click on apparently empty ground
+/// selects nothing and a box drag catches nothing that was not on screen. The current
+/// selection is exempt from that, or a feature could not be clicked again to deselect it.
 pub fn select_features(
     buttons: Res<ButtonInput<MouseButton>>,
     keys: Res<ButtonInput<KeyCode>>,
@@ -172,6 +182,23 @@ pub fn select_features(
     }
 }
 
+fn pickable<'a>(
+    doc: &'a WorldDoc,
+    selection: &'a Selection,
+    pointer: &MapPointer,
+) -> impl Fn(FeatureId) -> bool + 'a {
+    let cells_per_pixel = pointer.cells_per_pixel;
+    move |id| {
+        campaign::lod::is_pickable(
+            doc.document.world(),
+            &doc.areas,
+            cells_per_pixel,
+            id,
+            &selection.features,
+        )
+    }
+}
+
 fn begin(
     selection: &mut Selection,
     dragging: &mut Dragging,
@@ -184,7 +211,10 @@ fn begin(
     dragging.grabbed = cell;
     dragging.latest = cell;
 
-    let landing = pick::pick(doc.document.world(), cell, pointer.slack(PICK_SLACK_PIXELS));
+    let landing = {
+        let drawn = pickable(doc, selection, pointer);
+        pick::pick(doc.document.world(), cell, pointer.slack(PICK_SLACK_PIXELS), &drawn)
+    };
     let adding = keys.pressed(KeyCode::ShiftLeft) || keys.pressed(KeyCode::ShiftRight);
 
     let Some(landing) = landing else {
@@ -246,7 +276,11 @@ fn land(
 
     match what {
         Some(DragKind::Box) => {
-            selection.features = pick::within(doc.document.world(), dragging.grabbed, dragging.latest);
+            let caught = {
+                let drawn = pickable(doc, selection, pointer);
+                pick::within(doc.document.world(), dragging.grabbed, dragging.latest, &drawn)
+            };
+            selection.features = caught;
             selection.vertex = None;
         }
         _ if !dragging.moved() => {}
@@ -262,7 +296,11 @@ fn land(
                 return;
             };
             let moved = CellPoint::new(from.x + offset.x, from.y + offset.y);
-            let snapped = pick::snap(world, &[], moved, pointer.slack(SNAP_SLACK_PIXELS));
+            let snapped = {
+                let drawn = pickable(doc, selection, pointer);
+                let world = doc.document.world();
+                pick::snap(world, &[], moved, pointer.slack(SNAP_SLACK_PIXELS), &drawn)
+            };
             doc::apply(
                 doc,
                 status,
@@ -311,13 +349,10 @@ mod tests {
         let id = world.fresh_id();
         Edit::Add {
             id,
-            feature: Feature {
-                kind: FeatureKind::Road,
-                geometry: Geometry::Polyline(vec![at(0.0, 0.0), at(100.0, 0.0)]),
-                label: String::new(),
-                note: None,
-                parent: None,
-            },
+            feature: Feature::plain(
+                FeatureKind::Road,
+                Geometry::Polyline(vec![at(0.0, 0.0), at(100.0, 0.0)]),
+            ),
         }
         .apply(&mut world)
         .expect("the fixture must be addable");
@@ -336,9 +371,7 @@ mod tests {
                 cell: Some(at(0.0, 0.0)),
                 cells_per_pixel: 1.0,
             })
-            .insert_resource(WorldDoc {
-                document: Document::new(world),
-            })
+            .insert_resource(WorldDoc::new(Document::new(world)))
             .add_systems(Update, select_features);
         app
     }

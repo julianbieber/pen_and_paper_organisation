@@ -21,8 +21,10 @@ pub mod doc;
 pub mod draw;
 /// Undo, redo, save, delete and escape.
 pub mod keys;
-/// The selected feature's label, kind, parent and note link.
+/// The selected feature's label, kind, rank, reveal scale, parent and note link.
 pub mod panel;
+/// The fixed set of pens the map is stroked through, and the order they paint.
+pub mod pens;
 /// The two questions authoring has to ask, and the close it holds back.
 pub mod prompt;
 /// Drawing the features in view, the draft, the selection and its handles.
@@ -49,6 +51,7 @@ pub struct FeaturesPlugin;
 
 impl Plugin for FeaturesPlugin {
     fn build(&self, app: &mut App) {
+        pens::register_pens(app);
         app.init_resource::<tool::ActiveTool>()
             .init_resource::<draw::Drafting>()
             .init_resource::<select::Selection>()
@@ -88,6 +91,7 @@ impl Plugin for FeaturesPlugin {
                     ),
                     prompt::guard_close.run_if(resource_exists::<WorldDoc>),
                     prompt::show_prompt.run_if(resource_exists_and_changed::<prompt::Asking>),
+                    pens::size_pens.run_if(resource_exists::<MapTerrain>),
                     render::render_features.run_if(
                         resource_exists::<WorldDoc>.and_then(resource_exists::<MapTerrain>),
                     ),

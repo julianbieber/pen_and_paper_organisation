@@ -107,12 +107,6 @@ impl Draft {
             DraftShape::Polyline => Geometry::Polyline(self.vertices),
             DraftShape::Polygon => Geometry::Polygon(self.vertices),
         };
-        Some(Feature {
-            kind: self.kind,
-            geometry,
-            label: String::new(),
-            note: None,
-            parent: None,
-        })
+        Some(Feature::plain(self.kind, geometry))
     }
 }

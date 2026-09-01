@@ -12,7 +12,7 @@ use bevy::feathers::tokens;
 use bevy::prelude::*;
 use bevy::ui_widgets::Activate;
 use campaign::draft::DraftShape;
-use campaign::feature::FeatureKind;
+use campaign::feature::{FeatureKind, Rank};
 
 use crate::features::draw::Drafting;
 
@@ -134,6 +134,15 @@ pub fn kind_label(kind: FeatureKind) -> &'static str {
         FeatureKind::Landcover => "landcover",
         FeatureKind::Territory => "territory",
         FeatureKind::Poi => "POI",
+    }
+}
+
+/// The word for a settlement's rank in the property panel.
+pub fn rank_label(rank: Rank) -> &'static str {
+    match rank {
+        Rank::Hamlet => "hamlet",
+        Rank::Town => "town",
+        Rank::City => "city",
     }
 }
 
