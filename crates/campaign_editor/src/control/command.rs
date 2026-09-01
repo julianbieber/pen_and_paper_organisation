@@ -12,8 +12,10 @@ use std::time::Duration;
 use bevy::prelude::*;
 use bevy::render::view::screenshot::{Screenshot, save_to_disk};
 use bevy::time::TimeUpdateStrategy;
+use bevy::camera::Projection;
 use campaign::draft::DraftShape;
-use campaign::feature::{CellPoint, FeatureKind};
+use campaign::edit::Edit;
+use campaign::feature::{CellPoint, FeatureKind, Rank};
 use serde_json::{Value, json};
 
 use bevy::input_focus::InputFocus;
@@ -25,8 +27,12 @@ use crate::features::draw::Drafting;
 use crate::features::prompt::Asking;
 use crate::features::select::Selection;
 use crate::features::tool::{ActiveTool, Tool};
-use crate::map::load::MapTerrain;
+use crate::features::doc as world_doc;
+use crate::map::camera::MapCamera;
+use crate::map::load::{MapAssets, MapTerrain};
 use crate::map::pointer::{MapPointer, PointerOverride};
+use crate::map::view::MapView;
+use crate::StatusMessage;
 
 /// How far a command has got.
 pub(super) enum Poll {
@@ -54,6 +60,21 @@ pub(super) enum Command {
     Tool { tool: Tool, shape: DraftShape },
     /// Chooses what the active drawing tool will place.
     Kind(FeatureKind),
+    /// Sets the selected feature's rank, or clears it.
+    ///
+    /// Goes through the same [`Edit`] the panel's buttons build, so a scripted run cannot
+    /// set a rank in a way a GM could not, and the change undoes like any other.
+    SetRank(Option<Rank>),
+    /// Sets the selected feature's reveal threshold to the map's current scale, or clears
+    /// it. `None` for the scale means "here", which is what the panel's button does.
+    SetReveal(Option<Option<f32>>),
+    /// Zooms the camera to a given map scale in cells per logical pixel, clamped to what
+    /// the terrain allows.
+    ///
+    /// The one verb that is not a thing the GM does with a button, and it exists because
+    /// the whole of issue #5 is about what changes across a zoom: without it there is no
+    /// way to script the reveal at all.
+    Zoom(f32),
     /// Puts the pointer over a terrain cell, and leaves it there.
     At(CellPoint),
     /// Presses and releases the left button, optionally moving the pointer first.
@@ -104,6 +125,9 @@ impl Command {
             Self::Step(_) => "step",
             Self::Tool { .. } => "tool",
             Self::Kind(_) => "kind",
+            Self::SetRank(_) => "rank",
+            Self::SetReveal(_) => "reveal",
+            Self::Zoom(_) => "zoom",
             Self::At(_) => "at",
             Self::Click { .. } => "click",
             Self::Drag { .. } => "drag",
@@ -143,6 +167,24 @@ impl Command {
                 Ok(Self::Tool { tool, shape })
             }
             "kind" => Ok(Self::Kind(kind(rest.first().ok_or("kind needs a name")?)?)),
+            "rank" => Ok(Self::SetRank(match *rest.first().ok_or("rank needs a name")? {
+                "none" | "clear" => None,
+                word => Some(rank(word)?),
+            })),
+            "reveal" => Ok(Self::SetReveal(match rest.first().copied() {
+                None | Some("here") => None,
+                Some("always" | "clear" | "none") => Some(None),
+                Some(word) => Some(Some(
+                    word.parse()
+                        .map_err(|_| format!("{word} is not a scale in cells per pixel"))?,
+                )),
+            })),
+            "zoom" => {
+                let word = rest.first().ok_or("zoom needs a scale in cells per pixel")?;
+                Ok(Self::Zoom(word.parse().map_err(|_| {
+                    format!("{word} is not a scale in cells per pixel")
+                })?))
+            }
             "at" => Ok(Self::At(cell(&rest, 0)?)),
             "click" => Ok(Self::Click {
                 at: if rest.is_empty() {
@@ -242,6 +284,21 @@ impl Command {
                 }
                 Poll::Done(json!({}))
             }
+
+            Self::SetRank(rank) => author(world, |id| Edit::SetRank { id, rank: *rank }),
+
+            Self::SetReveal(scale) => {
+                let scale = match scale {
+                    Some(chosen) => *chosen,
+                    None => match world.get_resource::<MapPointer>() {
+                        Some(pointer) => Some(pointer.cells_per_pixel),
+                        None => return Poll::Failed("no map is open".into()),
+                    },
+                };
+                author(world, |id| Edit::SetMaxCellsPerPixel { id, scale })
+            }
+
+            Self::Zoom(cells_per_pixel) => zoom(world, *cells_per_pixel),
 
             Self::At(at) => {
                 point_at(world, Some(*at));
@@ -368,6 +425,68 @@ fn press_keys(world: &mut World, keys: &[KeyCode], down: bool) {
     }
 }
 
+fn author(world: &mut World, build: impl Fn(campaign::FeatureId) -> Edit) -> Poll {
+    let Some(id) = world
+        .get_resource::<Selection>()
+        .and_then(|selection| selection.only())
+    else {
+        return Poll::Failed("exactly one feature must be selected".into());
+    };
+    let edit = build(id);
+
+    let Some(mut doc) = world.remove_resource::<WorldDoc>() else {
+        return Poll::Failed("no campaign is open".into());
+    };
+    let Some(mut status) = world.remove_resource::<StatusMessage>() else {
+        world.insert_resource(doc);
+        return Poll::Failed("no status line".into());
+    };
+    let applied = world_doc::apply(&mut doc, &mut status, edit);
+    let message = status.0.clone();
+    world.insert_resource(doc);
+    world.insert_resource(status);
+
+    if applied {
+        Poll::Done(json!({ "id": id.0 }))
+    } else {
+        Poll::Failed(message)
+    }
+}
+
+fn zoom(world: &mut World, cells_per_pixel: f32) -> Poll {
+    if !cells_per_pixel.is_finite() || cells_per_pixel <= 0.0 {
+        return Poll::Failed("a scale must be a finite number greater than zero".into());
+    }
+    let Some(cell_size) = world
+        .get_resource::<MapAssets>()
+        .map(|assets| assets.tile_size as f32)
+    else {
+        return Poll::Failed("no map is open".into());
+    };
+    let Some((width, height)) = world
+        .get_resource::<MapTerrain>()
+        .map(|terrain| (terrain.width, terrain.height))
+    else {
+        return Poll::Failed("no map is open".into());
+    };
+    let view = MapView::new(width, height, cell_size);
+
+    let mut cameras = world.query_filtered::<(&mut Projection, &Camera), With<MapCamera>>();
+    let Ok((mut projection, camera)) = cameras.single_mut(world) else {
+        return Poll::Failed("there is no map camera".into());
+    };
+    let Some(viewport) = crate::map::camera::viewport_of(camera) else {
+        return Poll::Failed("the window has no viewport yet".into());
+    };
+    let Projection::Orthographic(orthographic) = &mut *projection else {
+        return Poll::Failed("the map camera is not orthographic".into());
+    };
+
+    let (low, high) = crate::map::camera::zoom_bounds(view, viewport);
+    orthographic.scale = (cells_per_pixel * cell_size).clamp(low, high);
+    Poll::Done(json!({ "cells_per_pixel": orthographic.scale / cell_size }))
+}
+
 fn observe(world: &mut World, topic: &Topic) -> Value {
     if let Topic::Input = topic {
         return input(world);
@@ -390,6 +509,8 @@ fn observe(world: &mut World, topic: &Topic) -> Value {
                         "vertices": feature.geometry.len(),
                         "parent": feature.parent.map(|parent| parent.0),
                         "note": feature.note,
+                        "rank": feature.rank.map(|rank| format!("{rank:?}")),
+                        "max_cells_per_pixel": feature.max_cells_per_pixel,
                     })
                 })
                 .collect();
@@ -478,6 +599,15 @@ fn kind(word: &str) -> Result<FeatureKind, String> {
         "territory" => Ok(FeatureKind::Territory),
         "poi" => Ok(FeatureKind::Poi),
         other => Err(format!("there is no {other} kind")),
+    }
+}
+
+fn rank(word: &str) -> Result<Rank, String> {
+    match word {
+        "hamlet" => Ok(Rank::Hamlet),
+        "town" => Ok(Rank::Town),
+        "city" => Ok(Rank::City),
+        other => Err(format!("there is no {other} rank")),
     }
 }
 
