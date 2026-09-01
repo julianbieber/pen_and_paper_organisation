@@ -76,6 +76,10 @@ pub fn frame_terrain(
 ///
 /// Pans on the **middle or right** button. The left one authors — it selects, drags a
 /// vertex, box-selects and places one — so panning cannot also be on it.
+///
+/// A pan is the one input measured against the window's scale factor rather than against
+/// the projection alone: `MouseMotion` carries a raw device delta, not a delta in the
+/// logical pixels [`viewport_of`] and the zoom anchor are stated in.
 pub fn drive_camera(
     terrain: Res<MapTerrain>,
     assets: Res<MapAssets>,
@@ -122,14 +126,21 @@ pub fn drive_camera(
 
 /// The viewport the projection is actually scaled against.
 ///
-/// Physical, not logical: `ScalingMode::WindowSize` is fed the physical size, so
-/// measuring the view in logical pixels puts every zoom bound and every visible-chunk
-/// rectangle out by the display's scale factor. `None` until the window has a real
-/// size, which it does not on the frame it is created.
+/// Logical, not physical: bevy hands `ScalingMode::WindowSize` the *logical* viewport, so
+/// `OrthographicProjection::scale` is world units to the **logical** pixel. Measuring the
+/// view in physical pixels puts every zoom bound, every visible rectangle and every
+/// cursor-to-cell conversion out by the display's scale factor — invisibly on a display
+/// whose factor is one, and by a factor of two on one that is not.
+///
+/// This is the unit every threshold in the editor is written in. The one place a logical
+/// size becomes a physical one is a gizmo pen's width, in
+/// [`features::pens`](crate::features::pens), because that is what the line shader
+/// measures against.
+///
+/// `None` until the window has a real size, which it does not on the frame it is created.
 pub fn viewport_of(camera: &Camera) -> Option<Vec2> {
     camera
-        .physical_viewport_size()
-        .map(|size| size.as_vec2())
+        .logical_viewport_size()
         .filter(|size| size.min_element() > 1.0)
 }
 
@@ -140,7 +151,12 @@ fn hold(centre: f32, low: f32, high: f32, half: f32) -> f32 {
     centre.clamp(low + half, high - half)
 }
 
-fn zoom_bounds(view: MapView, viewport: Vec2) -> (f32, f32) {
+/// The closest and furthest the camera may zoom, in world units to the logical pixel.
+///
+/// The closest shows one chunk across the window; the furthest is whichever is nearer of
+/// the whole terrain and the [`MAX_RESIDENT_CHUNKS`] budget. Comes back the right way
+/// round on a terrain smaller than a chunk, where the two bounds cross over.
+pub fn zoom_bounds(view: MapView, viewport: Vec2) -> (f32, f32) {
     let viewport = viewport.max(Vec2::ONE);
     let chunk = view.chunk_size();
 
