@@ -36,6 +36,10 @@ pub const SNAP_SLACK_PIXELS: f32 = 10.0;
 /// `cells_per_pixel` is the one factor, not a slack per caller: every slack in the editor
 /// is a fixed size on screen, so each caller scales its own through [`MapPointer::slack`]
 /// and none of them is a constant in cells.
+///
+/// **Logical** pixels, because that is what the projection's scale is measured in — and
+/// because a reveal threshold written into `world.ron` must mean the same thing on a
+/// display whose scale factor is two as on one whose factor is one.
 #[derive(Resource, Debug, Clone, Copy)]
 pub struct MapPointer {
     pub cell: Option<CellPoint>,
@@ -91,7 +95,7 @@ pub fn track_pointer(
     };
     let view = MapView::new(terrain.width, terrain.height, assets.tile_size as f32);
 
-    let cells_per_pixel = orthographic.scale * window.scale_factor() / view.cell_size;
+    let cells_per_pixel = orthographic.scale / view.cell_size;
     let cell = forced.0.or_else(|| {
         cursor_offset(&window, viewport).map(|offset| {
             let world = transform.translation.truncate() + offset * orthographic.scale;
@@ -106,15 +110,17 @@ pub fn track_pointer(
     }
 }
 
-/// Where the cursor sits relative to the middle of the view, in physical pixels with y
+/// Where the cursor sits relative to the middle of the view, in logical pixels with y
 /// running up.
 ///
 /// Multiplying this by the projection's scale gives an offset in world units, which is
-/// what both the cursor-to-cell conversion and the camera's zoom anchor need. `None` when
-/// the cursor is outside the window.
+/// what both the cursor-to-cell conversion and the camera's zoom anchor need — and which
+/// is why it is logical: the scale is world units to the logical pixel, so a cursor
+/// converted to physical pixels first would land the offset out by the display's scale
+/// factor. `None` when the cursor is outside the window.
 pub fn cursor_offset(window: &Window, viewport: Vec2) -> Option<Vec2> {
     window
         .cursor_position()
-        .map(|cursor| cursor * window.scale_factor() - viewport / 2.0)
+        .map(|cursor| cursor - viewport / 2.0)
         .map(|offset| Vec2::new(offset.x, -offset.y))
 }

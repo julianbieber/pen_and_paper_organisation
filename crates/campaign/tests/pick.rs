@@ -1,5 +1,9 @@
 //! What a position lands on, what a box catches, and where a vertex snaps — the decisions
 //! the editor delegates rather than makes, so all of them are checked without a window.
+//!
+//! Every hit test takes a predicate saying what the map is currently drawing. These are
+//! tests of geometry rather than of what is on screen, so they admit everything; whether a
+//! feature is drawn at all is decided in `campaign::lod` and checked there.
 
 use campaign::feature::{CellPoint, Feature, FeatureId, FeatureKind, Geometry};
 use campaign::pick::{self, Hit};
@@ -10,14 +14,12 @@ fn at(x: f32, y: f32) -> CellPoint {
     CellPoint::new(x, y)
 }
 
+fn anything(_: FeatureId) -> bool {
+    true
+}
+
 fn feature(kind: FeatureKind, geometry: Geometry) -> Feature {
-    Feature {
-        kind,
-        geometry,
-        label: String::new(),
-        note: None,
-        parent: None,
-    }
+    Feature::plain(kind, geometry)
 }
 
 fn add(world: &mut World, feature: Feature) -> FeatureId {
@@ -44,14 +46,14 @@ fn a_vertex_beats_an_edge_beats_a_body() {
     let mut world = World::default();
     let polygon = add(&mut world, feature(FeatureKind::Territory, square(0.0, 0.0, 10.0)));
 
-    let on_vertex = pick::pick(&world, at(0.1, 0.1), 1.0).expect("a vertex is there");
+    let on_vertex = pick::pick(&world, at(0.1, 0.1), 1.0, &anything).expect("a vertex is there");
     assert_eq!(on_vertex.hit, Hit::Vertex);
     assert_eq!(on_vertex.feature, polygon);
 
-    let on_edge = pick::pick(&world, at(5.0, 0.2), 1.0).expect("an edge is there");
+    let on_edge = pick::pick(&world, at(5.0, 0.2), 1.0, &anything).expect("an edge is there");
     assert_eq!(on_edge.hit, Hit::Edge);
 
-    let inside = pick::pick(&world, at(5.0, 5.0), 1.0).expect("the body is there");
+    let inside = pick::pick(&world, at(5.0, 5.0), 1.0, &anything).expect("the body is there");
     assert_eq!(inside.hit, Hit::Body);
 }
 
@@ -68,7 +70,7 @@ fn a_press_on_a_polylines_middle_lands_on_an_edge() {
         ),
     );
 
-    let landing = pick::pick(&world, at(5.0, 0.1), 0.5).expect("the road is under the pointer");
+    let landing = pick::pick(&world, at(5.0, 0.1), 0.5, &anything).expect("the road is under the pointer");
     assert_eq!(landing.feature, road);
     assert_eq!(landing.hit, Hit::Edge);
 }
@@ -86,7 +88,7 @@ fn an_edges_index_inserts_into_that_edge() {
         ),
     );
 
-    let landing = pick::pick(&world, at(15.0, 0.0), 0.5).expect("the second segment");
+    let landing = pick::pick(&world, at(15.0, 0.0), 0.5, &anything).expect("the second segment");
     assert_eq!(landing.index, 2);
 
     Edit::InsertVertex {
@@ -141,7 +143,7 @@ fn a_box_catches_only_what_lies_wholly_inside_it() {
         ),
     );
 
-    let caught = pick::within(&world, at(0.0, 0.0), at(10.0, 10.0));
+    let caught = pick::within(&world, at(0.0, 0.0), at(10.0, 10.0), &anything);
     assert!(caught.contains(&inside));
     assert!(!caught.contains(&crossing));
 }
@@ -163,11 +165,11 @@ fn a_placed_vertex_snaps_to_a_road_endpoint_and_to_a_settlement() {
         feature(FeatureKind::Settlement, Geometry::Point(at(40.0, 0.0))),
     );
 
-    let onto_road = pick::snap(&world, &[], at(10.3, 0.2), 1.0);
+    let onto_road = pick::snap(&world, &[], at(10.3, 0.2), 1.0, &anything);
     assert_eq!(onto_road.at, at(10.0, 0.0));
     assert_eq!(onto_road.onto, Some(road));
 
-    let onto_town = pick::snap(&world, &[], at(40.2, 0.1), 1.0);
+    let onto_town = pick::snap(&world, &[], at(40.2, 0.1), 1.0, &anything);
     assert_eq!(onto_town.onto, Some(town));
 }
 
@@ -184,8 +186,8 @@ fn what_makes_a_snap_target_is_its_kind_not_its_shape() {
         ),
     );
 
-    assert!(!pick::snap(&world, &[], at(10.1, 0.0), 1.0).landed());
-    assert!(pick::snap(&world, &[], at(20.1, 0.0), 1.0).landed());
+    assert!(!pick::snap(&world, &[], at(10.1, 0.0), 1.0, &anything).landed());
+    assert!(pick::snap(&world, &[], at(20.1, 0.0), 1.0, &anything).landed());
 }
 
 // Closing a polygon is a snap onto the draft's own first vertex, and it is what finishes
@@ -195,7 +197,7 @@ fn snapping_onto_the_drafts_own_first_vertex_closes_it() {
     let world = World::default();
     let drafted = [at(0.0, 0.0), at(10.0, 0.0), at(10.0, 10.0)];
 
-    let closing = pick::snap(&world, &drafted, at(0.2, 0.1), 1.0);
+    let closing = pick::snap(&world, &drafted, at(0.2, 0.1), 1.0, &anything);
     assert!(closing.closes);
     assert_eq!(closing.at, at(0.0, 0.0));
     assert_eq!(closing.onto, None);
@@ -211,7 +213,7 @@ fn a_position_with_nothing_near_it_comes_back_unchanged() {
         feature(FeatureKind::Settlement, Geometry::Point(at(0.0, 0.0))),
     );
 
-    let snap = pick::snap(&world, &[], at(500.0, 500.0), 1.0);
+    let snap = pick::snap(&world, &[], at(500.0, 500.0), 1.0, &anything);
     assert_eq!(snap.at, at(500.0, 500.0));
     assert!(!snap.landed());
 }

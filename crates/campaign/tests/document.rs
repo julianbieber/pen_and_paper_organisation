@@ -12,11 +12,8 @@ fn point(x: f32, y: f32) -> Geometry {
 
 fn feature(kind: FeatureKind, geometry: Geometry, label: &str) -> Feature {
     Feature {
-        kind,
-        geometry,
         label: label.to_owned(),
-        note: None,
-        parent: None,
+        ..Feature::plain(kind, geometry)
     }
 }
 

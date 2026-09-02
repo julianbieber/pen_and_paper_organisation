@@ -19,12 +19,18 @@ pub mod edit;
 pub mod feature;
 /// The single Edit one authoring gesture becomes.
 pub mod gesture;
+/// Where a label sits, what it outranks, and which labels fit without overlapping.
+pub mod label;
 /// The names the campaign format fixes, and the joins onto a campaign root.
 pub mod layout;
+/// How much detail a feature is drawn at, for a given map scale.
+pub mod lod;
 /// What `campaign.ron` says, and reading it back off disk.
 pub mod manifest;
 /// What a position in cells lands on, what a rectangle encloses, and where a vertex snaps.
 pub mod pick;
+/// The one table saying what a FeatureKind and a Rank look like.
+pub mod style;
 /// Which tile a terrain cell is drawn as, and how brightly it is lit.
 pub mod tiles;
 /// The set of features a map holds, and every rule a set of them must satisfy.
@@ -35,7 +41,7 @@ pub use campaign::{Campaign, CampaignError};
 pub use document::{Document, UNDO_LIMIT};
 pub use draft::{Draft, DraftShape};
 pub use edit::{Edit, EditError};
-pub use feature::{CellPoint, Feature, FeatureId, FeatureKind, Geometry};
+pub use feature::{CellPoint, Feature, FeatureId, FeatureKind, Geometry, Rank};
 pub use gesture::Orphans;
 pub use pick::{Hit, Landing, Snap};
 pub use manifest::{

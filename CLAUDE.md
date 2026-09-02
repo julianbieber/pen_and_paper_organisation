@@ -14,7 +14,9 @@ lives there and the faction that runs the docks.
 The workspace and the campaign directory are in (#1): `crates/campaign` opens and creates
 one, `crates/campaign_editor` builds the `pnp` binary and shows a dialog when it has no
 campaign. The terrain draws as a tile map (#2): `campaign::tiles` decides every tile,
-`campaign_editor/src/map` streams them. The milestone is filed as issues #1–#11; the design
+`campaign_editor/src/map` streams them. Features are styled by kind and a city's interior
+opens up as the map zooms in (#5): `campaign::style`, `campaign::lod` and `campaign::label`
+decide it, `campaign_editor/src/features/render.rs` draws it. The milestone is filed as issues #1–#11; the design
 behind them is in the plan at
 `~/fun_repos/hobby-mimisbrunnr/notes/pen_and_paper_organisation/init/pen_and_paper_plan/plan-2026-08-30-campaign-map-and-notes.md`.
 
@@ -184,6 +186,52 @@ and `TILE_COUNT` is 24, not 25.
 where the terrain's rows land — and is tested without a GPU. `crates/campaign_editor/map`
 owns only ECS and pixels. A terrain's rows run top to bottom and a tilemap chunk's run
 bottom to top; that flip is written once, in `map::view`, and everything goes through it.
+
+## How features are styled
+
+**Three tables in `crates/campaign`, and the renderer holds no opinion of its own.**
+`style::of(kind, rank)` gives every colour, width, dash, fill and icon; `lod::detail`
+decides how much of a feature is drawn; `label::place` decides which labels fit. All three
+are pure functions over a `World`, so every rule below is tested without a GPU and
+`features/render.rs` owns only ECS and pixels.
+
+**A `Stroke` names a pen, it does not carry a width.** A gizmo's width and dash live in a
+configuration group, which is a *type*, so the set of pens is fixed at compile time. A new
+`Stroke` fails to compile twice — in `style.rs`, which must give it a width and a dash, and
+in `features/pens.rs`, which must give it a group and a place in the paint order.
+
+**Registration order is paint order.** Bevy queues every 2D gizmo at one depth with the
+comparison always passing, so z orders a line against the *terrain* and against nothing
+else. What covers what is the sequence in `register_pens`: fills, feature strokes, labels,
+the draft, the handles.
+
+**One currency: cells per _logical_ pixel.** Every threshold, slack and stored reveal scale
+is logical, so a document authored on one display behaves identically on another. The sole
+conversion to physical pixels is a pen's width in `pens::size_pens`, because that is what
+the line shader measures against. `OrthographicProjection::scale` is world units to the
+*logical* pixel — bevy feeds `ScalingMode::WindowSize` the logical viewport — which is why
+`viewport_of` returns `logical_viewport_size`.
+
+**Two thresholds, both fades, both decided in `lod::detail`.** A feature's own
+`max_cells_per_pixel`, and the on-screen area of every polygon in its parent chain. The one
+answer drives the skip, the alpha and the label fade together, and the same function
+filters every hit test — so a press can never land on something the frame declined to draw.
+A selected feature is exempt inside that function, or it could not be clicked to deselect.
+Areas come from `lod::Areas`, cached beside the document on `WorldDoc` and rebuilt wherever
+an edit lands.
+
+**A dash restarts at every vertex.** The line shader measures a dash along one segment, so
+a road authored at cell density renders solid. `render::segments_of` coalesces segments
+shorter than one dash period before stroking. The `River` pen is the one that may not be
+dashed at all, because its width is rewritten from the zoom every frame to match the
+terrain's own one-cell channel.
+
+**Labels are automatic only.** `label::anchor` places them — a point above its icon, a
+polygon at an interior point, a polyline at its arc-length midpoint — and there is no
+per-feature offset. The format stays open to adding one. Boxes are measured by the renderer
+and over-estimated, so an error drops a label rather than letting two overlap; ties break
+on `FeatureId`, never on document order. Only ASCII 32–126 draws, which is what bevy's
+stroke font carries.
 
 ## The zk contract
 

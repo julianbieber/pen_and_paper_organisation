@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use crate::feature::{Feature, FeatureId, note_path_refusal};
+use crate::feature::{Feature, FeatureId, note_path_refusal, reveal_refusal};
 
 /// The world document format this build writes, and the only one it reads.
 ///
@@ -94,6 +94,18 @@ pub enum WorldError {
     #[error("{feature} has a note path that {reason}")]
     BadNotePath {
         feature: FeatureId,
+        reason: &'static str,
+    },
+
+    /// A feature carries a reveal threshold that is not a finite positive number.
+    ///
+    /// Refused for the reason a non-finite coordinate is: the threshold is compared
+    /// against the map's scale every frame, and one that cannot be compared would hide
+    /// the feature for the life of the document with nothing to say why.
+    #[error("{feature} has a reveal scale of {scale}, which {reason}")]
+    BadRevealScale {
+        feature: FeatureId,
+        scale: f32,
         reason: &'static str,
     },
 
@@ -391,6 +403,15 @@ impl World {
             {
                 return Err(WorldError::BadNotePath {
                     feature: *id,
+                    reason,
+                });
+            }
+            if let Some(scale) = feature.max_cells_per_pixel
+                && let Some(reason) = reveal_refusal(scale)
+            {
+                return Err(WorldError::BadRevealScale {
+                    feature: *id,
+                    scale,
                     reason,
                 });
             }

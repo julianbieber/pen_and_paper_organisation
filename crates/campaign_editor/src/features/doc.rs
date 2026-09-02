@@ -8,6 +8,7 @@
 
 use bevy::prelude::*;
 use campaign::edit::{Edit, EditError};
+use campaign::lod::Areas;
 use campaign::world::WorldError;
 use campaign::{Campaign, Document, layout};
 
@@ -32,17 +33,30 @@ pub struct WorldState {
     pub message: String,
 }
 
-/// The world being authored.
+/// The world being authored, and the polygon areas that go with it.
 ///
-/// Holds only the [`Document`]. Where `world.ron` lives is not a field: the campaign
-/// already says, through [`layout::world`], and a copy here would be a second answer to
-/// the same question.
+/// Where `world.ron` lives is not a field: the campaign already says, through
+/// [`layout::world`], and a copy here would be a second answer to the same question.
+///
+/// The areas are session state rather than part of the document, for the reason the undo
+/// stack is: an area is derivable from the features, and a cache written into `world.ron`
+/// would be a second copy of a fact that can disagree with the first. It lives here rather
+/// than in its own resource because it must be rebuilt in lockstep with the document — a
+/// resource watched with `is_changed` would answer from last frame's geometry, and the hit
+/// tests read it the same frame an edit lands.
 #[derive(Resource, Debug)]
 pub struct WorldDoc {
     pub document: Document,
+    pub areas: Areas,
 }
 
 impl WorldDoc {
+    /// A document under authorship, with its areas measured.
+    pub fn new(document: Document) -> Self {
+        let areas = Areas::of(document.world());
+        Self { document, areas }
+    }
+
     /// Write the world to the campaign's `world.ron`.
     ///
     /// The only place in the editor that writes it, which is what makes "written only by
@@ -59,7 +73,10 @@ impl WorldDoc {
 /// to tell which happened.
 pub fn apply(doc: &mut WorldDoc, status: &mut StatusMessage, edit: Edit) -> bool {
     match doc.document.apply(edit) {
-        Ok(()) => true,
+        Ok(()) => {
+            doc.areas.rebuild(doc.document.world());
+            true
+        }
         Err(refusal) => {
             report(status, &refusal);
             false
@@ -93,7 +110,7 @@ pub fn open_world(mut commands: Commands, open: Res<OpenCampaign>) {
                 outcome: WorldOutcome::Ready,
                 message: String::new(),
             });
-            commands.insert_resource(WorldDoc { document });
+            commands.insert_resource(WorldDoc::new(document));
         }
         Err(error) => {
             error!("{error}");

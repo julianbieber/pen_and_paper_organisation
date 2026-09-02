@@ -9,7 +9,9 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::feature::{CellPoint, Feature, FeatureId, FeatureKind, note_path_refusal};
+use crate::feature::{
+    CellPoint, Feature, FeatureId, FeatureKind, Rank, note_path_refusal, reveal_refusal,
+};
 use crate::world::{ParentProblem, World};
 
 /// Why an edit was refused.
@@ -72,6 +74,14 @@ pub enum EditError {
         feature: FeatureId,
         reason: &'static str,
     },
+
+    /// A reveal threshold a feature may not carry.
+    #[error("{feature} cannot take a reveal scale of {scale}: it {reason}")]
+    BadRevealScale {
+        feature: FeatureId,
+        scale: f32,
+        reason: &'static str,
+    },
 }
 
 fn children_list(children: &[FeatureId]) -> String {
@@ -123,6 +133,14 @@ pub enum Edit {
         id: FeatureId,
         parent: Option<FeatureId>,
     },
+    /// Say how big a settlement is, or that it has no rank.
+    SetRank { id: FeatureId, rank: Option<Rank> },
+    /// Say the coarsest scale a feature is drawn at, in cells per logical pixel, or that
+    /// it is drawn at every scale its parents allow.
+    SetMaxCellsPerPixel {
+        id: FeatureId,
+        scale: Option<f32>,
+    },
     /// Several edits that apply, undo and redo as one.
     ///
     /// What makes deleting a settlement together with everything parented to it a single
@@ -158,6 +176,7 @@ impl Edit {
                 }
                 check_geometry(id, &feature)?;
                 check_note(id, feature.note.as_deref())?;
+                check_reveal(id, feature.max_cells_per_pixel)?;
                 world.may_take_parent(id, feature.parent)?;
 
                 world.features_mut().insert(id, feature);
@@ -268,6 +287,19 @@ impl Edit {
                 Ok(Self::SetParent { id, parent: was })
             }
 
+            Self::SetRank { id, rank } => {
+                feature_of(world, id)?;
+                let was = std::mem::replace(&mut feature_mut(world, id).rank, rank);
+                Ok(Self::SetRank { id, rank: was })
+            }
+
+            Self::SetMaxCellsPerPixel { id, scale } => {
+                feature_of(world, id)?;
+                check_reveal(id, scale)?;
+                let was = std::mem::replace(&mut feature_mut(world, id).max_cells_per_pixel, scale);
+                Ok(Self::SetMaxCellsPerPixel { id, scale: was })
+            }
+
             Self::Batch(edits) => {
                 let mut inverses: Vec<Self> = Vec::with_capacity(edits.len());
                 for edit in edits {
@@ -331,6 +363,19 @@ fn check_geometry(id: FeatureId, feature: &Feature) -> Result<(), EditError> {
             shape: feature.geometry.shape(),
             have: feature.geometry.len(),
             least: feature.geometry.least(),
+        });
+    }
+    Ok(())
+}
+
+fn check_reveal(id: FeatureId, scale: Option<f32>) -> Result<(), EditError> {
+    if let Some(scale) = scale
+        && let Some(reason) = reveal_refusal(scale)
+    {
+        return Err(EditError::BadRevealScale {
+            feature: id,
+            scale,
+            reason,
         });
     }
     Ok(())

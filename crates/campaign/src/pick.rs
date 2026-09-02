@@ -9,6 +9,13 @@
 //! Everything here is a pure function over a [`World`] and positions in cells. The editor
 //! decides nothing about geometry: it turns a cursor into a cell, asks, and applies the
 //! answer.
+//!
+//! Every hit test takes a `drawn` predicate and lands only on features it admits, so what
+//! can be picked is what is on screen — the editor passes the same detail test it drew
+//! with, and a click on apparently empty ground therefore selects nothing.
+//! [`enclosing_settlement`] is the deliberate exception: which settlement encloses a
+//! point is a fact about the document rather than a hit test, and filtering it would write
+//! the zoom the GM happened to be at into `world.ron`.
 
 use crate::feature::{CellPoint, FeatureId, FeatureKind, Geometry};
 use crate::world::World;
@@ -83,12 +90,20 @@ impl Snap {
 /// A point has only its vertex, a polyline has vertices and edges, a polygon has all
 /// three — so a click in the middle of a polyline answers [`Hit::Edge`], and there is no
 /// way for it to answer [`Hit::Body`].
-pub fn pick(world: &World, at: CellPoint, slack: f32) -> Option<Landing> {
+pub fn pick(
+    world: &World,
+    at: CellPoint,
+    slack: f32,
+    drawn: &dyn Fn(FeatureId) -> bool,
+) -> Option<Landing> {
     let mut vertex: Option<(f32, Landing)> = None;
     let mut edge: Option<(f32, Landing)> = None;
     let mut body: Option<(f32, Landing)> = None;
 
     for (id, feature) in world.features() {
+        if !drawn(id) {
+            continue;
+        }
         let vertices = feature.geometry.vertices();
 
         for (index, position) in vertices.iter().enumerate() {
@@ -163,12 +178,18 @@ pub fn enclosing_settlement(world: &World, at: CellPoint) -> Option<FeatureId> {
 /// box is therefore not selected — the rule a GM can predict without seeing the geometry,
 /// and the one that makes dragging a box over a city not also catch the road passing
 /// through it.
-pub fn within(world: &World, corner: CellPoint, opposite: CellPoint) -> Vec<FeatureId> {
+pub fn within(
+    world: &World,
+    corner: CellPoint,
+    opposite: CellPoint,
+    drawn: &dyn Fn(FeatureId) -> bool,
+) -> Vec<FeatureId> {
     let low = CellPoint::new(corner.x.min(opposite.x), corner.y.min(opposite.y));
     let high = CellPoint::new(corner.x.max(opposite.x), corner.y.max(opposite.y));
 
     world
         .features()
+        .filter(|(id, _)| drawn(*id))
         .filter(|(_, feature)| {
             feature.geometry.vertices().iter().all(|vertex| {
                 vertex.x >= low.x && vertex.x <= high.x && vertex.y >= low.y && vertex.y <= high.y
@@ -192,7 +213,13 @@ pub fn within(world: &World, corner: CellPoint, opposite: CellPoint) -> Vec<Feat
 ///
 /// Returns `at` unchanged when nothing is within `slack`: snapping never moves a vertex
 /// that had no target.
-pub fn snap(world: &World, drafted: &[CellPoint], at: CellPoint, slack: f32) -> Snap {
+pub fn snap(
+    world: &World,
+    drafted: &[CellPoint],
+    at: CellPoint,
+    slack: f32,
+    drawn: &dyn Fn(FeatureId) -> bool,
+) -> Snap {
     let mut best = Snap::none(at);
     let mut closest = slack;
 
@@ -209,6 +236,9 @@ pub fn snap(world: &World, drafted: &[CellPoint], at: CellPoint, slack: f32) -> 
     }
 
     for (id, feature) in world.features() {
+        if !drawn(id) {
+            continue;
+        }
         for position in snap_targets(&feature.geometry, feature.kind) {
             let distance = distance(at, position);
             if distance < closest {
@@ -271,7 +301,13 @@ fn distance_to_segment(at: CellPoint, from: CellPoint, to: CellPoint) -> f32 {
     distance(at, CellPoint::new(from.x + along * dx, from.y + along * dy))
 }
 
-fn encloses(vertices: &[CellPoint], at: CellPoint) -> bool {
+/// Whether the closed ring `vertices` contains `at`, by the even-odd rule.
+///
+/// False for anything with fewer than three vertices, which encloses nothing. Shared
+/// rather than reimplemented: [`crate::label`] asks the same question of the same rings,
+/// and two answers to "is this point inside" is how a label lands outside the shape it
+/// names.
+pub fn encloses(vertices: &[CellPoint], at: CellPoint) -> bool {
     if vertices.len() < 3 {
         return false;
     }
@@ -289,7 +325,14 @@ fn encloses(vertices: &[CellPoint], at: CellPoint) -> bool {
     inside
 }
 
-fn area(vertices: &[CellPoint]) -> f32 {
+/// The area the closed ring `vertices` encloses, in square terrain cells.
+///
+/// The shoelace sum, unsigned, so winding order does not change the answer. Zero for
+/// anything with fewer than three vertices and for a ring that folds back on itself
+/// exactly. This is the number [`crate::lod::Areas`] caches, and it is the whole polygon
+/// rather than the part on screen — detail then rises with zoom and never changes under a
+/// pan.
+pub fn area(vertices: &[CellPoint]) -> f32 {
     if vertices.len() < 3 {
         return 0.0;
     }

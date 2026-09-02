@@ -14,11 +14,8 @@ fn point(x: f32, y: f32) -> Geometry {
 
 fn feature(kind: FeatureKind, geometry: Geometry, label: &str) -> Feature {
     Feature {
-        kind,
-        geometry,
         label: label.to_owned(),
-        note: None,
-        parent: None,
+        ..Feature::plain(kind, geometry)
     }
 }
 
@@ -93,11 +90,13 @@ fn variant_name(edit: &Edit) -> &'static str {
         Edit::SetLabel { .. } => "SetLabel",
         Edit::SetNote { .. } => "SetNote",
         Edit::SetParent { .. } => "SetParent",
+        Edit::SetRank { .. } => "SetRank",
+        Edit::SetMaxCellsPerPixel { .. } => "SetMaxCellsPerPixel",
         Edit::Batch(_) => "Batch",
     }
 }
 
-const EVERY_VARIANT: [&str; 10] = [
+const EVERY_VARIANT: [&str; 12] = [
     "Add",
     "Delete",
     "MoveVertex",
@@ -107,6 +106,8 @@ const EVERY_VARIANT: [&str; 10] = [
     "SetLabel",
     "SetNote",
     "SetParent",
+    "SetRank",
+    "SetMaxCellsPerPixel",
     "Batch",
 ];
 
@@ -133,7 +134,7 @@ fn assert_inverts(world: &mut World, edit: Edit) {
 
 // Acceptance criterion 1: for every variant, apply-then-apply-inverse is the identity,
 // asserted both by value and as the bytes the world would be saved as. The match in
-// `variant_name` is exhaustive, so a tenth variant fails to compile rather than slipping
+// `variant_name` is exhaustive, so a further variant fails to compile rather than slipping
 // through this untested.
 #[test]
 fn every_edit_variant_inverts_to_the_exact_prior_state() {
@@ -175,6 +176,14 @@ fn every_edit_variant_inverts_to_the_exact_prior_state() {
         Edit::SetParent {
             id: f.poi,
             parent: Some(f.city),
+        },
+        Edit::SetRank {
+            id: f.city,
+            rank: Some(campaign::Rank::City),
+        },
+        Edit::SetMaxCellsPerPixel {
+            id: f.tavern,
+            scale: Some(0.25),
         },
         Edit::Batch(vec![
             Edit::SetLabel {
@@ -640,4 +649,45 @@ fn an_edit_round_trips_through_ron() {
     let back: Edit = ron::from_str(&text).expect("parse");
 
     assert_eq!(back, edit);
+}
+
+// The edit gate and the load gate must refuse the same things, or an edit could build a
+// world that would be refused if it were saved and opened again.
+#[test]
+fn an_unusable_reveal_scale_is_refused_where_it_is_set() {
+    let f = fixture();
+    let mut world = f.world.clone();
+
+    for scale in [0.0, -1.0, f32::NAN, f32::INFINITY] {
+        let refusal = Edit::SetMaxCellsPerPixel {
+            id: f.poi,
+            scale: Some(scale),
+        }
+        .apply(&mut world)
+        .expect_err(&format!("a reveal scale of {scale} must be refused"));
+        assert!(matches!(refusal, EditError::BadRevealScale { .. }));
+    }
+
+    assert_eq!(world, f.world, "a refused edit changed the world");
+}
+
+// An Add carries the field too, so the gate has to be on that path as well — otherwise a
+// scripted run could add a feature carrying a scale no SetMaxCellsPerPixel would accept.
+#[test]
+fn an_add_carrying_an_unusable_reveal_scale_is_refused() {
+    let f = fixture();
+    let mut world = f.world.clone();
+    let id = world.fresh_id();
+
+    let refusal = Edit::Add {
+        id,
+        feature: Feature {
+            max_cells_per_pixel: Some(f32::NAN),
+            ..feature(FeatureKind::Poi, point(1.0, 1.0), "a cairn")
+        },
+    }
+    .apply(&mut world)
+    .expect_err("an add carrying a NaN reveal scale must be refused");
+    assert!(matches!(refusal, EditError::BadRevealScale { .. }));
+    assert!(world.feature(id).is_none());
 }
