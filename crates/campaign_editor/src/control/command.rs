@@ -16,6 +16,7 @@ use bevy::camera::Projection;
 use campaign::draft::DraftShape;
 use campaign::edit::Edit;
 use campaign::feature::{CellPoint, FeatureKind, Rank};
+use campaign::notebook::NoteKind;
 use serde_json::{Value, json};
 
 use bevy::input_focus::InputFocus;
@@ -23,6 +24,7 @@ use bevy::text::EditableText;
 
 use crate::features::PointerOverUi;
 use crate::features::doc::WorldDoc;
+use crate::features::panel::PendingLabel;
 use crate::features::draw::Drafting;
 use crate::features::prompt::Asking;
 use crate::features::select::Selection;
@@ -32,7 +34,8 @@ use crate::map::camera::MapCamera;
 use crate::map::load::{MapAssets, MapTerrain};
 use crate::map::pointer::{MapPointer, PointerOverride};
 use crate::map::view::MapView;
-use crate::StatusMessage;
+use crate::notes::{self, NoteJob, ZkState};
+use crate::{OpenCampaign, StatusMessage};
 
 /// How far a command has got.
 pub(super) enum Poll {
@@ -92,6 +95,29 @@ pub(super) enum Command {
     /// lands on no system is indistinguishable from one that was never delivered and a
     /// scripted run cannot see the screen.
     Observe(Topic),
+    /// Names the selected feature, by typing into the label field and letting go.
+    ///
+    /// Exists because a place note is titled from its feature's label, so without this
+    /// there is no scripted way to reach the Create button at all.
+    ///
+    /// Writes [`PendingLabel`] and waits, rather than applying the [`Edit`] itself: the
+    /// panel holds a typed label and commits it when the field is left, so an edit applied
+    /// behind it is overwritten by the empty text the panel is still holding. Going
+    /// through the field is both what a GM does and the only thing that survives.
+    SetLabel { label: String, started: bool },
+    /// Makes one note, by the route the GM's own button takes, and waits for it to land.
+    ///
+    /// A place takes both its title and its subject from the selection, exactly as the
+    /// Create button does — a verb that could name either would let a script make a place
+    /// note a GM could not. Every other kind names its title, which is what the notes
+    /// panel would have typed.
+    Note {
+        kind: NoteKind,
+        title: String,
+        /// Whether the job has been asked for. Its *absence from the slot* afterwards is
+        /// what says the note landed, so the reply never races the file.
+        started: bool,
+    },
     /// Writes a PNG of the window and waits until it is on disk.
     Capture {
         path: PathBuf,
@@ -133,6 +159,8 @@ impl Command {
             Self::Drag { .. } => "drag",
             Self::Key { .. } => "key",
             Self::Observe(_) => "observe",
+            Self::SetLabel { .. } => "label",
+            Self::Note { .. } => "note",
             Self::Capture { .. } => "capture",
             Self::FixedDelta(_) => "fixed-delta",
             Self::Quit => "quit",
@@ -222,6 +250,35 @@ impl Command {
                 "input" => Topic::Input,
                 other => return Err(format!("nothing to observe called {other}")),
             })),
+            "label" => {
+                let label = title_after(line, "");
+                if label.is_empty() {
+                    return Err("label needs a name".to_owned());
+                }
+                Ok(Self::SetLabel {
+                    label,
+                    started: false,
+                })
+            }
+            "note" => {
+                let name = *rest
+                    .first()
+                    .ok_or("note needs a kind: place, person, faction or session")?;
+                let kind = NoteKind::from_label(name)
+                    .ok_or_else(|| format!("there is no note kind called {name}"))?;
+                let title = title_after(line, name);
+                if kind == NoteKind::of_a_feature() && !title.is_empty() {
+                    return Err(
+                        "a place note takes its title from the selected feature, not from the line"
+                            .to_owned(),
+                    );
+                }
+                Ok(Self::Note {
+                    kind,
+                    title,
+                    started: false,
+                })
+            }
             "capture" => Ok(Self::Capture {
                 path: PathBuf::from(rest.first().ok_or("capture needs a path")?),
                 entity: None,
@@ -357,6 +414,87 @@ impl Command {
             },
 
             Self::Observe(topic) => Poll::Done(observe(world, topic)),
+
+            Self::SetLabel { label, started } => {
+                let Some(id) = world.get_resource::<Selection>().and_then(Selection::only) else {
+                    return Poll::Failed("exactly one feature must be selected".into());
+                };
+                if !*started {
+                    let Some(mut pending) = world.get_resource_mut::<PendingLabel>() else {
+                        return Poll::Failed("no campaign is open".into());
+                    };
+                    pending.feature = Some(id);
+                    pending.text.clone_from(label);
+                    *started = true;
+                    return Poll::Running;
+                }
+                let named = world
+                    .get_resource::<WorldDoc>()
+                    .and_then(|doc| doc.document.world().feature(id))
+                    .is_some_and(|feature| feature.label == *label);
+                if named {
+                    Poll::Done(json!({ "id": id.0 }))
+                } else {
+                    Poll::Running
+                }
+            }
+
+            Self::Note {
+                kind,
+                title,
+                started,
+            } => {
+                if !*started {
+                    let (subject, title) = if *kind == NoteKind::of_a_feature() {
+                        let Some(id) =
+                            world.get_resource::<Selection>().and_then(Selection::only)
+                        else {
+                            return Poll::Failed("exactly one feature must be selected".into());
+                        };
+                        let Some(label) = world
+                            .get_resource::<WorldDoc>()
+                            .and_then(|doc| doc.document.world().feature(id))
+                            .map(|feature| feature.label.clone())
+                        else {
+                            return Poll::Failed("no document is open".into());
+                        };
+                        (Some(id), label)
+                    } else {
+                        (None, title.clone())
+                    };
+
+                    if world.get_resource::<OpenCampaign>().is_none() {
+                        return Poll::Failed("no campaign is open".into());
+                    }
+                    *started = true;
+                    world.resource_scope(|world, mut job: Mut<NoteJob>| {
+                        world.resource_scope(|world, mut status: Mut<StatusMessage>| {
+                            let zk = world.resource::<ZkState>();
+                            let campaign = world.resource::<OpenCampaign>();
+                            notes::start(
+                                &mut job,
+                                zk,
+                                campaign,
+                                &mut status,
+                                *kind,
+                                &title,
+                                subject,
+                            );
+                        });
+                    });
+                    return Poll::Running;
+                }
+
+                if world
+                    .get_resource::<NoteJob>()
+                    .is_some_and(NoteJob::busy)
+                {
+                    return Poll::Running;
+                }
+                Poll::Done(json!({
+                    "status": world.get_resource::<StatusMessage>().map(|status| status.0.clone()),
+                }))
+            }
 
             Self::Capture { path, entity } => match entity {
                 None => {
@@ -576,7 +714,22 @@ fn input(world: &mut World) -> Value {
         "question_up": world.get_resource::<Asking>().map(|asking| asking.question.is_some()),
         "has_document": world.get_resource::<WorldDoc>().is_some(),
         "has_terrain": world.get_resource::<MapTerrain>().is_some(),
+        "note_job": world.get_resource::<NoteJob>().map(NoteJob::busy),
+        "zk_answered": world.get_resource::<ZkState>().map(|zk| zk.answered),
+        "zk_present": world.get_resource::<ZkState>().map(|zk| zk.present),
     })
+}
+
+fn title_after(line: &str, name: &str) -> String {
+    let rest = line.trim_start();
+    let rest = match rest.split_once(char::is_whitespace) {
+        Some((_verb, rest)) => rest.trim_start(),
+        None => "",
+    };
+    if name.is_empty() {
+        return rest.trim().to_owned();
+    }
+    rest.strip_prefix(name).unwrap_or(rest).trim().to_owned()
 }
 
 fn cell(rest: &[&str], from: usize) -> Result<CellPoint, String> {
@@ -651,6 +804,12 @@ mod tests {
             ("undo", "key"),
             ("redo", "key"),
             ("save", "key"),
+            ("rank city", "rank"),
+            ("reveal here", "reveal"),
+            ("zoom 2", "zoom"),
+            ("label Riverford", "label"),
+            ("note place", "note"),
+            ("note person Sir Bedivere", "note"),
             ("observe world", "observe"),
             ("capture /tmp/a.png", "capture"),
             ("fixed-delta 0.016", "fixed-delta"),
@@ -666,7 +825,10 @@ mod tests {
     // that stopped.
     #[test]
     fn a_line_that_is_not_a_command_is_refused_by_name() {
-        for line in ["", "fly", "tool wobble", "kind wobble", "at 1", "at x y", "key wobble"] {
+        for line in [
+            "", "fly", "tool wobble", "kind wobble", "at 1", "at x y", "key wobble", "note",
+            "note wobble", "note place Riverford", "label",
+        ] {
             assert!(Command::parse(line).is_err(), "{line:?} should be refused");
         }
     }
