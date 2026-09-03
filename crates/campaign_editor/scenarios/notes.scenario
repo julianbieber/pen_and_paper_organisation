@@ -1,0 +1,57 @@
+# Every acceptance criterion issue #6 states, driven through the buttons a GM presses.
+#
+# Needs `zk` on PATH, unlike authoring.scenario — that is the whole subject here. With zk
+# absent the run still completes: the note verbs report the refusal the buttons show.
+#
+#   cargo run -p campaign --example make_demo -- /tmp/demo-campaign
+#   PNP_CONTROL=/tmp/pnp.sock cargo run -p campaign_editor -- /tmp/demo-campaign &
+#   PNP_CONTROL=/tmp/pnp.sock cargo run -p campaign_editor --bin pnp-ctl -- run \
+#       crates/campaign_editor/scenarios/notes.scenario
+#
+# Afterwards, /tmp/demo-campaign/notes holds the files, and:
+#   zk -W /tmp/demo-campaign/notes tag list
+
+ping
+fixed-delta 0.016
+step 60                       # the terrain loads, the chrome appears, zk is probed
+
+observe input                 # zk_answered and zk_present say whether notes are available
+
+# A settlement, named, then given a note — acceptance criterion 1
+tool area
+kind settlement
+click 20 20
+click 60 20
+click 60 60
+click 20 60
+key enter
+tool select
+click 40 40
+observe selection
+label Riverford
+note place
+observe world                 # the feature now carries its note path
+
+# A second settlement with the same name — acceptance criterion 3
+tool area
+kind settlement
+click 120 20
+click 160 20
+click 160 60
+click 120 60
+key enter
+tool select
+click 140 40
+label Riverford
+note place
+observe world                 # two features, two different note paths
+
+# A person and a faction, which hang off no feature — acceptance criterion 2
+note person Sir Bedivere of the Lake
+note faction The Dockhands
+note session Session 1
+
+save
+observe world
+capture /tmp/pnp-notes.png
+quit

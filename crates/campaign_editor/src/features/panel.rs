@@ -5,8 +5,15 @@
 //! renaming one settlement — the change is therefore held here and committed once, when
 //! the field is left or Enter is pressed.
 //!
-//! The panel shows a note link and clears it. Creating one is issue #6's, and there is
-//! deliberately no button here that would.
+//! The panel creates the selected feature's note, opens it and clears the link. Creating
+//! goes through `notes::start` rather than being decided here, because the notes panel and
+//! the control socket start notes too and one job slot cannot be governed from three
+//! places. A button that cannot be pressed is disabled and says why on its own line: bevy's
+//! tab navigation ignores `Node.display`, so a hidden button still answers Enter.
+//!
+//! Every button's observer decides again what the panel already decided. Disabling lands
+//! through `Commands` and so takes effect a sync point later, which leaves a window in
+//! which a press reaches a button the panel has ruled out.
 
 use bevy::feathers::controls::{
     FeathersButton, FeathersTextInput, FeathersTextInputContainer,
@@ -16,15 +23,18 @@ use bevy::feathers::tokens;
 use bevy::input_focus::InputFocus;
 use bevy::prelude::*;
 use bevy::text::{EditableText, TextEdit, TextEditChange};
+use bevy::ui::InteractionDisabled;
 use bevy::ui_widgets::Activate;
 use campaign::edit::Edit;
 use campaign::feature::{FeatureId, FeatureKind, Rank};
+use campaign::notebook::NoteKind;
 
-use crate::StatusMessage;
 use crate::features::doc::{self, WorldDoc};
 use crate::features::select::Selection;
 use crate::features::tool::{kind_label, rank_label};
 use crate::map::pointer::MapPointer;
+use crate::notes::{NoteJob, ZkState};
+use crate::{OpenCampaign, StatusMessage};
 
 /// Which property a line of the panel shows.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -72,6 +82,23 @@ pub struct RevealHereButton;
 pub struct ClearButton {
     pub property: Property,
 }
+
+/// What one of the selection's note buttons does.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NoteAction {
+    Create,
+    Open,
+}
+
+/// A button that makes the selected feature's note, or opens it.
+#[derive(Component, Debug, Clone, Copy, PartialEq)]
+pub struct NoteActionButton {
+    pub action: NoteAction,
+}
+
+/// The line saying why the selection's note buttons cannot be pressed.
+#[derive(Component, Default, Clone)]
+pub struct NoteReasonLine;
 
 /// The label being typed, and which feature it belongs to.
 ///
@@ -293,8 +320,125 @@ fn panel() -> impl Scene {
                     clear_button("Clear parent", Property::Parent),
                     clear_button("Clear note", Property::Note)
                 ]
-            )
+            ),
+            (
+                Node {
+                    display: Display::Flex,
+                    flex_direction: FlexDirection::Row,
+                    column_gap: px(6),
+                }
+                Children [
+                    note_button("Create note", NoteAction::Create),
+                    note_button("Open note", NoteAction::Open)
+                ]
+            ),
+            (Text("") ThemedText NoteReasonLine)
         ]
+    }
+}
+
+fn note_button(caption: &'static str, action: NoteAction) -> impl Scene {
+    bsn! {
+        @FeathersButton {
+            @caption: bsn! { Text({caption.to_string()}) ThemedText },
+        }
+        NoteActionButton { action: {action} }
+        InteractionDisabled
+        on(|activate: On<Activate>,
+            buttons: Query<&NoteActionButton>,
+            selection: Res<Selection>,
+            doc: Res<WorldDoc>,
+            campaign: Res<OpenCampaign>,
+            zk: Res<ZkState>,
+            mut job: ResMut<NoteJob>,
+            mut status: ResMut<StatusMessage>| {
+            let Ok(button) = buttons.get(activate.event_target()) else {
+                return;
+            };
+            let Some((id, feature)) = crate::notes::selected(&doc, &selection) else {
+                status.say("select one feature first");
+                return;
+            };
+            match (button.action, feature.note.as_deref()) {
+                (NoteAction::Create, Some(note)) => {
+                    status.say(format!("that feature already has a note: {note}"));
+                }
+                (NoteAction::Create, None) => {
+                    crate::notes::start(
+                        &mut job,
+                        &zk,
+                        &campaign,
+                        &mut status,
+                        NoteKind::of_a_feature(),
+                        &feature.label,
+                        Some(id),
+                    );
+                }
+                (NoteAction::Open, Some(note)) => {
+                    crate::notes::open(&campaign, &mut status, note);
+                }
+                (NoteAction::Open, None) => status.say("that feature has no note yet"),
+            }
+        })
+    }
+}
+
+/// Disables the selection's note buttons when they cannot be pressed, and says why.
+///
+/// Runs after [`show_properties`], and writes to its own line rather than the note
+/// readout, so the two do not overwrite each other. Writes only where the answer differs
+/// from what the button already carries, for the reason the readouts do.
+pub fn show_note_buttons(
+    mut commands: Commands,
+    doc: Res<WorldDoc>,
+    selection: Res<Selection>,
+    job: Res<NoteJob>,
+    zk: Res<ZkState>,
+    buttons: Query<(Entity, &NoteActionButton, Has<InteractionDisabled>)>,
+    mut lines: Query<&mut Text, With<NoteReasonLine>>,
+) {
+    let chosen = crate::notes::selected(&doc, &selection);
+    let mut reason = String::new();
+
+    for (entity, button, disabled) in buttons.iter() {
+        let refusal = match (button.action, chosen.as_ref()) {
+            (_, None) => Some("select one feature to make or open its note".to_owned()),
+            (NoteAction::Create, Some((_, feature))) => match feature.note {
+                Some(_) => Some("that feature already has a note".to_owned()),
+                None => crate::notes::refusal(&job, &zk, &feature.label)
+                    .map(|why| if why == "a note needs a title" {
+                        "name the feature before making its note".to_owned()
+                    } else {
+                        why
+                    }),
+            },
+            (NoteAction::Open, Some((_, feature))) => match feature.note {
+                Some(_) => None,
+                None => Some("that feature has no note yet".to_owned()),
+            },
+        };
+
+        if button.action == NoteAction::Create
+            && let Some(why) = &refusal
+        {
+            reason.clone_from(why);
+        }
+
+        let wanted = refusal.is_some();
+        if disabled == wanted {
+            continue;
+        }
+        if wanted {
+            commands.entity(entity).insert(InteractionDisabled);
+        } else {
+            commands.entity(entity).remove::<InteractionDisabled>();
+        }
+    }
+
+    for mut text in lines.iter_mut() {
+        if text.0 != reason {
+            text.0.clone_from(&reason);
+        }
     }
 }
 
@@ -433,6 +577,14 @@ impl Default for ClearButton {
     fn default() -> Self {
         Self {
             property: Property::Note,
+        }
+    }
+}
+
+impl Default for NoteActionButton {
+    fn default() -> Self {
+        Self {
+            action: NoteAction::Create,
         }
     }
 }

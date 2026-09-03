@@ -16,7 +16,9 @@ one, `crates/campaign_editor` builds the `pnp` binary and shows a dialog when it
 campaign. The terrain draws as a tile map (#2): `campaign::tiles` decides every tile,
 `campaign_editor/src/map` streams them. Features are styled by kind and a city's interior
 opens up as the map zooms in (#5): `campaign::style`, `campaign::lod` and `campaign::label`
-decide it, `campaign_editor/src/features/render.rs` draws it. The milestone is filed as issues #1–#11; the design
+decide it, `campaign_editor/src/features/render.rs` draws it. Notes are made from templates
+and linked to features (#6): `campaign::notebook` owns the whole `zk` dependency,
+`campaign_editor/src/notes` runs it off the frame. The milestone is filed as issues #1–#11; the design
 behind them is in the plan at
 `~/fun_repos/hobby-mimisbrunnr/notes/pen_and_paper_organisation/init/pen_and_paper_plan/plan-2026-08-30-campaign-map-and-notes.md`.
 
@@ -100,8 +102,16 @@ reads "missing" as "default" rather than inventing a migration.
 **Nothing in this repo ever calls `Terrain::save_to_dir`.** It deletes `layer_<n>.png`
 files it does not name, and terrain here is read-only.
 
-`create` makes a plain `notes/` directory. Making it a `zk` notebook and installing the
-templates is #6's — `crates/campaign` must not need `zk` on `PATH` to pass its tests.
+`create` still makes a plain `notes/` directory and runs no subprocess. `campaign::notebook`
+makes it a notebook the first time a note is asked for (#6): `zk init` only when there is no
+`.zk`, then the four templates ensured on every create, each written only where no file of
+that name is there — so a notebook the GM made themselves gains them, one whose templates
+were half-written repairs itself, and a template the GM has edited is never overwritten.
+
+**`crates/campaign` still passes its tests with nothing on `PATH`.** The argument vectors
+are pure functions tested against a recorded `Runner`; the handful of tests wanting the real
+program live in `tests/notebook_zk.rs` and skip themselves, with `PNP_REQUIRE_ZK=1` turning
+the skip into a failure so CI cannot pass having checked none of it.
 
 ## Conventions
 
@@ -240,16 +250,30 @@ read `.zk/notebook.db` and never parse the markdown ourselves — a second imple
 is a second answer to what the notebook contains.
 
 ```
-zk new notes --template place --title "Riverford" --print-path
-zk list --tag place/riverford --format json
+zk --no-input new --template=place.md --title=Riverford --extra=feature=7 --print-path
+zk list --tag place/riverford-a1b2 --format json
 zk tag list
 zk edit <path>
 ```
 
-Tags are `place/<slug>`, `person/<slug>`, `faction/<slug>`. A place note's frontmatter
-also carries its `FeatureId`, so the link survives a rename from either side.
+**Every invocation runs with the notes directory as its working directory**, because
+`zk new` resolves the note it creates against that directory — naming the notebook is not
+on its own enough, and `--notebook-dir` alone fails with *path is outside the notebook*.
+`ZK_NOTEBOOK_DIR` is removed from the child: it redirects the note whenever the working
+directory is not itself inside a notebook. **Every value is joined to its flag** with `=`;
+a following word beginning with a dash is read as another option, so `--title "-Kai"` is
+refused by `zk` itself. `--template` needs the file extension. Every call carries
+`--no-input` with stdin closed — a child waiting on a prompt nothing can answer would hold
+the one job slot for the life of the process.
 
-Notes are opened in `zk edit` / `$EDITOR`. **This tool is not a markdown editor.**
+Tags are `<kind>/<slug>`, for `place`, `person`, `faction` and `session`. **The slug is the
+note's own filename stem**, which is what `{{filename-stem}}` renders — so two places
+titled "Riverford" are `place/riverford-a1b2` and `place/riverford-c3d4`, and a GM who
+changes `note.filename` in their own config does not break the tag. A place note's
+frontmatter also carries its `FeatureId`, so the link survives a rename from either side.
+
+Notes are opened in `zk edit` / `$EDITOR`, started and never waited on — an editor does not
+return until the note is closed. **This tool is not a markdown editor.**
 
 ## Out of scope for v1
 

@@ -25,8 +25,10 @@ pub const DUNGEONS_DIR: &str = "dungeons";
 /// portable.
 pub const IMAGES_DIR: &str = "images";
 
-/// The `zk` notebook. A campaign directory carries the directory; making it a
-/// notebook is not this crate's business.
+/// The `zk` notebook. A campaign directory carries the directory, and
+/// [`Campaign::create`](crate::campaign::Campaign::create) leaves it empty; what makes it
+/// a notebook is [`Notebook::ensure`](crate::notebook::Notebook::ensure), the first time a
+/// note is asked for.
 pub const NOTES_DIR: &str = "notes";
 
 /// Every subdirectory a campaign directory holds, in the order they are created.

@@ -27,6 +27,8 @@ pub mod layout;
 pub mod lod;
 /// What `campaign.ron` says, and reading it back off disk.
 pub mod manifest;
+/// What makes the notes directory a zk notebook, and the one place this workspace runs zk.
+pub mod notebook;
 /// What a position in cells lands on, what a rectangle encloses, and where a vertex snaps.
 pub mod pick;
 /// The one table saying what a FeatureKind and a Rank look like.
@@ -44,6 +46,7 @@ pub use edit::{Edit, EditError};
 pub use feature::{CellPoint, Feature, FeatureId, FeatureKind, Geometry, Rank};
 pub use gesture::Orphans;
 pub use pick::{Hit, Landing, Snap};
+pub use notebook::{NewNote, NoteError, NoteKind, Notebook, Runner, SystemRunner};
 pub use manifest::{
     CAMPAIGN_VERSION, CampaignManifest, DEFAULT_UNIT, DEFAULT_UNITS_PER_CELL, MAX_MANIFEST_BYTES,
 };
