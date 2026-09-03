@@ -151,7 +151,11 @@ impl Geometry {
     }
 }
 
-/// What a feature is, which decides how it is drawn and which note template it offers.
+/// What a feature is, which decides how it is drawn.
+///
+/// It does not decide which note a feature gets: every feature is a place, whatever kind
+/// it is, so [`NoteKind::of_a_feature`](crate::notebook::NoteKind::of_a_feature) takes no
+/// argument.
 ///
 /// Landcover and territory are separate kinds rather than one "region": the imported
 /// terrain supplies only height and water, so every wood and every border is something
