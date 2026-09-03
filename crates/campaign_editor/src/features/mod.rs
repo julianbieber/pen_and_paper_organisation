@@ -2,7 +2,9 @@
 //!
 //! The order is one chain, and every edge in it is load-bearing. The pointer's cell is
 //! read against the camera this frame moved; the tool strip is queried on the frame it is
-//! spawned, which needs the deferred-command flush an ordering edge inserts; and the
+//! spawned, which needs the deferred-command flush an ordering edge inserts; a landed note
+//! is applied ahead of everything that reads the document, so it reaches the panel, the
+//! selection and the map on the frame it arrived rather than the frame after; and the
 //! overlay draws after everything that could have changed what it draws.
 //!
 //! Two conditions are named here rather than restated per system, because "is the pointer
@@ -73,6 +75,13 @@ impl Plugin for FeaturesPlugin {
                         prompt::build_prompt,
                     )
                         .run_if(resource_added::<WorldDoc>),
+                    crate::notes::panel::build_notes_panel
+                        .run_if(resource_added::<OpenCampaign>),
+                    crate::notes::finish_note_job
+                        .run_if(resource_exists::<WorldDoc>.and_then(
+                            crate::notes::a_note_job_is_running,
+                        )),
+                    crate::notes::note_job_settled,
                     tool::sync_tool_strip.run_if(resource_exists_and_changed::<tool::ActiveTool>),
                     (
                         draw::draw_features.run_if(a_drawing_tool_is_active),
@@ -88,6 +97,19 @@ impl Plugin for FeaturesPlugin {
                             resource_changed::<select::Selection>
                                 .or_else(resource_changed::<WorldDoc>),
                         ),
+                    ),
+                    panel::show_note_buttons.run_if(
+                        resource_exists::<WorldDoc>.and_then(
+                            resource_changed::<select::Selection>
+                                .or_else(resource_changed::<WorldDoc>)
+                                .or_else(resource_changed::<crate::notes::NoteJob>)
+                                .or_else(resource_changed::<crate::notes::ZkState>),
+                        ),
+                    ),
+                    crate::notes::panel::show_new_note_buttons.run_if(
+                        resource_changed::<crate::notes::NoteJob>
+                            .or_else(resource_changed::<crate::notes::ZkState>)
+                            .or_else(resource_changed::<crate::notes::NoteTitle>),
                     ),
                     prompt::guard_close.run_if(resource_exists::<WorldDoc>),
                     prompt::show_prompt.run_if(resource_exists_and_changed::<prompt::Asking>),

@@ -24,6 +24,7 @@ mod control;
 mod dialog;
 mod features;
 mod map;
+mod notes;
 
 /// The order the editor's two halves run in.
 ///
@@ -83,6 +84,7 @@ fn main() {
     .add_plugins(dialog::DialogPlugin)
     .add_plugins(map::MapPlugin)
     .add_plugins(features::FeaturesPlugin)
+    .add_plugins(notes::NotesPlugin)
     .add_systems(Startup, (status_bar.spawn(), shell.spawn().run_if(no_campaign)))
     .add_systems(
         Update,
