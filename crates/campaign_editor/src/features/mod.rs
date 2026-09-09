@@ -98,6 +98,21 @@ impl Plugin for FeaturesPlugin {
                                 .or_else(resource_changed::<WorldDoc>),
                         ),
                     ),
+                    (
+                        crate::notes::watch::drain_notes_watch
+                            .run_if(crate::notes::watch::the_notebook_changed),
+                        crate::notes::references::follow_selection.run_if(
+                            resource_exists::<WorldDoc>.and_then(
+                                resource_changed::<select::Selection>
+                                    .or_else(resource_changed::<WorldDoc>),
+                            ),
+                        ),
+                        crate::notes::references::run_reference_query.run_if(
+                            resource_exists::<OpenCampaign>
+                                .and_then(crate::notes::references::a_reference_query_has_work),
+                        ),
+                    )
+                        .chain(),
                     panel::show_note_buttons.run_if(
                         resource_exists::<WorldDoc>.and_then(
                             resource_changed::<select::Selection>
@@ -110,6 +125,11 @@ impl Plugin for FeaturesPlugin {
                         resource_changed::<crate::notes::NoteJob>
                             .or_else(resource_changed::<crate::notes::ZkState>)
                             .or_else(resource_changed::<crate::notes::NoteTitle>),
+                    ),
+                    crate::notes::references::show_references.run_if(
+                        resource_changed::<crate::notes::references::References>
+                            .or_else(resource_changed::<crate::notes::ZkState>)
+                            .or_else(resource_added::<OpenCampaign>),
                     ),
                     prompt::guard_close.run_if(resource_exists::<WorldDoc>),
                     prompt::show_prompt.run_if(resource_exists_and_changed::<prompt::Asking>),

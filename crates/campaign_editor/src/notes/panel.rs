@@ -1,8 +1,13 @@
-//! The panel that creates the notes no feature holds: a person, a faction, a session.
+//! The bottom-right panel: the notes no feature holds — a person, a faction, a session —
+//! and, beneath them, what references the selected place.
 //!
 //! It hangs off the campaign rather than off the world document, because none of those
 //! three has geometry — a `world.ron` that failed to load must not also take away the
-//! notes that never needed one.
+//! notes that never needed one. The references section is selection-driven and so has
+//! nothing to say without a document, which it says rather than disappearing.
+//!
+//! The section's own rules live in [`references`](crate::notes::references); this module
+//! only hangs it under the buttons, so the panel has one root and one place on screen.
 //!
 //! It sits bottom-right, which is the one corner nothing else claims: the tool strip is
 //! top-left, the property panel top-right, the river slider bottom-left and the status line
@@ -95,7 +100,7 @@ fn panel() -> impl Scene {
             position_type: PositionType::Absolute,
             bottom: px(44),
             right: px(12),
-            width: px(240),
+            width: px(320),
             display: Display::Flex,
             flex_direction: FlexDirection::Column,
             row_gap: px(6),
@@ -136,7 +141,8 @@ fn panel() -> impl Scene {
                     new_note_button(kinds[2])
                 ]
             ),
-            (Text("") ThemedText NewNoteReasonLine)
+            (Text("") ThemedText NewNoteReasonLine),
+            crate::notes::references::section()
         ]
     }
 }

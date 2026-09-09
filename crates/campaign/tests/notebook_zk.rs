@@ -1,6 +1,6 @@
 //! The handful of things only the real `zk` can answer: that the argument vectors this
-//! crate builds are ones it accepts, and that a note comes out tagged the way issue #7
-//! will look for it.
+//! crate builds are ones it accepts, that a note comes out tagged the way the reference
+//! query looks for it, and that the query then finds it.
 //!
 //! Every test here skips itself when `zk` is not installed, so `cargo test -p campaign`
 //! still passes with nothing on `PATH`. Set `PNP_REQUIRE_ZK=1` to turn the skip into a
@@ -8,7 +8,7 @@
 //! this, which is exactly how a broken invocation would reach a release.
 
 use campaign::feature::FeatureId;
-use campaign::notebook::{NoteKind, Notebook, SystemRunner, zk_is_installed};
+use campaign::notebook::{self, NoteKind, Notebook, SystemRunner, zk_is_installed};
 
 fn zk_or_skip(test: &str) -> bool {
     if zk_is_installed() {
@@ -159,4 +159,94 @@ fn a_notebook_named_in_the_environment_does_not_steal_the_note() {
     let note = note.expect("create");
     assert!(book.root().join(&note.path).exists(), "the note is in the campaign");
     assert!(!elsewhere.join(".zk").exists(), "nothing was made elsewhere");
+}
+
+// The whole of issue #7 end to end, and the one thing no other test can check: that the
+// tag the template writes is a tag `zk list` actually finds. Both halves live in this
+// crate, but only the real program connects them.
+#[test]
+fn a_places_tag_finds_the_note_that_references_it() {
+    if !zk_or_skip("a_places_tag_finds_the_note_that_references_it") {
+        return;
+    }
+    let (_tmp, root) = campaign_root();
+    let book = Notebook::of(&root);
+
+    let place = book
+        .create(&SystemRunner, NoteKind::Place, "Riverford", Some(FeatureId(7)))
+        .expect("create a place note");
+    let session = book
+        .create(&SystemRunner, NoteKind::Session, "Session 3", None)
+        .expect("create a session note");
+
+    let path = book.root().join(&session.path);
+    let text = std::fs::read_to_string(&path).expect("read the session note");
+    std::fs::write(
+        &path,
+        format!("{text}\nThe party arrived at #place/{} in the rain.\n", place.slug),
+    )
+    .expect("write the session note");
+
+    let tag = notebook::tag_of(NoteKind::Place, &place.path);
+    let found = book
+        .references(&SystemRunner, &tag, &place.slug)
+        .expect("the references");
+
+    let paths: Vec<&str> = found.iter().map(|note| note.path.as_str()).collect();
+    assert_eq!(paths, vec![session.path.as_str()], "found {found:#?}");
+    assert!(
+        found[0].lead.contains("Session 3") || !found[0].title.is_empty(),
+        "a row has something to show: {found:#?}"
+    );
+}
+
+// A tag no note carries: zk prints nothing at all rather than an empty array, and exits
+// successfully. The parse decides on emptiness before the exit status, so this pins the
+// behaviour the decision rests on against a zk upgrade.
+#[test]
+fn a_tag_with_no_notes_is_empty_rather_than_a_failure() {
+    if !zk_or_skip("a_tag_with_no_notes_is_empty_rather_than_a_failure") {
+        return;
+    }
+    let (_tmp, root) = campaign_root();
+    let book = Notebook::of(&root);
+    book.create(&SystemRunner, NoteKind::Place, "Riverford", Some(FeatureId(7)))
+        .expect("create a place note");
+
+    let found = book
+        .references(&SystemRunner, "place/nothing-carries-this", "nothing")
+        .expect("an empty answer, not an error");
+
+    assert!(found.is_empty(), "found {found:#?}");
+}
+
+// zk's tag filter reads a leading dash as negation, so a title starting with one could
+// invert the query into "every note not tagged this" if the slug kept the dash.
+#[test]
+fn a_dash_leading_titles_tag_still_finds_its_own_reference() {
+    if !zk_or_skip("a_dash_leading_titles_tag_still_finds_its_own_reference") {
+        return;
+    }
+    let (_tmp, root) = campaign_root();
+    let book = Notebook::of(&root);
+
+    let place = book
+        .create(&SystemRunner, NoteKind::Place, "-Kai's Rest", Some(FeatureId(9)))
+        .expect("create a place note");
+    let session = book
+        .create(&SystemRunner, NoteKind::Session, "Session 4", None)
+        .expect("create a session note");
+
+    let path = book.root().join(&session.path);
+    let text = std::fs::read_to_string(&path).expect("read the session note");
+    std::fs::write(&path, format!("{text}\nCamped at #place/{}.\n", place.slug))
+        .expect("write the session note");
+
+    let tag = notebook::tag_of(NoteKind::Place, &place.path);
+    let found = book
+        .references(&SystemRunner, &tag, &place.slug)
+        .expect("the references");
+
+    let paths: Vec<&str> = found.iter().map(|note| note.path.as_str()).collect();
+    assert_eq!(paths, vec![session.path.as_str()], "tag {tag}, found {found:#?}");
 }

@@ -1,5 +1,5 @@
-//! Making notes from the editor: the one note in flight, whether `zk` is there at all,
-//! and the rule saying which note buttons can be pressed.
+//! Notes from the editor: the one note in flight, whether `zk` is there at all, the rule
+//! saying which note buttons can be pressed, and what references the selected place.
 //!
 //! Every route that starts a note — the property panel's Create button, the notes panel's
 //! three, the control socket's verb — goes through [`start`], for the reason
@@ -7,9 +7,11 @@
 //! indistinguishable from a press that was never noticed, and three callers deciding
 //! separately when a note may be made is three answers to one question.
 //!
-//! There is one job slot and no queue. A second Create while one is running is refused
-//! rather than held, because two notes for one feature would leave the second unreachable
-//! — only the last `SetNote` would survive.
+//! There is one job slot for *making* a note, and no queue. A second Create while one is
+//! running is refused rather than held, because two notes for one feature would leave the
+//! second unreachable — only the last `SetNote` would survive. The reference query in
+//! [`references`] holds a slot of its own, so a query nothing asked for can never stand
+//! between the GM and a note.
 //!
 //! Whether `zk` is installed is asked once a session and kept in [`ZkState`], so a button
 //! can say notes are unavailable *before* it is pressed. Discovering it after the press
@@ -27,6 +29,10 @@ use crate::{OpenCampaign, StatusMessage};
 
 /// The panel that creates the notes no feature holds.
 pub mod panel;
+/// What references the selected place, and the rows that show it.
+pub mod references;
+/// Noticing that the notebook changed underneath us.
+pub mod watch;
 
 /// What the note being made is for.
 ///
@@ -91,7 +97,14 @@ impl Plugin for NotesPlugin {
         app.init_resource::<NoteJob>()
             .init_resource::<ZkState>()
             .init_resource::<NoteTitle>()
-            .add_systems(Update, probe_zk.run_if(zk_has_not_answered));
+            .init_resource::<references::References>()
+            .add_systems(
+                Update,
+                (
+                    probe_zk.run_if(zk_has_not_answered),
+                    watch::watch_notes.run_if(watch::the_notebook_is_not_watched),
+                ),
+            );
     }
 }
 

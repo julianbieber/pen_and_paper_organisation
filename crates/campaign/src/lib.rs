@@ -27,7 +27,8 @@ pub mod layout;
 pub mod lod;
 /// What `campaign.ron` says, and reading it back off disk.
 pub mod manifest;
-/// What makes the notes directory a zk notebook, and the one place this workspace runs zk.
+/// What makes the notes directory a zk notebook, what a note is found by, and the one
+/// place this workspace runs zk.
 pub mod notebook;
 /// What a position in cells lands on, what a rectangle encloses, and where a vertex snaps.
 pub mod pick;
