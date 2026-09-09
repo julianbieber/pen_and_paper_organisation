@@ -1,17 +1,16 @@
-//! Where the cursor is, in the one coordinate system a world document uses.
+//! Where the cursor is, in the one coordinate system a map document uses.
 //!
 //! It sits under `map/` rather than beside the authoring systems because every input it
-//! has is the map's — the terrain's size, the tileset's tile size, the camera and the
-//! window — and it goes through [`MapView`], the one conversion between cells and world
-//! units. Authoring asks it a question; it knows nothing about authoring.
+//! has is the map's — the live backdrop, the camera and the window — and it goes through
+//! that backdrop's [`MapView`](crate::map::view::MapView), the one conversion between
+//! cells and world units. Authoring asks it a question; it knows nothing about authoring.
 
 use bevy::camera::Projection;
 use bevy::prelude::*;
 use campaign::feature::CellPoint;
 
+use crate::map::backdrop::Backdrop;
 use crate::map::camera::{MapCamera, viewport_of};
-use crate::map::load::{MapAssets, MapTerrain};
-use crate::map::view::MapView;
 
 /// How far from a vertex or an edge a press still counts as landing on it, in screen
 /// pixels.
@@ -71,7 +70,8 @@ impl MapPointer {
 #[derive(Resource, Debug, Default)]
 pub struct PointerOverride(pub Option<CellPoint>);
 
-/// Turns the cursor into a terrain cell, and states what a screen pixel is worth in cells.
+/// Turns the cursor into a cell of the live backdrop, and states what a screen pixel is
+/// worth in cells.
 ///
 /// Reads the camera's own [`Transform`] and its projection scale rather than
 /// [`Camera::viewport_to_world_2d`], which goes through `GlobalTransform` and the
@@ -79,8 +79,7 @@ pub struct PointerOverride(pub Option<CellPoint>);
 /// behind a camera this frame's `drive_camera` has just moved. Running after
 /// `drive_camera` would buy nothing at all if the position it read were last frame's.
 pub fn track_pointer(
-    terrain: Res<MapTerrain>,
-    assets: Res<MapAssets>,
+    backdrop: Res<Backdrop>,
     window: Single<&Window>,
     camera: Single<(&Transform, &Projection, &Camera), With<MapCamera>>,
     forced: Res<PointerOverride>,
@@ -93,7 +92,7 @@ pub fn track_pointer(
     let Some(viewport) = viewport_of(camera) else {
         return;
     };
-    let view = MapView::new(terrain.width, terrain.height, assets.tile_size as f32);
+    let view = backdrop.view;
 
     let cells_per_pixel = orthographic.scale / view.cell_size;
     let cell = forced.0.or_else(|| {

@@ -13,27 +13,29 @@ use bevy::prelude::*;
 use bevy::render::view::screenshot::{Screenshot, save_to_disk};
 use bevy::time::TimeUpdateStrategy;
 use bevy::camera::Projection;
+use campaign::brush::Brush;
 use campaign::draft::DraftShape;
 use campaign::edit::Edit;
 use campaign::feature::{CellPoint, FeatureKind, Rank};
 use campaign::notebook::NoteKind;
+use campaign::tiles::DungeonTile;
 use serde_json::{Value, json};
 
 use bevy::input_focus::InputFocus;
 use bevy::text::EditableText;
 
 use crate::features::PointerOverUi;
-use crate::features::doc::WorldDoc;
+use crate::document::WorldDoc;
 use crate::features::panel::PendingLabel;
 use crate::features::draw::Drafting;
+use crate::features::dungeon::DungeonIntent;
 use crate::features::prompt::Asking;
 use crate::features::select::Selection;
 use crate::features::tool::{ActiveTool, Tool};
 use crate::features::doc as world_doc;
 use crate::map::camera::MapCamera;
-use crate::map::load::{MapAssets, MapTerrain};
+use crate::map::load::MapTerrain;
 use crate::map::pointer::{MapPointer, PointerOverride};
-use crate::map::view::MapView;
 use crate::notes::references::{Answer, References};
 use crate::notes::watch::NotesWatch;
 use crate::notes::{self, NoteJob, ZkState};
@@ -65,6 +67,21 @@ pub(super) enum Command {
     Tool { tool: Tool, shape: DraftShape },
     /// Chooses what the active drawing tool will place.
     Kind(FeatureKind),
+    /// Chooses what a stroke does to the cells it covers, and takes the paint tool.
+    Brush(Brush),
+    /// Chooses the tile a stroke lays.
+    Tile(DungeonTile),
+    /// Presses the panel's Open dungeon or Back to map button and waits for the switch.
+    ///
+    /// Goes through [`DungeonIntent`] rather than reaching into the documents, so a
+    /// scripted run cannot switch in a way a GM could not — and so the same clearing of the
+    /// selection, the draft and the stroke happens either way.
+    Switch {
+        asks: DungeonIntent,
+        /// Whether the intent has been written. It is consumed a frame later, so the reply
+        /// never races the switch.
+        started: bool,
+    },
     /// Sets the selected feature's rank, or clears it.
     ///
     /// Goes through the same [`Edit`] the panel's buttons build, so a scripted run cannot
@@ -143,6 +160,16 @@ pub(super) enum Topic {
     Tool,
     /// Why a press would or would not author anything.
     Input,
+    /// What the open document is drawn on, and the tiles of a named rectangle of it.
+    ///
+    /// A rectangle rather than the whole grid: a 64-cell dungeon is four thousand cells and
+    /// a scenario that wants to know whether a room landed is asking about a dozen.
+    Grid {
+        x: u32,
+        y: u32,
+        width: u32,
+        height: u32,
+    },
     /// Which notes reference the selected place.
     ///
     /// Reports running while the query is in flight rather than an empty answer: it is a
@@ -160,6 +187,12 @@ impl Command {
             Self::Step(_) => "step",
             Self::Tool { .. } => "tool",
             Self::Kind(_) => "kind",
+            Self::Brush(_) => "brush",
+            Self::Tile(_) => "tile",
+            Self::Switch { asks, .. } => match asks {
+                DungeonIntent::Enter => "enter-dungeon",
+                _ => "leave-dungeon",
+            },
             Self::SetRank(_) => "rank",
             Self::SetReveal(_) => "reveal",
             Self::Zoom(_) => "zoom",
@@ -204,6 +237,16 @@ impl Command {
                 Ok(Self::Tool { tool, shape })
             }
             "kind" => Ok(Self::Kind(kind(rest.first().ok_or("kind needs a name")?)?)),
+            "brush" => Ok(Self::Brush(brush(rest.first().ok_or("brush needs a name")?)?)),
+            "tile" => Ok(Self::Tile(tile(rest.first().ok_or("tile needs a name")?)?)),
+            "enter-dungeon" => Ok(Self::Switch {
+                asks: DungeonIntent::Enter,
+                started: false,
+            }),
+            "leave-dungeon" => Ok(Self::Switch {
+                asks: DungeonIntent::Leave,
+                started: false,
+            }),
             "rank" => Ok(Self::SetRank(match *rest.first().ok_or("rank needs a name")? {
                 "none" | "clear" => None,
                 word => Some(rank(word)?),
@@ -258,6 +301,20 @@ impl Command {
                 "tool" => Topic::Tool,
                 "input" => Topic::Input,
                 "references" => Topic::References,
+                "grid" => {
+                    let number = |at: usize, what: &str| -> Result<u32, String> {
+                        rest.get(at)
+                            .ok_or_else(|| format!("observe grid needs a {what}"))?
+                            .parse::<u32>()
+                            .map_err(|_| format!("{what} must be a whole number"))
+                    };
+                    Topic::Grid {
+                        x: number(1, "x")?,
+                        y: number(2, "y")?,
+                        width: number(3, "width")?,
+                        height: number(4, "height")?,
+                    }
+                }
                 other => return Err(format!("nothing to observe called {other}")),
             })),
             "label" => {
@@ -350,6 +407,44 @@ impl Command {
                     DraftShape::Polygon => active.polygon_kind = *kind,
                 }
                 Poll::Done(json!({}))
+            }
+
+            Self::Brush(chosen) => {
+                let Some(mut active) = world.get_resource_mut::<ActiveTool>() else {
+                    return Poll::Failed("no campaign is open".into());
+                };
+                active.brush = *chosen;
+                active.tool = Tool::Paint;
+                Poll::Done(json!({}))
+            }
+
+            Self::Tile(chosen) => {
+                let Some(mut active) = world.get_resource_mut::<ActiveTool>() else {
+                    return Poll::Failed("no campaign is open".into());
+                };
+                active.tile = *chosen;
+                Poll::Done(json!({}))
+            }
+
+            Self::Switch { asks, started } => {
+                if !*started {
+                    let Some(mut intent) = world.get_resource_mut::<DungeonIntent>() else {
+                        return Poll::Failed("no campaign is open".into());
+                    };
+                    *intent = *asks;
+                    *started = true;
+                    return Poll::Running;
+                }
+                if world
+                    .get_resource::<DungeonIntent>()
+                    .is_some_and(|intent| *intent != DungeonIntent::Nothing)
+                {
+                    return Poll::Running;
+                }
+                let path = world
+                    .get_resource::<WorldDoc>()
+                    .map(|doc| doc.path.display().to_string());
+                Poll::Done(json!({ "document": path }))
             }
 
             Self::SetRank(rank) => author(world, |id| Edit::SetRank { id, rank: *rank }),
@@ -484,10 +579,12 @@ impl Command {
                         world.resource_scope(|world, mut status: Mut<StatusMessage>| {
                             let zk = world.resource::<ZkState>();
                             let campaign = world.resource::<OpenCampaign>();
+                            let document = world.resource::<WorldDoc>().path.clone();
                             notes::start(
                                 &mut job,
                                 zk,
                                 campaign,
+                                document,
                                 &mut status,
                                 *kind,
                                 &title,
@@ -608,19 +705,12 @@ fn zoom(world: &mut World, cells_per_pixel: f32) -> Poll {
     if !cells_per_pixel.is_finite() || cells_per_pixel <= 0.0 {
         return Poll::Failed("a scale must be a finite number greater than zero".into());
     }
-    let Some(cell_size) = world
-        .get_resource::<MapAssets>()
-        .map(|assets| assets.tile_size as f32)
+    let Some(view) = world
+        .get_resource::<crate::map::backdrop::Backdrop>()
+        .map(|backdrop| backdrop.view)
     else {
         return Poll::Failed("no map is open".into());
     };
-    let Some((width, height)) = world
-        .get_resource::<MapTerrain>()
-        .map(|terrain| (terrain.width, terrain.height))
-    else {
-        return Poll::Failed("no map is open".into());
-    };
-    let view = MapView::new(width, height, cell_size);
 
     let mut cameras = world.query_filtered::<(&mut Projection, &Camera), With<MapCamera>>();
     let Ok((mut projection, camera)) = cameras.single_mut(world) else {
@@ -634,8 +724,8 @@ fn zoom(world: &mut World, cells_per_pixel: f32) -> Poll {
     };
 
     let (low, high) = crate::map::camera::zoom_bounds(view, viewport);
-    orthographic.scale = (cells_per_pixel * cell_size).clamp(low, high);
-    Poll::Done(json!({ "cells_per_pixel": orthographic.scale / cell_size }))
+    orthographic.scale = (cells_per_pixel * view.cell_size).clamp(low, high);
+    Poll::Done(json!({ "cells_per_pixel": orthographic.scale / view.cell_size }))
 }
 
 fn observe_references(world: &mut World) -> Poll {
@@ -696,6 +786,7 @@ fn observe(world: &mut World, topic: &Topic) -> Value {
                         "vertices": feature.geometry.len(),
                         "parent": feature.parent.map(|parent| parent.0),
                         "note": feature.note,
+                        "dungeon": feature.dungeon,
                         "rank": feature.rank.map(|rank| format!("{rank:?}")),
                         "max_cells_per_pixel": feature.max_cells_per_pixel,
                     })
@@ -731,12 +822,43 @@ fn observe(world: &mut World, topic: &Topic) -> Value {
         Topic::Input | Topic::References => {
             unreachable!("answered before the document is looked for")
         }
+        Topic::Grid {
+            x,
+            y,
+            width,
+            height,
+        } => {
+            let Some(grid) = doc.document.world().grid() else {
+                return json!({ "open": true, "grid": Value::Null });
+            };
+            let rows: Vec<Vec<Value>> = (*y..y.saturating_add(*height))
+                .map(|row| {
+                    (*x..x.saturating_add(*width))
+                        .map(|column| match grid.get(i64::from(column), i64::from(row)) {
+                            Some(tile) => Value::String(tile.label().to_owned()),
+                            None => Value::Null,
+                        })
+                        .collect()
+                })
+                .collect();
+            json!({
+                "open": true,
+                "grid": {
+                    "width": grid.width(),
+                    "height": grid.height(),
+                    "metres_per_cell": grid.metres_per_cell(),
+                    "at": { "x": x, "y": y },
+                    "tiles": rows,
+                }
+            })
+        }
         Topic::Tool => {
             let active = world.get_resource::<ActiveTool>();
             json!({
                 "open": true,
                 "tool": active.map(|active| match active.tool {
                     Tool::Select => "select",
+                    Tool::Paint => "paint",
                     Tool::Draw => match active.shape {
                         DraftShape::Point => "point",
                         DraftShape::Polyline => "line",
@@ -790,6 +912,20 @@ fn cell(rest: &[&str], from: usize) -> Result<CellPoint, String> {
         x.parse().map_err(|_| format!("{x} is not a number"))?,
         y.parse().map_err(|_| format!("{y} is not a number"))?,
     ))
+}
+
+fn brush(word: &str) -> Result<Brush, String> {
+    Brush::all()
+        .into_iter()
+        .find(|brush| brush.label() == word)
+        .ok_or_else(|| format!("there is no {word} brush"))
+}
+
+fn tile(word: &str) -> Result<DungeonTile, String> {
+    DungeonTile::all()
+        .into_iter()
+        .find(|tile| tile.label().replace(' ', "-") == word.replace(' ', "-"))
+        .ok_or_else(|| format!("there is no {word} tile"))
 }
 
 fn kind(word: &str) -> Result<FeatureKind, String> {

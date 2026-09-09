@@ -27,17 +27,17 @@ use bevy::prelude::*;
 use campaign::feature::{CellPoint, Feature, Geometry};
 use campaign::label::{self, LabelBox, LabelCandidate, MAX_LABELS};
 use campaign::lod;
-use campaign::style::{self, Fill, IconShape, Pattern, Style};
+use campaign::style::{self, Fill, IconShape, Pattern, Stroke, Style};
 use campaign::{FeatureId, gesture};
 
-use crate::features::doc::WorldDoc;
+use crate::document::WorldDoc;
 use crate::features::draw::Drafting;
 use crate::features::pens::{LABEL_PIXELS, Pens};
 use crate::features::select::{DragKind, Dragging, Selection};
 use crate::features::tool::ActiveTool;
 use crate::map::camera::{MapCamera, viewport_of};
-use crate::map::load::{MapAssets, MapTerrain};
 use crate::map::view::{FEATURE_Z, MapView};
+use campaign::tiles::{GRID_COARSE_CELLS, grid_lines};
 
 const HANDLE_PIXELS: f32 = 4.0;
 const MAX_FILL_LINES: usize = 512;
@@ -68,8 +68,7 @@ pub fn render_features(
     dragging: Res<Dragging>,
     active: Res<ActiveTool>,
     pointer: Res<crate::map::pointer::MapPointer>,
-    terrain: Res<MapTerrain>,
-    assets: Res<MapAssets>,
+    backdrop: Res<crate::map::backdrop::Backdrop>,
     camera: Single<(&Transform, &Projection, &Camera), With<MapCamera>>,
     mut pens: Pens,
     mut points: Local<Vec<Vec2>>,
@@ -81,11 +80,15 @@ pub fn render_features(
     let Some(viewport) = viewport_of(camera) else {
         return;
     };
-    let view = MapView::new(terrain.width, terrain.height, assets.tile_size as f32);
+    let view = backdrop.view;
 
     let half = viewport * orthographic.scale / 2.0;
     let centre = transform.translation.truncate();
     let visible = Rect::from_corners(centre - half, centre + half);
+
+    if let Some(grid) = doc.document.world().grid() {
+        draw_grid(&mut pens, view, grid, visible, pointer.cells_per_pixel);
+    }
 
     let per_pixel = orthographic.scale;
     let cells_per_pixel = pointer.cells_per_pixel;
@@ -475,6 +478,63 @@ fn touches(points: &[Vec2], visible: Rect, slack: f32) -> bool {
         && bounds.max.x >= visible.min.x
         && bounds.min.y <= visible.max.y
         && bounds.max.y >= visible.min.y
+}
+
+fn draw_grid(
+    pens: &mut Pens,
+    view: MapView,
+    grid: &campaign::grid::TileGrid,
+    visible: Rect,
+    cells_per_pixel: f32,
+) {
+    let levels = grid_lines(cells_per_pixel);
+    if levels.draws_nothing() {
+        return;
+    }
+    let style = campaign::style::GRID_LINE;
+    let top_left = view.cell_to_world(0.0, 0.0) - Vec2::splat(view.cell_size / 2.0) * Vec2::new(1.0, -1.0);
+    let full = Rect::from_corners(
+        top_left,
+        top_left + Vec2::new(grid.width() as f32, -(grid.height() as f32)) * view.cell_size,
+    );
+
+    for (spacing, strength) in [(1u32, levels.fine), (GRID_COARSE_CELLS, levels.coarse)] {
+        if strength <= 0.0 {
+            continue;
+        }
+        let pen = pens.stroke(Stroke::Grid);
+        let colour = Color::srgba(
+            style[0],
+            style[1],
+            style[2],
+            campaign::style::GRID_LINE_ALPHA * strength,
+        );
+        let step = spacing as f32 * view.cell_size;
+
+        let first = ((visible.min.x - full.min.x) / step).floor().max(0.0) as u32;
+        let last = ((visible.max.x - full.min.x) / step).ceil().max(0.0) as u32;
+        for column in (first..=last.min(grid.width())).step_by(spacing as usize) {
+            let x = full.min.x + column as f32 * view.cell_size;
+            pen.line(
+                Vec2::new(x, full.min.y.max(visible.min.y)),
+                Vec2::new(x, full.max.y.min(visible.max.y)),
+                FEATURE_Z,
+                colour,
+            );
+        }
+
+        let first = ((full.max.y - visible.max.y) / step).floor().max(0.0) as u32;
+        let last = ((full.max.y - visible.min.y) / step).ceil().max(0.0) as u32;
+        for row in (first..=last.min(grid.height())).step_by(spacing as usize) {
+            let y = full.max.y - row as f32 * view.cell_size;
+            pen.line(
+                Vec2::new(full.min.x.max(visible.min.x), y),
+                Vec2::new(full.max.x.min(visible.max.x), y),
+                FEATURE_Z,
+                colour,
+            );
+        }
+    }
 }
 
 #[cfg(test)]

@@ -21,10 +21,14 @@ use bevy::text::EditableText;
 pub mod doc;
 /// Turning clicks into a draft, and a finished draft into an Edit.
 pub mod draw;
+/// Opening the dungeon a selected entry names, and getting back to the world map.
+pub mod dungeon;
 /// Undo, redo, save, delete and escape.
 pub mod keys;
 /// The selected feature's label, kind, rank, reveal scale, parent and note link.
 pub mod panel;
+/// Turning a brush stroke on a dungeon's grid into one Edit.
+pub mod paint;
 /// The fixed set of pens the map is stroked through, and the order they paint.
 pub mod pens;
 /// The two questions authoring has to ask, and the close it holds back.
@@ -36,9 +40,9 @@ pub mod select;
 /// Which tool is active, and which kind each drawing tool will place.
 pub mod tool;
 
-use crate::map::load::MapTerrain;
+use crate::document::{WorldDoc, WorldState};
+use crate::map::backdrop::Backdrop;
 use crate::{EditorSet, OpenCampaign};
-use doc::{WorldDoc, WorldState};
 
 /// Whether the pointer is over a UI node, as a value rather than a run condition.
 ///
@@ -56,6 +60,8 @@ impl Plugin for FeaturesPlugin {
         pens::register_pens(app);
         app.init_resource::<tool::ActiveTool>()
             .init_resource::<draw::Drafting>()
+            .init_resource::<paint::Stroking>()
+            .init_resource::<dungeon::DungeonIntent>()
             .init_resource::<select::Selection>()
             .init_resource::<select::Dragging>()
             .init_resource::<prompt::Asking>()
@@ -86,11 +92,21 @@ impl Plugin for FeaturesPlugin {
                     (
                         draw::draw_features.run_if(a_drawing_tool_is_active),
                         select::select_features.run_if(the_select_tool_is_active),
+                        paint::paint_tiles
+                            .run_if(paint::the_paint_tool_is_active.and_then(paint::a_grid_is_open)),
                         keys::authoring_keys,
                         panel::commit_label,
                     )
                         .run_if(authoring_is_live),
-                    keys::escape_answers_a_question.run_if(prompt::a_question_is_up),
+                    (
+                        dungeon::switch_document.run_if(
+                            dungeon::a_switch_was_asked_for
+                                .and_then(resource_exists::<WorldDoc>)
+                                .and_then(resource_exists::<Backdrop>),
+                        ),
+                        keys::escape_answers_a_question.run_if(prompt::a_question_is_up),
+                    )
+                        .chain(),
                     select::reconcile_selection.run_if(resource_exists::<WorldDoc>),
                     panel::show_properties.run_if(
                         resource_exists::<WorldDoc>.and_then(
@@ -133,9 +149,9 @@ impl Plugin for FeaturesPlugin {
                     ),
                     prompt::guard_close.run_if(resource_exists::<WorldDoc>),
                     prompt::show_prompt.run_if(resource_exists_and_changed::<prompt::Asking>),
-                    pens::size_pens.run_if(resource_exists::<MapTerrain>),
+                    pens::size_pens.run_if(resource_exists::<crate::map::load::MapAssets>),
                     render::render_features.run_if(
-                        resource_exists::<WorldDoc>.and_then(resource_exists::<MapTerrain>),
+                        resource_exists::<WorldDoc>.and_then(resource_exists::<Backdrop>),
                     ),
                 )
                     .chain()
@@ -147,7 +163,7 @@ impl Plugin for FeaturesPlugin {
 
 fn authoring_is_live(
     doc: Option<Res<WorldDoc>>,
-    terrain: Option<Res<MapTerrain>>,
+    terrain: Option<Res<Backdrop>>,
     asking: Option<Res<prompt::Asking>>,
     focus: Res<InputFocus>,
     fields: Query<(), With<EditableText>>,
@@ -163,7 +179,7 @@ fn a_drawing_tool_is_active(active: Res<tool::ActiveTool>) -> bool {
 }
 
 fn the_select_tool_is_active(active: Res<tool::ActiveTool>) -> bool {
-    !active.drawing()
+    active.selecting()
 }
 
 fn note_pointer_over_ui(

@@ -21,7 +21,7 @@ use campaign::pick::{self, Hit};
 use campaign::{gesture, world::World};
 
 use crate::StatusMessage;
-use crate::features::doc::{self, WorldDoc};
+use crate::document::{self as doc, WorldDoc};
 use crate::map::pointer::{MapPointer, PICK_SLACK_PIXELS, SNAP_SLACK_PIXELS};
 
 /// Which vertex is selected, and which feature it belongs to.
@@ -337,7 +337,7 @@ mod tests {
     use campaign::feature::{Feature, FeatureKind, Geometry};
     use campaign::{Document, World};
 
-    use crate::features::doc::WorldDoc;
+    use crate::document::WorldDoc;
     use crate::features::PointerOverUi;
 
     fn at(x: f32, y: f32) -> CellPoint {
@@ -371,7 +371,7 @@ mod tests {
                 cell: Some(at(0.0, 0.0)),
                 cells_per_pixel: 1.0,
             })
-            .insert_resource(WorldDoc::new(Document::new(world)))
+            .insert_resource(WorldDoc::world_map(Document::new(world), std::path::PathBuf::from("world.ron")))
             .add_systems(Update, select_features);
         app
     }

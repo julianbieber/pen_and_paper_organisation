@@ -9,10 +9,12 @@ use bevy::asset::{LoadState, RenderAssetUsages};
 use bevy::image::{ImageArrayLayout, ImageLoaderSettings, ImageSampler};
 use bevy::prelude::*;
 use campaign::atlas::{self, AtlasMeta};
-use campaign::tiles::{self, HeightRamp};
+use campaign::style;
+use campaign::tiles::{self, DUNGEON_TILE_COUNT, DungeonTile, HeightRamp};
 
 use crate::OpenCampaign;
 use crate::StatusMessage;
+use crate::map::backdrop::Backdrop;
 
 /// The tileset shipped with the tool, relative to the assets directory.
 ///
@@ -46,6 +48,26 @@ impl MapState {
     }
 }
 
+/// The tileset a dungeon's grid is drawn through, built rather than loaded.
+///
+/// One flat-coloured layer per [`DungeonTile`], so a tile's index is its layer exactly as
+/// it is for the terrain. It is generated because no hand-drawn dungeon strip exists and
+/// none of this issue's acceptance criteria is about how a floor tile looks — nine solid
+/// colours at the terrain's own tile size cost nine kilobytes and let a dungeon reuse the
+/// whole tilemap path. The colours are a decision like every other colour on the map, so
+/// they live in [`campaign::style`]; only the image is built here.
+///
+/// The layers are stacked vertically and a tile's layer is its [`DungeonTile::index`],
+/// which is what the tilemap material is handed.
+///
+/// The four door and stair kinds differ by hue alone. That is deliberate rather than
+/// unfinished: swapping in a hand-drawn strip later replaces the one function that builds
+/// this and leaves every other decision in this workspace alone.
+#[derive(Resource, Debug, Clone)]
+pub struct DungeonTileset {
+    pub tileset: Handle<Image>,
+}
+
 /// The tileset, once it has been asked for.
 #[derive(Resource, Debug, Clone)]
 pub struct MapAssets {
@@ -67,13 +89,15 @@ pub struct MapTerrain {
     pub accumulation_high: f32,
 }
 
-/// Reads the tileset sidecar, asks for its strip as an array texture, and describes
-/// the terrain — exactly once per opened campaign.
+/// Reads the tileset sidecar, asks for its strip as an array texture, builds the dungeon
+/// strip, and describes the terrain and the backdrop it makes — exactly once per opened
+/// campaign.
 pub fn open_map(
     mut commands: Commands,
     open: Res<OpenCampaign>,
     assets: Res<AssetServer>,
     tileset_root: Res<TilesetRoot>,
+    mut images: ResMut<Assets<Image>>,
 ) {
     let base = tileset_root.0.join(TILESET_BASE);
     let meta = match AtlasMeta::read(&base) {
@@ -111,6 +135,9 @@ pub fn open_map(
         })
         .load(format!("{TILESET_BASE}.png"));
 
+    commands.insert_resource(DungeonTileset {
+        tileset: images.add(build_dungeon_tileset(meta.tile_size)),
+    });
     commands.insert_resource(MapAssets {
         tileset,
         tile_size: meta.tile_size,
@@ -121,10 +148,54 @@ pub fn open_map(
         ramp,
         accumulation_high: tiles::accumulation_ceiling(terrain).unwrap_or(0.0),
     });
+    commands.insert_resource(Backdrop::terrain(
+        terrain.width(),
+        terrain.height(),
+        meta.tile_size as f32,
+    ));
     commands.insert_resource(MapState {
         outcome: MapOutcome::Ready,
         message: String::new(),
     });
+}
+
+fn build_dungeon_tileset(tile_size: u32) -> Image {
+    let side = tile_size.max(1);
+    let layers = u32::from(DUNGEON_TILE_COUNT);
+    let mut pixels = vec![0u8; (side * side * layers * 4) as usize];
+
+    for tile in DungeonTile::all() {
+        let [red, green, blue] = style::dungeon_tile(tile);
+        let bytes = [channel(red), channel(green), channel(blue), 255];
+        let top = u32::from(tile.index()) * side;
+        for row in top..top + side {
+            for column in 0..side {
+                let at = (((row * side) + column) * 4) as usize;
+                pixels[at..at + 4].copy_from_slice(&bytes);
+            }
+        }
+    }
+
+    let mut image = Image::new(
+        bevy::render::render_resource::Extent3d {
+            width: side,
+            height: side * layers,
+            depth_or_array_layers: 1,
+        },
+        bevy::render::render_resource::TextureDimension::D2,
+        pixels,
+        bevy::render::render_resource::TextureFormat::Rgba8UnormSrgb,
+        RenderAssetUsages::RENDER_WORLD,
+    );
+    image.sampler = ImageSampler::nearest();
+    image
+        .reinterpret_stacked_2d_as_array(layers)
+        .expect("the image is `layers` whole tiles tall, so it splits into that many");
+    image
+}
+
+fn channel(value: f32) -> u8 {
+    (value.clamp(0.0, 1.0) * 255.0).round() as u8
 }
 
 /// Where the tileset's files sit on disk, so the sidecar can be read beside the image

@@ -28,7 +28,7 @@ use bevy::ui_widgets::Activate;
 use campaign::feature::FeatureId;
 use campaign::notebook::{NoteError, NoteKind, Notebook, Reference, SystemRunner, tag_of};
 
-use crate::features::doc::WorldDoc;
+use crate::document::WorldDoc;
 use crate::features::select::Selection;
 use crate::notes::ZkState;
 use crate::{OpenCampaign, StatusMessage};

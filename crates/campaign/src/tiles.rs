@@ -1,10 +1,17 @@
-//! Which tile a terrain cell is drawn as, and how brightly it is lit.
+//! Which tile a cell is drawn as, and how brightly it is lit.
 //!
 //! Every decision the map makes about a cell is taken here rather than in the editor,
 //! so all of it is checked without a window: the tile numbering, the coastline mask,
 //! which cells a chunk covers, and which way up its rows go.
+//!
+//! Two vocabularies, one contract. A terrain cell is a [`TileKind`] and a dungeon cell
+//! is a [`DungeonTile`]; each numbers its own strip, and `index` is the only place
+//! either number is written.
 
+use serde::{Deserialize, Serialize};
 use watershed::{FieldRole, Terrain};
+
+use crate::grid::TileGrid;
 
 /// Bands the height range is quantised into.
 pub const LAND_BANDS: u8 = 6;
@@ -75,6 +82,93 @@ impl TileKind {
             .map(Self::Land)
             .chain([Self::ShallowWater, Self::DeepWater, Self::River])
             .chain((1..=15).map(Self::Coast))
+    }
+}
+
+/// Tiles the dungeon strip holds.
+///
+/// Every index [`DungeonTile::index`] can produce is below this and every index below
+/// it is one it can produce, which is what lets the strip be built by walking
+/// [`DungeonTile::all`].
+pub const DUNGEON_TILE_COUNT: u16 = 9;
+
+/// What a dungeon cell is drawn as.
+///
+/// The variants are the dungeon strip's columns in order, and [`DungeonTile::index`] is
+/// the only place one of its tile numbers is written — the same contract [`TileKind`]
+/// carries for the terrain strip.
+///
+/// [`DungeonTile::Empty`] is unexcavated rock and is a tile like any other. A grid holds
+/// one for every cell it covers, so "empty" and "outside the grid" stay different
+/// answers: the second is what [`TileGrid::get`](crate::grid::TileGrid::get) reports as
+/// `None`.
+///
+/// Deliberately not `#[non_exhaustive]`, for the reason [`TileKind`] is not: a consumer
+/// matching on a tile to decide how to draw it should fail to compile when one is added.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum DungeonTile {
+    #[default]
+    Empty,
+    Floor,
+    Wall,
+    Door,
+    SecretDoor,
+    StairsUp,
+    StairsDown,
+    Water,
+    Rubble,
+}
+
+impl DungeonTile {
+    /// The tile's column in the dungeon strip, which is also its layer in the array
+    /// texture.
+    ///
+    /// Always below [`DUNGEON_TILE_COUNT`].
+    pub fn index(self) -> u16 {
+        match self {
+            Self::Empty => 0,
+            Self::Floor => 1,
+            Self::Wall => 2,
+            Self::Door => 3,
+            Self::SecretDoor => 4,
+            Self::StairsUp => 5,
+            Self::StairsDown => 6,
+            Self::Water => 7,
+            Self::Rubble => 8,
+        }
+    }
+
+    /// Every dungeon tile, in strip order.
+    ///
+    /// Written out rather than derived, and the array length is the count — adding a
+    /// variant without extending this fails to compile.
+    pub const fn all() -> [Self; DUNGEON_TILE_COUNT as usize] {
+        [
+            Self::Empty,
+            Self::Floor,
+            Self::Wall,
+            Self::Door,
+            Self::SecretDoor,
+            Self::StairsUp,
+            Self::StairsDown,
+            Self::Water,
+            Self::Rubble,
+        ]
+    }
+
+    /// The word for this tile in the tool strip and on the status line.
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Empty => "empty",
+            Self::Floor => "floor",
+            Self::Wall => "wall",
+            Self::Door => "door",
+            Self::SecretDoor => "secret door",
+            Self::StairsUp => "stairs up",
+            Self::StairsDown => "stairs down",
+            Self::Water => "water",
+            Self::Rubble => "rubble",
+        }
     }
 }
 
@@ -467,3 +561,93 @@ pub fn accumulation_ceiling(terrain: &Terrain) -> Option<f32> {
     }
     Some(ceiling)
 }
+
+/// The dungeon tiles of the chunk at `chunk_x, chunk_y`, in tilemap order.
+///
+/// The grid counterpart of [`chunk_tiles`], and it makes the same two promises: the row
+/// flip happens here, and a cell outside the grid comes back `None` rather than as an
+/// error — so a grid whose extent is not a whole number of chunks has a ragged edge, and
+/// a chunk entirely off the grid draws nothing. `None` and
+/// [`DungeonTile::Empty`] stay different answers: unexcavated rock is a tile the GM can
+/// paint over, and off the grid is not.
+///
+/// Chunk coordinates are signed, so every cell is bounded through
+/// [`TileGrid::get`](crate::grid::TileGrid::get), which checks each axis on its own.
+pub fn grid_chunk_tiles(grid: &TileGrid, chunk_x: i32, chunk_y: i32) -> Vec<Option<DungeonTile>> {
+    let side = i64::from(CHUNK_CELLS);
+    let origin_x = i64::from(chunk_x) * side;
+    let origin_y = i64::from(chunk_y) * side;
+
+    let mut tiles = vec![None; (CHUNK_CELLS * CHUNK_CELLS) as usize];
+    for row in 0..side {
+        for column in 0..side {
+            let tile = grid.get(origin_x + column, origin_y + row);
+            let slot = ((side - 1 - row) * side + column) as usize;
+            tiles[slot] = tile;
+        }
+    }
+    tiles
+}
+
+/// How strongly each level of the grid is drawn at `cells_per_pixel`.
+///
+/// Two levels, both faded, because one is not enough. A single spacing that switched from
+/// every cell to every fifth would jump on the frame it crossed its threshold, and every
+/// other threshold in this workspace fades for exactly that reason. Fading one level out
+/// and the next in independently also produces the look a battle map is conventionally
+/// ruled in: the major lines are drawn under the minor ones and so read brighter, without
+/// anything deciding that they should.
+///
+/// A strength of zero means that level is not drawn at all, so a grid zoomed far enough
+/// out disappears rather than becoming a wash of colour.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct GridLines {
+    /// How strongly a line on every cell boundary is drawn, from zero to one.
+    pub fine: f32,
+    /// How strongly a line every [`GRID_COARSE_CELLS`] cells is drawn, from zero to one.
+    pub coarse: f32,
+}
+
+impl GridLines {
+    /// Whether neither level draws, which is the answer at every scale coarser than a
+    /// grid is worth ruling at.
+    pub fn draws_nothing(self) -> bool {
+        self.fine <= 0.0 && self.coarse <= 0.0
+    }
+}
+
+/// How strongly to draw each level of the grid, given what a logical pixel is worth in
+/// cells.
+///
+/// Both levels come back at zero for a scale that is not a finite positive number, so a
+/// pointer that has not measured anything yet draws no grid rather than an infinite one.
+pub fn grid_lines(cells_per_pixel: f32) -> GridLines {
+    if !cells_per_pixel.is_finite() || cells_per_pixel <= 0.0 {
+        return GridLines::default();
+    }
+    let pixels_per_cell = 1.0 / cells_per_pixel;
+
+    let strength = |spacing: u32| {
+        let apart = pixels_per_cell * spacing as f32;
+        ((apart / GRID_MIN_PIXELS - 1.0) / (GRID_FADE_SPAN - 1.0)).clamp(0.0, 1.0)
+    };
+
+    GridLines {
+        fine: strength(1),
+        coarse: strength(GRID_COARSE_CELLS),
+    }
+}
+
+/// How far apart two grid lines must be on screen before they are drawn at all, in
+/// logical pixels.
+pub const GRID_MIN_PIXELS: f32 = 5.0;
+
+/// How many cells the coarse level steps by.
+///
+/// Five, which is the major line a battle map is conventionally ruled in, so the coarse
+/// grid reads as a deliberate scale rather than as a degraded one.
+pub const GRID_COARSE_CELLS: u32 = 5;
+
+/// How far past [`GRID_MIN_PIXELS`] a level has to open out before it is drawn at full
+/// strength.
+pub const GRID_FADE_SPAN: f32 = 2.0;

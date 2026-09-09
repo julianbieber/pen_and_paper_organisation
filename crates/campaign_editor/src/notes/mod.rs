@@ -3,7 +3,7 @@
 //!
 //! Every route that starts a note — the property panel's Create button, the notes panel's
 //! three, the control socket's verb — goes through [`start`], for the reason
-//! [`doc::apply`](crate::features::doc::apply) exists: a refusal that says nothing is
+//! [`doc::apply`](crate::document::apply) exists: a refusal that says nothing is
 //! indistinguishable from a press that was never noticed, and three callers deciding
 //! separately when a note may be made is three answers to one question.
 //!
@@ -17,13 +17,15 @@
 //! can say notes are unavailable *before* it is pressed. Discovering it after the press
 //! would satisfy nobody: the criterion is that the buttons explain themselves.
 
+use std::path::PathBuf;
+
 use bevy::prelude::*;
 use bevy::tasks::{IoTaskPool, Task, block_on, futures_lite::future};
 use campaign::edit::Edit;
 use campaign::feature::FeatureId;
 use campaign::notebook::{NewNote, NoteError, NoteKind, Notebook, SystemRunner, zk_is_installed};
 
-use crate::features::doc::{self, WorldDoc};
+use crate::document::{self as doc, WorldDoc};
 use crate::features::select::Selection;
 use crate::{OpenCampaign, StatusMessage};
 
@@ -44,6 +46,13 @@ pub mod watch;
 pub struct NoteJob {
     task: Option<Task<Result<NewNote, NoteError>>>,
     subject: Option<FeatureId>,
+    /// The document the subject belongs to.
+    ///
+    /// A `FeatureId` is unique within one document and not between them, so an id alone
+    /// stopped being enough to name a feature the moment a dungeon could be open. Without
+    /// this, starting a note on a dungeon's feature and going back to the world map before
+    /// `zk` answers lands the link on whichever world-map feature happens to hold that id.
+    document: Option<PathBuf>,
 }
 
 impl NoteJob {
@@ -155,6 +164,7 @@ pub fn start(
     job: &mut NoteJob,
     zk: &ZkState,
     campaign: &OpenCampaign,
+    document: PathBuf,
     status: &mut StatusMessage,
     kind: NoteKind,
     title: &str,
@@ -170,6 +180,7 @@ pub fn start(
     status.say(format!("making a {} note for {title}…", kind.label()));
 
     job.subject = subject;
+    job.document = Some(document);
     job.task = Some(IoTaskPool::get().spawn(async move {
         notebook.create(&SystemRunner, kind, &title, subject)
     }));
@@ -229,7 +240,18 @@ pub fn finish_note_job(
         return;
     };
     let subject = job.subject.take();
+    let document = job.document.take();
     job.task = None;
+
+    if let (Some(started_on), Ok(note)) = (document.as_ref(), result.as_ref())
+        && *started_on != doc.path
+    {
+        status.say(format!(
+            "made {}, but it was started in another document and has not been linked",
+            note.path
+        ));
+        return;
+    }
 
     match result {
         Ok(note) => match subject {

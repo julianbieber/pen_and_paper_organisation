@@ -4,8 +4,11 @@
 
 use std::collections::BTreeSet;
 
+use campaign::brush::TileChange;
 use campaign::edit::{Edit, EditError};
 use campaign::feature::{CellPoint, Feature, FeatureId, FeatureKind, Geometry};
+use campaign::grid::TileGrid;
+use campaign::tiles::DungeonTile;
 use campaign::world::{ParentProblem, World};
 
 fn point(x: f32, y: f32) -> Geometry {
@@ -92,11 +95,13 @@ fn variant_name(edit: &Edit) -> &'static str {
         Edit::SetParent { .. } => "SetParent",
         Edit::SetRank { .. } => "SetRank",
         Edit::SetMaxCellsPerPixel { .. } => "SetMaxCellsPerPixel",
+        Edit::SetDungeon { .. } => "SetDungeon",
+        Edit::PaintTiles { .. } => "PaintTiles",
         Edit::Batch(_) => "Batch",
     }
 }
 
-const EVERY_VARIANT: [&str; 12] = [
+const EVERY_VARIANT: [&str; 14] = [
     "Add",
     "Delete",
     "MoveVertex",
@@ -108,6 +113,8 @@ const EVERY_VARIANT: [&str; 12] = [
     "SetParent",
     "SetRank",
     "SetMaxCellsPerPixel",
+    "SetDungeon",
+    "PaintTiles",
     "Batch",
 ];
 
@@ -185,6 +192,10 @@ fn every_edit_variant_inverts_to_the_exact_prior_state() {
             id: f.tavern,
             scale: Some(0.25),
         },
+        Edit::SetDungeon {
+            id: f.poi,
+            dungeon: Some("barrow.ron".to_owned()),
+        },
         Edit::Batch(vec![
             Edit::SetLabel {
                 id: f.poi,
@@ -204,6 +215,17 @@ fn every_edit_variant_inverts_to_the_exact_prior_state() {
         let mut world = f.world.clone();
         assert_inverts(&mut world, edit);
     }
+
+    let mut dungeon = World::on_a_grid(TileGrid::new(8, 8, 1.5).expect("a legal grid"));
+    let paint = Edit::PaintTiles {
+        changes: vec![TileChange {
+            x: 1,
+            y: 2,
+            tile: DungeonTile::Floor,
+        }],
+    };
+    covered.insert(variant_name(&paint));
+    assert_inverts(&mut dungeon, paint);
 
     assert_eq!(
         covered,
@@ -690,4 +712,254 @@ fn an_add_carrying_an_unusable_reveal_scale_is_refused() {
     .expect_err("an add carrying a NaN reveal scale must be refused");
     assert!(matches!(refusal, EditError::BadRevealScale { .. }));
     assert!(world.feature(id).is_none());
+}
+
+// The property every tile edit rests on, stated the way the geometry edits state theirs:
+// applying a paint and then the paint it handed back leaves the grid exactly as it was.
+#[test]
+fn painting_and_then_undoing_it_leaves_the_grid_as_it_was() {
+    let mut world = World::on_a_grid(TileGrid::new(8, 8, 1.5).expect("a legal grid"));
+    let before = world.to_ron().expect("a world must serialize");
+
+    let changes = campaign::brush::cells(
+        world.grid().expect("a dungeon has a grid"),
+        campaign::brush::Brush::Room,
+        &[(1, 1), (5, 5)],
+        DungeonTile::Floor,
+    );
+    let inverse = Edit::PaintTiles { changes }
+        .apply(&mut world)
+        .expect("a room on an empty grid must land");
+    assert_ne!(world.to_ron().expect("serializes"), before);
+
+    inverse.apply(&mut world).expect("the inverse must apply");
+    assert_eq!(world.to_ron().expect("serializes"), before);
+}
+
+// One stroke is one entry on the undo stack however many cells it covers — which is the
+// whole reason a paint is its own variant rather than a Batch holding a change per cell.
+#[test]
+fn a_stroke_of_any_size_is_one_edit() {
+    let world = World::on_a_grid(TileGrid::new(32, 32, 1.5).expect("a legal grid"));
+    let changes = campaign::brush::cells(
+        world.grid().expect("a dungeon has a grid"),
+        campaign::brush::Brush::Flood,
+        &[(0, 0)],
+        DungeonTile::Floor,
+    );
+    assert_eq!(changes.len(), 1024, "the fill covers the whole grid");
+
+    let mut document = campaign::Document::new(world.clone());
+    document
+        .apply(Edit::PaintTiles { changes })
+        .expect("the fill must land");
+    assert_eq!(document.undo_depth(), 1);
+
+    document.undo().expect("undoing must work");
+    assert_eq!(
+        document.world().to_ron().expect("serializes"),
+        world.to_ron().expect("serializes"),
+        "one press must put the whole stroke back"
+    );
+}
+
+// A paint against the world map is refused rather than silently ignored: the world map is
+// drawn on the terrain and has no grid, and a socket or a redo can reach this.
+#[test]
+fn painting_a_document_with_no_grid_is_refused() {
+    let f = fixture();
+    let mut world = f.world.clone();
+    let refusal = Edit::PaintTiles {
+        changes: vec![TileChange {
+            x: 0,
+            y: 0,
+            tile: DungeonTile::Floor,
+        }],
+    }
+    .apply(&mut world)
+    .expect_err("the world map has no grid to paint");
+    assert!(matches!(refusal, EditError::NoGrid));
+    assert_eq!(world, f.world, "a refused edit changed the world");
+}
+
+// Every cell is bounded before any is written, so a paint whose last cell is off the grid
+// leaves the grid untouched rather than half-painted.
+#[test]
+fn a_paint_naming_a_cell_off_the_grid_writes_nothing() {
+    let mut world = World::on_a_grid(TileGrid::new(4, 4, 1.5).expect("a legal grid"));
+    let before = world.clone();
+
+    let refusal = Edit::PaintTiles {
+        changes: vec![
+            TileChange {
+                x: 0,
+                y: 0,
+                tile: DungeonTile::Floor,
+            },
+            TileChange {
+                x: 9,
+                y: 0,
+                tile: DungeonTile::Floor,
+            },
+        ],
+    }
+    .apply(&mut world)
+    .expect_err("a cell off the grid must be refused");
+    assert!(matches!(refusal, EditError::CellOutOfGrid { x: 9, y: 0, .. }));
+    assert_eq!(world, before, "a refused paint painted the first cell");
+}
+
+// An entry on the undo stack must always undo something, so a stroke that lands entirely
+// on cells already carrying the tile is refused rather than pushed.
+#[test]
+fn a_paint_that_changes_nothing_is_refused() {
+    let mut world = World::on_a_grid(TileGrid::new(4, 4, 1.5).expect("a legal grid"));
+    let refusal = Edit::PaintTiles {
+        changes: vec![TileChange {
+            x: 1,
+            y: 1,
+            tile: DungeonTile::Empty,
+        }],
+    }
+    .apply(&mut world)
+    .expect_err("painting the tile already there must be refused");
+    assert!(matches!(refusal, EditError::EmptyPaint));
+}
+
+// A caller that names one cell twice must not produce an inverse that depends on the order
+// it is applied in.
+#[test]
+fn a_paint_naming_one_cell_twice_keeps_the_last_word() {
+    let mut world = World::on_a_grid(TileGrid::new(4, 4, 1.5).expect("a legal grid"));
+    let inverse = Edit::PaintTiles {
+        changes: vec![
+            TileChange {
+                x: 1,
+                y: 1,
+                tile: DungeonTile::Floor,
+            },
+            TileChange {
+                x: 1,
+                y: 1,
+                tile: DungeonTile::Wall,
+            },
+        ],
+    }
+    .apply(&mut world)
+    .expect("the paint must land");
+
+    assert_eq!(world.grid().unwrap().get(1, 1), Some(DungeonTile::Wall));
+    let Edit::PaintTiles { changes } = &inverse else {
+        panic!("the inverse of a paint is a paint");
+    };
+    assert_eq!(changes.len(), 1, "one cell, one entry in the inverse");
+    inverse.apply(&mut world).expect("the inverse must apply");
+    assert_eq!(world.grid().unwrap().get(1, 1), Some(DungeonTile::Empty));
+}
+
+// The link from an entry to its dungeon is an Edit like everything else, so it is undoable
+// and it is saved with the world map.
+#[test]
+fn a_dungeon_link_is_set_and_undone_like_any_other_field() {
+    let f = fixture();
+    let mut world = f.world.clone();
+
+    let inverse = Edit::SetDungeon {
+        id: f.poi,
+        dungeon: Some("crypt.ron".to_owned()),
+    }
+    .apply(&mut world)
+    .expect("naming a dungeon must land");
+    assert_eq!(
+        world.feature(f.poi).unwrap().dungeon.as_deref(),
+        Some("crypt.ron")
+    );
+
+    inverse.apply(&mut world).expect("the inverse must apply");
+    assert_eq!(world, f.world);
+}
+
+// The name is joined to a directory and then opened for writing, so every rule World::load
+// enforces about it has to be enforced here too — including on the Add path, which carries
+// a whole feature and is the arm easiest to miss.
+#[test]
+fn a_dungeon_name_that_is_not_one_file_in_one_directory_is_refused() {
+    let f = fixture();
+    for name in [
+        "",
+        "-crypt.ron",
+        "../world.ron",
+        "sub/crypt.ron",
+        "/etc/passwd",
+        ".",
+        "..",
+        "crypt",
+        "crypt.ron\u{0}",
+    ] {
+        let mut world = f.world.clone();
+        let refusal = Edit::SetDungeon {
+            id: f.poi,
+            dungeon: Some(name.to_owned()),
+        }
+        .apply(&mut world)
+        .expect_err(&format!("`{name}` must be refused as a dungeon name"));
+        assert!(matches!(refusal, EditError::BadDungeonName { .. }));
+
+        let mut world = f.world.clone();
+        let id = world.fresh_id();
+        let refusal = Edit::Add {
+            id,
+            feature: Feature {
+                dungeon: Some(name.to_owned()),
+                ..feature(FeatureKind::DungeonEntry, point(1.0, 1.0), "a stair")
+            },
+        }
+        .apply(&mut world)
+        .expect_err(&format!("an add carrying `{name}` must be refused"));
+        assert!(matches!(refusal, EditError::BadDungeonName { .. }));
+    }
+}
+
+// Two entries naming one file would both open and save it, so the second is refused where
+// it is stored rather than discovered when work is lost.
+#[test]
+fn two_features_may_not_name_the_same_dungeon() {
+    let f = fixture();
+    let mut world = f.world.clone();
+    Edit::SetDungeon {
+        id: f.poi,
+        dungeon: Some("crypt.ron".to_owned()),
+    }
+    .apply(&mut world)
+    .expect("the first must land");
+
+    let refusal = Edit::SetDungeon {
+        id: f.city,
+        dungeon: Some("crypt.ron".to_owned()),
+    }
+    .apply(&mut world)
+    .expect_err("the second must be refused");
+    assert!(matches!(refusal, EditError::DungeonNameInUse { .. }));
+}
+
+// A dungeon is a child of the world map and not of another dungeon: there is one place to
+// come back to, so nesting is refused where it is stored.
+#[test]
+fn a_feature_inside_a_dungeon_may_not_name_a_dungeon() {
+    let mut world = World::on_a_grid(TileGrid::new(8, 8, 1.5).expect("a legal grid"));
+    let id = world.fresh_id();
+    Edit::Add {
+        id,
+        feature: feature(FeatureKind::DungeonEntry, point(1.0, 1.0), "a stair down"),
+    }
+    .apply(&mut world)
+    .expect("adding a feature inside a dungeon must work");
+
+    let refusal = Edit::SetDungeon {
+        id,
+        dungeon: Some("deeper.ron".to_owned()),
+    }
+    .apply(&mut world)
+    .expect_err("a dungeon inside a dungeon must be refused");
+    assert!(matches!(refusal, EditError::NestedDungeon { .. }));
 }

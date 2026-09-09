@@ -21,7 +21,10 @@ and linked to features (#6): `campaign::notebook` owns the whole `zk` dependency
 `campaign_editor/src/notes` runs it off the frame. Selecting a place shows what references
 it (#7): the same module builds the tag and the `zk list`, `notes/references.rs` caches an
 answer per tag behind one query at a time, and `notes/watch.rs` drops the cache when the
-notebook changes underneath us. The milestone is filed as issues #1–#11; the design
+notebook changes underneath us. Dungeons are authored on a square tile grid (#8):
+`campaign::grid` and `campaign::brush` own the grid and the four brushes,
+`campaign_editor/src/document.rs` holds the open document and the parked ones, and
+`map/backdrop.rs` is the one thing that says what is being drawn on. The milestone is filed as issues #1–#11; the design
 behind them is in the plan at
 `~/fun_repos/hobby-mimisbrunnr/notes/pen_and_paper_organisation/init/pen_and_paper_plan/plan-2026-08-30-campaign-map-and-notes.md`.
 
@@ -68,6 +71,48 @@ A settlement is a polygon on the world map, and the tavern inside it is a point 
 `parent` is that polygon. It is drawn once the parent covers enough screen area, so world
 zoom stays readable without a child document or a view switch. **Dungeons** are child
 documents, because a 30-metre room has no meaningful position at terrain-cell scale.
+
+## A document carries its own backdrop
+
+**Whether a `World` holds a `TileGrid` is what decides which backdrop it is drawn on.** The
+world map holds none and is drawn on the campaign's terrain; a dungeon holds one and is
+drawn on it. One type, one `Edit` vocabulary, one undo stack — which is why the grid went
+onto `World` rather than into a second document type that would have forked `Edit`,
+`Document`, `WorldDoc` and the control socket with it.
+
+A dungeon entry names its dungeon in `Feature::dungeon`, a **single file name** inside
+`dungeons/`. It is derived from the entry's label through `campaign::slug`, and it is the
+one place this workspace turns typed text into a filename — so it is guarded by
+`dungeon_name_refusal`, which is stricter than `note_path_refusal` (no separator, no `..`,
+a `.ron` extension) and is enforced in `World::check` *and* `Edit::apply`, as every rule
+here is. Names are made unique against the paths the document already holds **and** the
+directory: a dungeon that has been opened and not saved has a name and no file.
+
+A dungeon does not open another. Nesting is refused where it is stored, so the rule is
+checkable without a window and there is always exactly one place to come back to.
+
+**Both documents stay live.** `campaign_editor/src/document.rs` parks whichever document is
+not on screen, with its undo stack, its dirty flag and where the camera was looking at it,
+so a round trip loses neither work nor history. The close guard therefore asks about every
+document, not the one on screen. Feature ids are per-document, so a switch clears
+everything holding one — the selection, a drag, a draft, a stroke, the pending label, a
+question, and the document a note job was started against.
+
+**`Backdrop` is the only source of a `MapView`.** Nine places used to build one out of the
+terrain's extent; a consumer now asks the resource. It also carries where the camera goes,
+because "restore or frame" is one question and only `place_camera` may answer it — a system
+in the authoring set writing the camera would be overwritten by the map set on the next
+frame. Its `generation` is what says the camera has not been placed for this backdrop yet.
+
+**A brush stroke is one `Edit::PaintTiles`**, applied on release, carrying only the cells
+that actually change and each of them once. That is what makes it a single press of undo
+however many cells it covers, and what makes its inverse exact. The four brushes and the
+tile vocabulary live in `campaign` and are tested without a GPU; `features/paint.rs` owns
+only the gesture.
+
+Tiles are written **run-length encoded**: one variant name per cell would put a middling
+grid over `MAX_WORLD_BYTES`, and a document that paints happily and can never be saved is
+the worst failure available. A 64-cell grid with a room in it is about a kilobyte.
 
 ## Layout
 
@@ -118,9 +163,13 @@ the skip into a failure so CI cannot pass having checked none of it.
 
 ## Conventions
 
-- **Coordinates are terrain cells** everywhere in a world document, so a feature and a
-  terrain sample agree without a conversion at every call site. `campaign.ron` holds
-  `units_per_cell` for anything the GM reads.
+- **Coordinates are backdrop cells** everywhere in a map document, so a feature and the
+  cell under it agree without a conversion at every call site. On the world map that is a
+  terrain cell and `campaign.ron` holds `units_per_cell` for anything the GM reads; in a
+  dungeon it is a grid cell and the grid holds its own `metres_per_cell`. The thresholds in
+  `lod` and the widths in `style` are stated in cells per logical pixel either way, so they
+  mean different ground in a dungeon than on the world map — which is the point of a child
+  document having its own scale.
 - **Bevy 0.19. All UI is `bevy_feathers`** — the toolkit `watershed_editor` uses, so its
   chrome and idioms carry over. No `egui`.
 - `watershed` comes in by **git URL with a pinned `rev`**, never a path — the repo has to
@@ -179,7 +228,15 @@ The renderer is bevy's own `bevy_sprite_render::tilemap_chunk`: one `TilemapChun
 per `CHUNK_CELLS`-square block of terrain cells, one draw call each, streamed so only what
 the camera can see is resident.
 
-**The tileset is drawn by hand in `bevy_sprite_editor`** (`~/fun_repos/bevy_sprite_editor`)
+**The dungeon strip is generated, not drawn.** `map/load.rs` builds one flat-coloured layer
+per `DungeonTile` from the table in `campaign::style`, stacked vertically because that is
+the layout `reinterpret_stacked_2d_as_array` splits — the terrain's horizontal strip is
+turned into an array by the image loader instead, which is a different route to the same
+array texture. A tile's layer is its `DungeonTile::index` either way. The four door and
+stair kinds therefore differ by hue alone; that is deliberate, and replacing
+`build_dungeon_tileset` with a hand-drawn strip later changes nothing else.
+
+**The terrain tileset is drawn by hand in `bevy_sprite_editor`** (`~/fun_repos/bevy_sprite_editor`)
 and lives at `crates/campaign_editor/assets/terrain_tiles.png` with its
 `.atlas.json` sidecar. That tool only ever grows an atlas rightwards, so the file is a
 **single row** of square tiles, row-major over the whole image. Bevy loads that strip

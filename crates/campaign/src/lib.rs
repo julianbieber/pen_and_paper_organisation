@@ -7,6 +7,8 @@
 
 /// The tileset sidecar `bevy_sprite_editor` writes, and why one is unusable.
 pub mod atlas;
+/// The ways a stroke turns a grid and a gesture into the cells it would change.
+pub mod brush;
 /// Opening and creating a campaign directory, and why either failed.
 pub mod campaign;
 /// A world under authorship: its undo and redo stacks, and whether it is unsaved.
@@ -17,6 +19,8 @@ pub mod draft;
 pub mod edit;
 /// What the GM draws: a feature's identity, shape and kind.
 pub mod feature;
+/// The square tile grid a document may be drawn on, and every reason one is refused.
+pub mod grid;
 /// The single Edit one authoring gesture becomes.
 pub mod gesture;
 /// Where a label sits, what it outranks, and which labels fit without overlapping.
@@ -32,21 +36,27 @@ pub mod manifest;
 pub mod notebook;
 /// What a position in cells lands on, what a rectangle encloses, and where a vertex snaps.
 pub mod pick;
-/// The one table saying what a FeatureKind and a Rank look like.
+/// Turning a label the GM typed into the name of a file this tool creates.
+pub mod slug;
+/// The one table saying what a feature and a dungeon tile look like.
 pub mod style;
-/// Which tile a terrain cell is drawn as, and how brightly it is lit.
+/// Which tile a cell is drawn as, and how brightly it is lit.
 pub mod tiles;
-/// The set of features a map holds, and every rule a set of them must satisfy.
+/// What a map document holds, and every rule such a document must satisfy.
 pub mod world;
 
 pub use atlas::{AtlasError, AtlasMeta};
+pub use brush::{Brush, TileChange};
 pub use campaign::{Campaign, CampaignError};
 pub use document::{Document, UNDO_LIMIT};
 pub use draft::{Draft, DraftShape};
 pub use edit::{Edit, EditError};
 pub use feature::{CellPoint, Feature, FeatureId, FeatureKind, Geometry, Rank};
 pub use gesture::Orphans;
+pub use grid::{DEFAULT_GRID_CELLS, DEFAULT_METRES_PER_CELL, GridProblem, MAX_GRID_CELLS, TileGrid};
+pub use tiles::DungeonTile;
 pub use pick::{Hit, Landing, Snap};
+pub use slug::dungeon_name;
 pub use notebook::{NewNote, NoteError, NoteKind, Notebook, Runner, SystemRunner};
 pub use manifest::{
     CAMPAIGN_VERSION, CampaignManifest, DEFAULT_UNIT, DEFAULT_UNITS_PER_CELL, MAX_MANIFEST_BYTES,

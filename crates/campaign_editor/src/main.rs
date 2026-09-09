@@ -22,6 +22,7 @@ use campaign::Campaign;
 
 mod control;
 mod dialog;
+mod document;
 mod features;
 mod map;
 mod notes;
@@ -91,7 +92,7 @@ fn main() {
         (
             close_dialog.run_if(resource_added::<OpenCampaign>),
             sync_status.run_if(resource_changed::<StatusMessage>),
-            close_without_a_document.run_if(not(resource_exists::<features::doc::WorldDoc>)),
+            close_without_a_document.run_if(not(resource_exists::<document::WorldDoc>)),
         ),
     );
 

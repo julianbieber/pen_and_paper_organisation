@@ -10,7 +10,7 @@ use campaign::pick::Snap;
 use campaign::{gesture, pick};
 
 use crate::StatusMessage;
-use crate::features::doc::{self, WorldDoc};
+use crate::document::{self as doc, WorldDoc};
 use crate::features::select::Selection;
 use crate::features::tool::ActiveTool;
 use crate::map::pointer::{MapPointer, PICK_SLACK_PIXELS, SNAP_SLACK_PIXELS};
@@ -198,7 +198,7 @@ mod tests {
                 cell: Some(at(0.0, 0.0)),
                 cells_per_pixel: 1.0,
             })
-            .insert_resource(WorldDoc::new(Document::new(World::default())))
+            .insert_resource(WorldDoc::world_map(Document::new(World::default()), std::path::PathBuf::from("world.ron")))
             .add_systems(Update, draw_features);
         app
     }
