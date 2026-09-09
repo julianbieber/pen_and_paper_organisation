@@ -63,6 +63,7 @@ pub fn switch_document(
     mut dragging: ResMut<crate::features::select::Dragging>,
     mut drafting: ResMut<crate::features::draw::Drafting>,
     mut stroking: ResMut<crate::features::paint::Stroking>,
+    mut placing: ResMut<crate::features::image::Placing>,
     mut pending: ResMut<crate::features::panel::PendingLabel>,
     mut asking: ResMut<crate::features::prompt::Asking>,
     mut active: ResMut<crate::features::tool::ActiveTool>,
@@ -178,6 +179,7 @@ pub fn switch_document(
     dragging.cancel();
     drafting.abandon();
     stroking.abandon();
+    placing.cancel();
     pending.feature = None;
     pending.text.clear();
     asking.settle();

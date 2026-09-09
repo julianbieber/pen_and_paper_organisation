@@ -17,6 +17,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::feature::{Feature, FeatureId, dungeon_name_refusal, note_path_refusal, reveal_refusal};
 use crate::grid::{GridProblem, TileGrid};
+use crate::image::{ImageBackdrop, ImageProblem};
 
 /// The world document format this build writes, and the only one it reads.
 ///
@@ -145,6 +146,19 @@ pub enum WorldError {
         source: GridProblem,
     },
 
+    /// The document's image backdrop is not one a document may hold.
+    ///
+    /// About the *declaration* and never about the file: a document naming a picture that
+    /// is missing or unreadable opens perfectly well and draws its features, because
+    /// nothing here reads the disk. Only a declaration that could not be drawn whatever
+    /// the file turned out to be is refused.
+    #[error("`{}` has an image backdrop that cannot be drawn: {source}", .path.display())]
+    BadImage {
+        path: PathBuf,
+        #[source]
+        source: ImageProblem,
+    },
+
     /// The document could not be written.
     #[error("`{}` could not be written: {source}", .path.display())]
     WorldUnwritable {
@@ -200,6 +214,14 @@ pub struct World {
     /// build that has never heard of a grid.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     grid: Option<TileGrid>,
+    /// The picture this document is drawn over, when the GM has imported one.
+    ///
+    /// Independent of the grid: a dungeon may be drawn on its grid with a scan laid over
+    /// it, and the world map may carry one just as well. Defaulted and skipped when absent
+    /// for the reason the grid is, so a `world.ron` written before backdrops existed still
+    /// reads and one written now still opens in a build that has never heard of one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    image: Option<ImageBackdrop>,
 }
 
 impl Default for World {
@@ -209,6 +231,7 @@ impl Default for World {
             next_id: 0,
             features: BTreeMap::new(),
             grid: None,
+            image: None,
         }
     }
 }
@@ -354,6 +377,11 @@ impl World {
         self.grid.as_ref()
     }
 
+    /// The picture this document is drawn over, or `None` when it declares none.
+    pub fn image(&self) -> Option<&ImageBackdrop> {
+        self.image.as_ref()
+    }
+
     /// The feature `id` names, if this world holds one.
     pub fn feature(&self, id: FeatureId) -> Option<&Feature> {
         self.features.get(&id)
@@ -431,6 +459,10 @@ impl World {
         self.grid.as_mut()
     }
 
+    pub(crate) fn image_mut(&mut self) -> &mut Option<ImageBackdrop> {
+        &mut self.image
+    }
+
     fn read_to_string(path: &Path) -> Result<Option<String>, WorldError> {
         let unreadable = |source: std::io::Error| WorldError::WorldUnreadable {
             path: path.to_owned(),
@@ -464,6 +496,15 @@ impl World {
             && let Some(source) = grid.refusal()
         {
             return Err(WorldError::BadGrid {
+                path: path.to_owned(),
+                source,
+            });
+        }
+
+        if let Some(image) = &self.image
+            && let Some(source) = image.refusal()
+        {
+            return Err(WorldError::BadImage {
                 path: path.to_owned(),
                 source,
             });

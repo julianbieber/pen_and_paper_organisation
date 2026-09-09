@@ -24,7 +24,10 @@ answer per tag behind one query at a time, and `notes/watch.rs` drops the cache 
 notebook changes underneath us. Dungeons are authored on a square tile grid (#8):
 `campaign::grid` and `campaign::brush` own the grid and the four brushes,
 `campaign_editor/src/document.rs` holds the open document and the parked ones, and
-`map/backdrop.rs` is the one thing that says what is being drawn on. The milestone is filed as issues #1–#11; the design
+`map/backdrop.rs` is the one thing that says what is being drawn on. A document may also be
+drawn over an imported picture (#9): `campaign::image` owns the placement arithmetic, the
+refusals and the import, `campaign_editor/src/map/image.rs` reads and draws it, and
+`features/image.rs` owns the gesture and the panel. The milestone is filed as issues #1–#11; the design
 behind them is in the plan at
 `~/fun_repos/hobby-mimisbrunnr/notes/pen_and_paper_organisation/init/pen_and_paper_plan/plan-2026-08-30-campaign-map-and-notes.md`.
 
@@ -113,6 +116,53 @@ only the gesture.
 Tiles are written **run-length encoded**: one variant name per cell would put a middling
 grid over `MAX_WORLD_BYTES`, and a document that paints happily and can never be saved is
 the worst failure available. A 64-cell grid with a room in it is about a kilobyte.
+
+## A picture can sit under the features
+
+**An imported image is an overlay in document cells, not a third `BackdropSource`.** The
+backdrop enum is exclusive and drives `stream_chunks`, which fills tile *indices*; a picture
+has none, and the issue's own case is a scan inside a dungeon, which must still carry the
+grid that makes it one. So a document may hold a `TileGrid`, an `ImageBackdrop`, both or
+neither, and the picture is positioned in the same cells everything else is.
+
+**A document names its picture, it does not path it.** One file name inside `images/`,
+joined onto the campaign root by `layout::image` and nowhere else, which is what lets the
+whole directory move. That makes the name a trust boundary, so it is derived through
+`campaign::slug` and stored only after `image::name_refusal` — which is
+`dungeon_name_refusal`'s rule, shared as `feature::file_name_refusal` rather than copied a
+fifth time, and it additionally refuses `:` and `#`, because those name an asset source and
+a label rather than a file.
+
+**The picture is not asked of the asset server, deliberately.** The asset root is fixed when
+the app builds and a campaign is chosen at runtime, so the server cannot address one; the
+ways around that are worse, since the path would come from a `world.ron` somebody else may
+have written, and a `.meta` sidecar beside the picture selects an arbitrary loader by name.
+`map/image.rs` reads the bytes on the IO pool and decodes them itself, which also makes
+missing, unreadable and not-a-picture three sentences instead of one opaque load failure.
+The import refuses anything that is not a regular file, anything over `MAX_IMAGE_BYTES` or
+`MAX_IMAGE_SIDE`, and decides the format from the header rather than the name — then takes
+its destination with `File::create_new`, so uniquing the name and claiming it are one
+atomic step and a symlink is refused rather than written through.
+
+**Three depths, two mechanisms.** `TERRAIN_Z < IMAGE_Z < FEATURE_Z` in `map/view.rs`, with a
+compile-time assertion. The picture covers the chunks *because its z is greater*; a feature
+covers the picture for an unrelated reason — a feature is a gizmo, every gizmo is queued at
+one depth with the comparison always passing, so it draws last at any z. The dungeon's grid
+lines are gizmos too, so they are drawn **over** a scan, which is what registering one
+against a grid wants.
+
+**Every gesture lands one `Edit` on release** — a drag, a corner scale, a calibration and an
+opacity drag alike. The opacity slider is the sharp case: it moves every frame it is
+dragged, the undo stack holds 128 entries and applying an edit clears the redo stack, so an
+edit per frame would silently discard everything the GM drew. `show_image_panel` writes the
+slider back **only on the frame the document changed**; writing whenever the two differ is a
+loop with the thing that reads it, and the value could never reach the document at all.
+
+**Calibration is measured in the document's own unit** — the grid's `metres_per_cell` in a
+dungeon, the manifest's `units_per_cell` on the world map. The two differ by a factor of
+1500 at the defaults, so `campaign::image::calibrate` takes it as an argument rather than
+assuming; the ruler (#10) must read the same answer. The first of the two marks is what
+stays put across the rescale.
 
 ## Layout
 

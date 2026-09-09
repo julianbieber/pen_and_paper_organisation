@@ -14,6 +14,7 @@ use crate::feature::{
     CellPoint, Feature, FeatureId, FeatureKind, Rank, dungeon_name_refusal, note_path_refusal,
     reveal_refusal,
 };
+use crate::image::{ImageBackdrop, ImageProblem};
 use crate::world::{ParentProblem, World};
 
 /// Why an edit was refused.
@@ -117,6 +118,23 @@ pub enum EditError {
         height: u32,
     },
 
+    /// An image edit against a document that declares no image backdrop.
+    #[error("this document is drawn over no image, so there is nothing to place")]
+    NoImage,
+
+    /// An image declaration a document may not hold.
+    #[error("that image backdrop cannot be drawn: {0}")]
+    BadImage(#[from] ImageProblem),
+
+    /// A declaration edit that would change nothing.
+    ///
+    /// Refused for the reason [`EditError::EmptyPaint`] is: clearing an image on a
+    /// document that has none puts an entry on the undo stack that undoes nothing, and a
+    /// press of undo that appears to do nothing is indistinguishable from one that was not
+    /// noticed.
+    #[error("this document is drawn over no image already")]
+    NoImageChange,
+
     /// A tile edit that would change nothing.
     ///
     /// Refused rather than applied, so an entry on the undo stack always undoes
@@ -194,6 +212,23 @@ pub enum Edit {
     /// One edit however many cells the stroke covered, which is what makes a brush
     /// stroke a single press of undo without a [`Edit::Batch`] holding a change per cell.
     PaintTiles { changes: Vec<TileChange> },
+    /// Declare the picture this document is drawn over, or clear it.
+    ///
+    /// What an import lands. Refused when it would clear an image the document does not
+    /// have, so the entry it puts on the undo stack always undoes something.
+    SetImage { image: Option<ImageBackdrop> },
+    /// Move and scale the picture together.
+    ///
+    /// One edit for a whole drag, a whole corner scale or a whole calibration, which is
+    /// what makes each of them a single press of undo. Origin and scale travel together
+    /// because every one of those gestures moves both: a rescale is anchored on a point
+    /// that stays put, and holding the anchor fixed *is* moving the origin.
+    PlaceImage {
+        origin: CellPoint,
+        cells_per_pixel: f32,
+    },
+    /// Fade the picture, or make it solid.
+    SetImageOpacity { opacity: f32 },
     /// Several edits that apply, undo and redo as one.
     ///
     /// What makes deleting a settlement together with everything parented to it a single
@@ -359,6 +394,47 @@ impl Edit {
                 check_dungeon(world, id, dungeon.as_deref())?;
                 let was = std::mem::replace(&mut feature_mut(world, id).dungeon, dungeon);
                 Ok(Self::SetDungeon { id, dungeon: was })
+            }
+
+            Self::SetImage { image } => {
+                if image.is_none() && world.image().is_none() {
+                    return Err(EditError::NoImageChange);
+                }
+                if let Some(image) = &image
+                    && let Some(problem) = image.refusal()
+                {
+                    return Err(EditError::BadImage(problem));
+                }
+                let was = std::mem::replace(world.image_mut(), image);
+                Ok(Self::SetImage { image: was })
+            }
+
+            Self::PlaceImage {
+                origin,
+                cells_per_pixel,
+            } => {
+                let image = world.image().ok_or(EditError::NoImage)?;
+                let moved = image.placed(origin, cells_per_pixel)?;
+                let was = world
+                    .image_mut()
+                    .replace(moved)
+                    .expect("the image was there a moment ago");
+                Ok(Self::PlaceImage {
+                    origin: was.origin(),
+                    cells_per_pixel: was.cells_per_pixel(),
+                })
+            }
+
+            Self::SetImageOpacity { opacity } => {
+                let image = world.image().ok_or(EditError::NoImage)?;
+                let faded = image.faded(opacity)?;
+                let was = world
+                    .image_mut()
+                    .replace(faded)
+                    .expect("the image was there a moment ago");
+                Ok(Self::SetImageOpacity {
+                    opacity: was.opacity(),
+                })
             }
 
             Self::PaintTiles { changes } => {

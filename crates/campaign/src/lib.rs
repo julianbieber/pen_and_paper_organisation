@@ -21,6 +21,8 @@ pub mod edit;
 pub mod feature;
 /// The square tile grid a document may be drawn on, and every reason one is refused.
 pub mod grid;
+/// The image a document may be drawn over, and getting the file into the campaign.
+pub mod image;
 /// The single Edit one authoring gesture becomes.
 pub mod gesture;
 /// Where a label sits, what it outranks, and which labels fit without overlapping.
@@ -54,6 +56,7 @@ pub use edit::{Edit, EditError};
 pub use feature::{CellPoint, Feature, FeatureId, FeatureKind, Geometry, Rank};
 pub use gesture::Orphans;
 pub use grid::{DEFAULT_GRID_CELLS, DEFAULT_METRES_PER_CELL, GridProblem, MAX_GRID_CELLS, TileGrid};
+pub use image::{ImageBackdrop, ImageProblem, Imported, ImportError};
 pub use tiles::DungeonTile;
 pub use pick::{Hit, Landing, Snap};
 pub use slug::dungeon_name;

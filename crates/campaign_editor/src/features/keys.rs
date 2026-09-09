@@ -32,6 +32,7 @@ pub fn authoring_keys(
     mut selection: ResMut<Selection>,
     mut drafting: ResMut<Drafting>,
     mut dragging: ResMut<Dragging>,
+    mut placing: ResMut<crate::features::image::Placing>,
     mut asking: ResMut<Asking>,
     mut status: ResMut<StatusMessage>,
 ) {
@@ -42,6 +43,10 @@ pub fn authoring_keys(
         || keys.just_pressed(KeyCode::KeyS)
         || keys.just_pressed(KeyCode::Delete)
         || keys.just_pressed(KeyCode::Escape);
+
+    if acting && placing.is_live() {
+        placing.cancel();
+    }
 
     if acting && dragging.what.is_some() {
         dragging.cancel();

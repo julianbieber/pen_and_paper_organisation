@@ -65,6 +65,17 @@ pub fn images(root: &Path) -> PathBuf {
     root.join(IMAGES_DIR)
 }
 
+/// Where the imported backdrop named `name` sits under `root`.
+///
+/// `name` is a file name and not a path — it is constrained by
+/// [`image::name_refusal`](crate::image::name_refusal) wherever it is stored, so it
+/// carries its own extension and no separator. This exists so that no consumer joins one
+/// by hand, which is the whole reason this module does, and it is the only place a
+/// document's image name is turned into somewhere on the disk.
+pub fn image(root: &Path, name: &str) -> PathBuf {
+    images(root).join(name)
+}
+
 /// Where the notebook sits under `root`.
 pub fn notes(root: &Path) -> PathBuf {
     root.join(NOTES_DIR)

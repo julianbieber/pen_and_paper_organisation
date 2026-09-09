@@ -1,0 +1,71 @@
+# Every acceptance criterion issue #9 states, driven through the panel a GM types into.
+#
+#   cargo run -p campaign --example make_demo -- /tmp/demo-campaign
+#   cargo run -p campaign --example make_demo -- /tmp/demo-moved   # for the move criterion
+#   PNP_CONTROL=/tmp/pnp.sock cargo run -p campaign_editor -- /tmp/demo-campaign &
+#   PNP_CONTROL=/tmp/pnp.sock cargo run -p campaign_editor --bin pnp-ctl -- run \
+#       crates/campaign_editor/scenarios/backdrop.scenario
+#
+# The picture is imported into a dungeon, which is the case the issue names, and the
+# scale a calibration sets is read back so the ruler (#10) has something to measure
+# against.
+
+ping
+fixed-delta 0.016
+step 60                       # the terrain loads and the chrome appears
+
+# A dungeon entry, and into it.
+tool point
+kind dungeon
+click 30 30
+tool select
+click 30 30
+enter-dungeon
+step 10
+observe grid 0 0 2 2          # we are on a grid, so this is a dungeon
+
+# Something authored inside the dungeon, so that "the document still opens with its
+# features intact" has a feature to be intact.
+tool point
+kind poi
+click 8 8
+
+# Import a picture. The copy runs off the frame and the declaration lands after it.
+tool image
+import-image /tmp/backdrop-source.png
+step 30
+observe image                 # declared, named relatively, loaded
+
+# Place it: drag it somewhere, and check the origin moved
+drag 10 10 14 12
+step 5
+observe image
+
+# Two-point calibration: mark two cells 4 apart and call it 12 metres. A dungeon cell is
+# 1.5 metres, so 12 metres is 8 cells over 4 pixels: the scale must land at exactly 2.
+calibrate
+click 20 20
+click 24 20
+distance 12
+step 5
+observe image
+
+# Fade it, and read the opacity back
+opacity 0.35
+step 5
+observe image
+
+# Undo returns the opacity, then the calibration, then the drag
+undo
+step 5
+observe image
+
+# The dungeon is written, then the world map — and in that order, because the entry only
+# learns the dungeon's file name on the way in, and a world map saved before that names no
+# dungeon for backdrop-reopen.scenario to walk back into.
+save
+step 10
+leave-dungeon
+step 10
+save
+step 10
