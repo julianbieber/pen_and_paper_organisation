@@ -8,6 +8,7 @@ use campaign::brush::TileChange;
 use campaign::edit::{Edit, EditError};
 use campaign::feature::{CellPoint, Feature, FeatureId, FeatureKind, Geometry};
 use campaign::grid::TileGrid;
+use campaign::image::ImageBackdrop;
 use campaign::tiles::DungeonTile;
 use campaign::world::{ParentProblem, World};
 
@@ -97,11 +98,14 @@ fn variant_name(edit: &Edit) -> &'static str {
         Edit::SetMaxCellsPerPixel { .. } => "SetMaxCellsPerPixel",
         Edit::SetDungeon { .. } => "SetDungeon",
         Edit::PaintTiles { .. } => "PaintTiles",
+        Edit::SetImage { .. } => "SetImage",
+        Edit::PlaceImage { .. } => "PlaceImage",
+        Edit::SetImageOpacity { .. } => "SetImageOpacity",
         Edit::Batch(_) => "Batch",
     }
 }
 
-const EVERY_VARIANT: [&str; 14] = [
+const EVERY_VARIANT: [&str; 17] = [
     "Add",
     "Delete",
     "MoveVertex",
@@ -115,6 +119,9 @@ const EVERY_VARIANT: [&str; 14] = [
     "SetMaxCellsPerPixel",
     "SetDungeon",
     "PaintTiles",
+    "SetImage",
+    "PlaceImage",
+    "SetImageOpacity",
     "Batch",
 ];
 
@@ -226,6 +233,28 @@ fn every_edit_variant_inverts_to_the_exact_prior_state() {
     };
     covered.insert(variant_name(&paint));
     assert_inverts(&mut dungeon, paint);
+
+    let declare = Edit::SetImage {
+        image: Some(
+            ImageBackdrop::new("plan.png", CellPoint::new(1.0, 2.0), 0.25, 1.0)
+                .expect("a legal declaration"),
+        ),
+    };
+    covered.insert(variant_name(&declare));
+    assert_inverts(&mut dungeon, declare.clone());
+
+    declare.apply(&mut dungeon).expect("declaring an image");
+    for edit in [
+        Edit::PlaceImage {
+            origin: CellPoint::new(-3.5, 4.25),
+            cells_per_pixel: 0.125,
+        },
+        Edit::SetImageOpacity { opacity: 0.4 },
+    ] {
+        covered.insert(variant_name(&edit));
+        let mut over_a_picture = dungeon.clone();
+        assert_inverts(&mut over_a_picture, edit);
+    }
 
     assert_eq!(
         covered,

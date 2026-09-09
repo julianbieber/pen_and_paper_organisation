@@ -16,8 +16,27 @@ use campaign::tiles::CHUNK_CELLS;
 /// greater z.
 pub const TERRAIN_Z: f32 = 0.0;
 
+/// The depth an imported image backdrop is drawn at, between the two.
+///
+/// Greater than [`TERRAIN_Z`] is what puts the picture over the chunks: a sprite sorts
+/// against a tilemap by its z, so this number is the whole of that ordering and a picture
+/// at or below the terrain's depth would tie with it and land arbitrarily.
+///
+/// Being less than [`FEATURE_Z`] is **not** what puts it under the features, and a reader
+/// changing this must know that. A feature is a gizmo, every gizmo is queued at one depth
+/// with the comparison always passing, and the gizmo pass runs last — so a feature covers
+/// this picture at any z whatsoever. The dungeon's grid lines are gizmos too, which is why
+/// they are drawn over a scan rather than under it, and that is what registering a scan
+/// against a grid wants.
+pub const IMAGE_Z: f32 = 0.5;
+
 /// The depth authored features are drawn at, above the terrain.
 pub const FEATURE_Z: f32 = 1.0;
+
+const _: () = {
+    assert!(TERRAIN_Z < IMAGE_Z);
+    assert!(IMAGE_Z < FEATURE_Z);
+};
 
 /// How a terrain's cells sit in the world.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -48,6 +67,16 @@ impl MapView {
     /// one outside the tile order inside a chunk.
     pub fn cell_to_world(self, x: f32, y: f32) -> Vec2 {
         Vec2::new((x + 0.5) * self.cell_size, -(y + 0.5) * self.cell_size)
+    }
+
+    /// Where the top-left corner of a cell sits in the world, rather than its middle.
+    ///
+    /// [`Self::cell_to_world`] answers with the middle, which is what a tile and a label
+    /// want and what a rectangle anchored on a corner does not. Written here because the
+    /// half-cell correction is the same kind of thing as the flip: correct in one place, or
+    /// wrong in every place it is repeated.
+    pub fn cell_corner_to_world(self, x: f32, y: f32) -> Vec2 {
+        self.cell_to_world(x, y) + Vec2::new(-self.cell_size / 2.0, self.cell_size / 2.0)
     }
 
     /// Which terrain cell a world point falls on. Fractional, and may be outside the
@@ -157,6 +186,19 @@ mod tests {
         assert_eq!(*columns.end(), 0);
         assert_eq!(*rows.start(), -1);
         assert_eq!(*rows.end(), 1);
+    }
+
+    // A corner is half a cell up and left of the middle, and the flip means "up" is +y in
+    // the world while it is -y in cells. Getting that sign wrong puts an anchored picture
+    // one cell out in each axis, which reads as a placement bug rather than a conversion.
+    #[test]
+    fn a_cells_corner_sits_above_and_left_of_its_middle() {
+        let view = MapView::new(64, 64, 16.0);
+        let middle = view.cell_to_world(4.0, 7.0);
+        let corner = view.cell_corner_to_world(4.0, 7.0);
+
+        assert!((corner.x - (middle.x - 8.0)).abs() < 0.001, "{corner:?}");
+        assert!((corner.y - (middle.y + 8.0)).abs() < 0.001, "{corner:?}");
     }
 
     // World and cell must round-trip, or a cursor cannot be turned back into a cell.

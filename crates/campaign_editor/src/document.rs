@@ -221,7 +221,10 @@ fn moves_geometry(edit: &Edit) -> bool {
         | Edit::SetRank { .. }
         | Edit::SetMaxCellsPerPixel { .. }
         | Edit::SetDungeon { .. }
-        | Edit::PaintTiles { .. } => false,
+        | Edit::PaintTiles { .. }
+        | Edit::SetImage { .. }
+        | Edit::PlaceImage { .. }
+        | Edit::SetImageOpacity { .. } => false,
         Edit::Batch(edits) => edits.iter().any(moves_geometry),
     }
 }

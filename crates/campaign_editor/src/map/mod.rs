@@ -13,6 +13,8 @@ pub mod backdrop;
 pub mod camera;
 /// Which chunks are resident, and what each one currently holds.
 pub mod chunks;
+/// Reading the picture a document declares, and drawing it under the features.
+pub mod image;
 /// Turning an opened campaign into a map that can be drawn, or a reason it cannot.
 pub mod load;
 /// The one runtime control over what counts as a river.
@@ -37,6 +39,7 @@ impl Plugin for MapPlugin {
             .init_resource::<chunks::MapChunks>()
             .init_resource::<chunks::PaintedCells>()
             .init_resource::<MapPointer>()
+            .init_resource::<image::ImageAsset>()
             .init_resource::<PointerOverride>()
             .insert_resource(TilesetRoot(tileset_root()))
             .add_systems(Startup, camera::spawn_camera)
@@ -62,6 +65,7 @@ impl Plugin for MapPlugin {
                     pointer::track_pointer.run_if(resource_exists::<Backdrop>),
                     chunks::stream_chunks
                         .run_if(resource_exists::<Backdrop>.and_then(load::tileset_is_ready)),
+                    image::sync_backdrop_image.run_if(image::a_document_is_open),
                     chunks::refill_chunks.run_if(
                         resource_changed::<RiverThreshold>
                             .and_then(backdrop::backdrop_is_the_terrain),

@@ -31,6 +31,7 @@ pub enum Tool {
     Select,
     Draw,
     Paint,
+    Image,
 }
 
 /// The tool in hand, and what each drawing tool would place.
@@ -73,6 +74,11 @@ impl ActiveTool {
     /// Whether the active tool paints the backdrop.
     pub fn painting(&self) -> bool {
         self.tool == Tool::Paint
+    }
+
+    /// Whether the active tool places the imported picture.
+    pub fn placing(&self) -> bool {
+        self.tool == Tool::Image
     }
 
     /// Whether the active tool selects.
@@ -287,7 +293,8 @@ fn strip() -> impl Scene {
                     tool_button("Select", Tool::Select, DraftShape::Point),
                     tool_button("Point", Tool::Draw, DraftShape::Point),
                     tool_button("Line", Tool::Draw, DraftShape::Polyline),
-                    tool_button("Area", Tool::Draw, DraftShape::Polygon)
+                    tool_button("Area", Tool::Draw, DraftShape::Polygon),
+                    tool_button("Image", Tool::Image, DraftShape::Point)
                 ]
             ),
             (
@@ -343,11 +350,13 @@ fn brush_button(brush: Brush) -> impl Scene {
         on(|activate: On<Activate>,
             buttons: Query<&BrushButton>,
             mut active: ResMut<ActiveTool>,
-            mut stroking: ResMut<crate::features::paint::Stroking>| {
+            mut stroking: ResMut<crate::features::paint::Stroking>,
+            mut placing: ResMut<crate::features::image::Placing>| {
             let Ok(button) = buttons.get(activate.event_target()) else {
                 return;
             };
             stroking.abandon();
+            placing.cancel();
             active.brush = button.brush;
             active.tool = Tool::Paint;
         })
@@ -383,12 +392,14 @@ fn tool_button(caption: &'static str, tool: Tool, shape: DraftShape) -> impl Sce
             buttons: Query<&ToolButton>,
             mut active: ResMut<ActiveTool>,
             mut drafting: ResMut<Drafting>,
-            mut stroking: ResMut<crate::features::paint::Stroking>| {
+            mut stroking: ResMut<crate::features::paint::Stroking>,
+            mut placing: ResMut<crate::features::image::Placing>| {
             let Ok(button) = buttons.get(activate.event_target()) else {
                 return;
             };
             drafting.abandon();
             stroking.abandon();
+            placing.cancel();
             active.tool = button.tool;
             if button.tool == Tool::Draw {
                 active.shape = button.shape;

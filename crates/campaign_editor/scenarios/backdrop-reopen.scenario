@@ -1,0 +1,26 @@
+# Re-opens a campaign that backdrop.scenario already authored, walks into its dungeon and
+# reports the backdrop. Run it twice against two copies of that campaign, which is what
+# proves the last two of issue #9's acceptance criteria:
+#
+#   cp -r /tmp/demo-campaign /tmp/demo-moved                 # the whole directory moves
+#   rm /tmp/demo-broken/images/backdrop-source.png           # the picture goes missing
+#
+#   PNP_CONTROL=/tmp/pnp.sock cargo run -p campaign_editor -- <the copy> &
+#   PNP_CONTROL=/tmp/pnp.sock cargo run -p campaign_editor --bin pnp-ctl -- run \
+#       crates/campaign_editor/scenarios/backdrop-reopen.scenario
+#
+# Moved, `loaded` is true at the path it was never told about. Broken, `failed` is true,
+# `observe world` still lists the feature, and the status line says which file it was.
+
+ping
+fixed-delta 0.016
+step 60
+
+tool select
+click 30 30
+enter-dungeon
+step 30
+
+observe image
+observe world
+observe input

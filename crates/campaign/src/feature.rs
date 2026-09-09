@@ -316,26 +316,53 @@ pub fn reveal_refusal(scale: f32) -> Option<&'static str> {
 /// symlink — so a caller that opens the result should treat it as a name inside a
 /// directory it trusts, exactly as it must for a note.
 pub fn dungeon_name_refusal(name: &str) -> Option<&'static str> {
+    if let Some(reason) = file_name_refusal(name, MAX_DUNGEON_NAME_BYTES) {
+        return Some(reason);
+    }
+    if !name.ends_with(DUNGEON_EXTENSION) {
+        return Some("does not end in `.ron`, which every document in that directory does");
+    }
+    None
+}
+
+/// Why `name` is not one file name inside one directory, or `None` if it is fine, given
+/// that a name may run to `max_bytes`.
+///
+/// The rule every name this tool **creates and writes** shares, whatever it goes on to
+/// name: a dungeon document, an imported backdrop. It is here rather than copied per
+/// caller because a list of things to reject that exists twice is a list that will differ
+/// twice, and each caller adds only the extension its own directory holds.
+///
+/// `:` and `#` are refused along with the separators. Neither means anything to a
+/// filesystem, and both mean something to an asset path — one selects a source and one
+/// starts a label — so a name carrying either would address something other than the file
+/// it appears to.
+///
+/// The containment this gives is **lexical**. A single component cannot climb out of the
+/// directory by name, but the directory itself, or the file, may still be a symlink, so a
+/// caller that opens the result must still treat it as a name inside a directory it
+/// trusts.
+pub fn file_name_refusal(name: &str, max_bytes: usize) -> Option<&'static str> {
     if name.is_empty() {
         return Some("is empty");
     }
     if name.starts_with('-') {
         return Some("opens with a dash");
     }
-    if name.len() > MAX_DUNGEON_NAME_BYTES {
+    if name.len() > max_bytes {
         return Some("is longer than a file name may be");
     }
     if name.chars().any(char::is_control) {
         return Some("carries a control character, which no file name may");
     }
     if name.contains(['/', '\\']) {
-        return Some("carries a path separator, and a dungeon is one file in one directory");
+        return Some("carries a path separator, and this is one file in one directory");
+    }
+    if name.contains([':', '#']) {
+        return Some("carries `:` or `#`, which name an asset source or a label rather than a file");
     }
     if name == "." || name == ".." {
         return Some("names a directory rather than a document");
-    }
-    if !name.ends_with(DUNGEON_EXTENSION) {
-        return Some("does not end in `.ron`, which every document in that directory does");
     }
     None
 }

@@ -27,6 +27,8 @@ pub mod dungeon;
 pub mod keys;
 /// The selected feature's label, kind, rank, reveal scale, parent and note link.
 pub mod panel;
+/// Placing the picture a document is drawn over, and importing one into the campaign.
+pub mod image;
 /// Turning a brush stroke on a dungeon's grid into one Edit.
 pub mod paint;
 /// The fixed set of pens the map is stroked through, and the order they paint.
@@ -61,6 +63,11 @@ impl Plugin for FeaturesPlugin {
         app.init_resource::<tool::ActiveTool>()
             .init_resource::<draw::Drafting>()
             .init_resource::<paint::Stroking>()
+            .init_resource::<image::Placing>()
+            .init_resource::<image::ImportRequest>()
+            .init_resource::<image::ImportJob>()
+            .init_resource::<image::CalibrationDistance>()
+            .init_resource::<image::ImageFields>()
             .init_resource::<dungeon::DungeonIntent>()
             .init_resource::<select::Selection>()
             .init_resource::<select::Dragging>()
@@ -79,6 +86,7 @@ impl Plugin for FeaturesPlugin {
                         tool::build_tool_strip,
                         panel::build_property_panel,
                         prompt::build_prompt,
+                        image::build_image_panel,
                     )
                         .run_if(resource_added::<WorldDoc>),
                     crate::notes::panel::build_notes_panel
@@ -94,11 +102,16 @@ impl Plugin for FeaturesPlugin {
                         select::select_features.run_if(the_select_tool_is_active),
                         paint::paint_tiles
                             .run_if(paint::the_paint_tool_is_active.and_then(paint::a_grid_is_open)),
+                        image::place_image,
                         keys::authoring_keys,
                         panel::commit_label,
                     )
                         .run_if(authoring_is_live),
                     (
+                        image::commit_image_fields,
+                        image::import_image.run_if(
+                            resource_exists::<WorldDoc>.and_then(resource_exists::<Backdrop>),
+                        ),
                         dungeon::switch_document.run_if(
                             dungeon::a_switch_was_asked_for
                                 .and_then(resource_exists::<WorldDoc>)
@@ -108,11 +121,16 @@ impl Plugin for FeaturesPlugin {
                     )
                         .chain(),
                     select::reconcile_selection.run_if(resource_exists::<WorldDoc>),
-                    panel::show_properties.run_if(
-                        resource_exists::<WorldDoc>.and_then(
-                            resource_changed::<select::Selection>
-                                .or_else(resource_changed::<WorldDoc>),
+                    (
+                        panel::show_properties.run_if(
+                            resource_exists::<WorldDoc>.and_then(
+                                resource_changed::<select::Selection>
+                                    .or_else(resource_changed::<WorldDoc>),
+                            ),
                         ),
+                        (image::show_image_panel, image::land_opacity)
+                            .chain()
+                            .run_if(resource_exists::<WorldDoc>),
                     ),
                     (
                         crate::notes::watch::drain_notes_watch

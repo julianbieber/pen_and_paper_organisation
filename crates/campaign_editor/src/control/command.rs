@@ -22,6 +22,7 @@ use campaign::tiles::DungeonTile;
 use serde_json::{Value, json};
 
 use bevy::input_focus::InputFocus;
+use bevy::ui_widgets::SliderValue;
 use bevy::text::EditableText;
 
 use crate::features::PointerOverUi;
@@ -29,11 +30,15 @@ use crate::document::WorldDoc;
 use crate::features::panel::PendingLabel;
 use crate::features::draw::Drafting;
 use crate::features::dungeon::DungeonIntent;
+use crate::features::image::{
+    CalibrationDistance, ImportJob, ImportRequest, OpacitySlider, Placing,
+};
 use crate::features::prompt::Asking;
 use crate::features::select::Selection;
 use crate::features::tool::{ActiveTool, Tool};
 use crate::features::doc as world_doc;
 use crate::map::camera::MapCamera;
+use crate::map::image::ImageAsset;
 use crate::map::load::MapTerrain;
 use crate::map::pointer::{MapPointer, PointerOverride};
 use crate::notes::references::{Answer, References};
@@ -137,6 +142,24 @@ pub(super) enum Command {
         /// what says the note landed, so the reply never races the file.
         started: bool,
     },
+    /// Imports a picture into the campaign and waits for the copy to land.
+    ///
+    /// Goes through [`ImportRequest`] rather than copying the file itself, so a scripted
+    /// run takes the same path a typed path does — including the refusals, and including
+    /// landing the declaration only once the bytes are down.
+    Import {
+        path: String,
+        /// Whether the request has been written. The job's *absence from the slot*
+        /// afterwards is what says the copy landed, so the reply never races the file.
+        started: bool,
+    },
+    /// Begins a two-point calibration, exactly as the panel's Calibrate button does.
+    Calibrate,
+    /// Gives the distance between the two calibration marks.
+    Distance(f32),
+    /// Moves the backdrop's opacity slider, which lands on the document a frame later
+    /// exactly as letting go of it does.
+    Opacity(f32),
     /// Writes a PNG of the window and waits until it is on disk.
     Capture {
         path: PathBuf,
@@ -170,6 +193,8 @@ pub(super) enum Topic {
         width: u32,
         height: u32,
     },
+    /// The picture the open document is drawn over, and whether it could be read.
+    Image,
     /// Which notes reference the selected place.
     ///
     /// Reports running while the query is in flight rather than an empty answer: it is a
@@ -203,6 +228,10 @@ impl Command {
             Self::Observe(_) => "observe",
             Self::SetLabel { .. } => "label",
             Self::Note { .. } => "note",
+            Self::Import { .. } => "import-image",
+            Self::Calibrate => "calibrate",
+            Self::Distance(_) => "distance",
+            Self::Opacity(_) => "opacity",
             Self::Capture { .. } => "capture",
             Self::FixedDelta(_) => "fixed-delta",
             Self::Quit => "quit",
@@ -229,6 +258,7 @@ impl Command {
                 let word = rest.first().ok_or("tool needs a name")?;
                 let (tool, shape) = match *word {
                     "select" => (Tool::Select, DraftShape::Point),
+                    "image" => (Tool::Image, DraftShape::Point),
                     "point" => (Tool::Draw, DraftShape::Point),
                     "line" | "polyline" => (Tool::Draw, DraftShape::Polyline),
                     "area" | "polygon" => (Tool::Draw, DraftShape::Polygon),
@@ -301,6 +331,7 @@ impl Command {
                 "tool" => Topic::Tool,
                 "input" => Topic::Input,
                 "references" => Topic::References,
+                "image" => Topic::Image,
                 "grid" => {
                     let number = |at: usize, what: &str| -> Result<u32, String> {
                         rest.get(at)
@@ -345,6 +376,23 @@ impl Command {
                     title,
                     started: false,
                 })
+            }
+            "import-image" => Ok(Self::Import {
+                path: rest.join(" "),
+                started: false,
+            }),
+            "calibrate" => Ok(Self::Calibrate),
+            "distance" => {
+                let word = rest.first().ok_or("distance needs a number")?;
+                Ok(Self::Distance(
+                    word.parse().map_err(|_| format!("{word} is not a distance"))?,
+                ))
+            }
+            "opacity" => {
+                let word = rest.first().ok_or("opacity needs a number from 0 to 1")?;
+                Ok(Self::Opacity(
+                    word.parse().map_err(|_| format!("{word} is not an opacity"))?,
+                ))
             }
             "capture" => Ok(Self::Capture {
                 path: PathBuf::from(rest.first().ok_or("capture needs a path")?),
@@ -606,6 +654,59 @@ impl Command {
                 }))
             }
 
+            Self::Import { path, started } => {
+                if !*started {
+                    if path.trim().is_empty() {
+                        return Poll::Failed("import-image needs a path".into());
+                    }
+                    let Some(mut asked) = world.get_resource_mut::<ImportRequest>() else {
+                        return Poll::Failed("no campaign is open".into());
+                    };
+                    asked.path = Some(path.trim().to_owned());
+                    *started = true;
+                    return Poll::Running;
+                }
+
+                if world
+                    .get_resource::<ImportRequest>()
+                    .is_some_and(|asked| asked.path.is_some())
+                    || world.get_resource::<ImportJob>().is_some_and(ImportJob::busy)
+                {
+                    return Poll::Running;
+                }
+                Poll::Done(json!({
+                    "status": world.get_resource::<StatusMessage>().map(|status| status.0.clone()),
+                }))
+            }
+
+            Self::Calibrate => {
+                let Some(mut placing) = world.get_resource_mut::<Placing>() else {
+                    return Poll::Failed("no campaign is open".into());
+                };
+                placing.calibrate();
+                Poll::Done(json!({}))
+            }
+
+            Self::Distance(apart) => {
+                let Some(mut asked) = world.get_resource_mut::<CalibrationDistance>() else {
+                    return Poll::Failed("no campaign is open".into());
+                };
+                asked.apart = Some(*apart);
+                Poll::Done(json!({}))
+            }
+
+            Self::Opacity(opacity) => {
+                let sliders: Vec<Entity> = world
+                    .query_filtered::<Entity, With<OpacitySlider>>()
+                    .iter(world)
+                    .collect();
+                let Some(entity) = sliders.first() else {
+                    return Poll::Failed("the backdrop panel is not up".into());
+                };
+                world.entity_mut(*entity).insert(SliderValue(*opacity));
+                Poll::Done(json!({}))
+            }
+
             Self::Capture { path, entity } => match entity {
                 None => {
                     if let Some(parent) = path.parent()
@@ -822,6 +923,22 @@ fn observe(world: &mut World, topic: &Topic) -> Value {
         Topic::Input | Topic::References => {
             unreachable!("answered before the document is looked for")
         }
+        Topic::Image => {
+            let declared = doc.document.world().image();
+            let held = world.get_resource::<ImageAsset>();
+            json!({
+                "declared": declared.map(|image| json!({
+                    "file": image.file(),
+                    "origin": [image.origin().x, image.origin().y],
+                    "cells_per_pixel": image.cells_per_pixel(),
+                    "opacity": image.opacity(),
+                })),
+                "loaded": held.is_some_and(ImageAsset::is_ready),
+                "failed": held.is_some_and(|held| held.failed),
+                "size_in_pixels": held.and_then(|held| held.size_in_pixels).map(|(x, y)| [x, y]),
+            })
+        }
+
         Topic::Grid {
             x,
             y,
@@ -859,6 +976,7 @@ fn observe(world: &mut World, topic: &Topic) -> Value {
                 "tool": active.map(|active| match active.tool {
                     Tool::Select => "select",
                     Tool::Paint => "paint",
+                    Tool::Image => "image",
                     Tool::Draw => match active.shape {
                         DraftShape::Point => "point",
                         DraftShape::Polyline => "line",
