@@ -18,7 +18,10 @@ campaign. The terrain draws as a tile map (#2): `campaign::tiles` decides every 
 opens up as the map zooms in (#5): `campaign::style`, `campaign::lod` and `campaign::label`
 decide it, `campaign_editor/src/features/render.rs` draws it. Notes are made from templates
 and linked to features (#6): `campaign::notebook` owns the whole `zk` dependency,
-`campaign_editor/src/notes` runs it off the frame. The milestone is filed as issues #1–#11; the design
+`campaign_editor/src/notes` runs it off the frame. Selecting a place shows what references
+it (#7): the same module builds the tag and the `zk list`, `notes/references.rs` caches an
+answer per tag behind one query at a time, and `notes/watch.rs` drops the cache when the
+notebook changes underneath us. The milestone is filed as issues #1–#11; the design
 behind them is in the plan at
 `~/fun_repos/hobby-mimisbrunnr/notes/pen_and_paper_organisation/init/pen_and_paper_plan/plan-2026-08-30-campaign-map-and-notes.md`.
 
@@ -251,10 +254,28 @@ is a second answer to what the notebook contains.
 
 ```
 zk --no-input new --template=place.md --title=Riverford --extra=feature=7 --print-path
-zk list --tag place/riverford-a1b2 --format json
+zk --no-input list --tag=place/riverford-a1b2 --format=json --quiet --sort=modified
 zk tag list
 zk edit <path>
 ```
+
+**A tag no note carries prints nothing at all** — not `[]` — and exits successfully, so an
+empty answer has to be decided before the output reaches a JSON parser. `--sort=modified`
+is what orders the list: `modified` is RFC3339 with the fraction's trailing zeros trimmed,
+so those strings do not compare bytewise and nothing here re-sorts them. The `Found N
+notes` footer goes to stderr, so `--quiet` is tidiness rather than what makes the output
+parse. A place note carries its own tag and so comes back in its own result set; it is
+dropped by filename stem.
+
+**A query runs only where there is already a `.zk`.** `zk` finds a notebook by walking up
+from its working directory, so a campaign sitting inside the GM's own notes tree would
+otherwise have that notebook answer. The reference query is also the one `zk` call with no
+press behind it, so unlike `create` it never runs `zk init` — initialising a notebook as a
+side effect of clicking a polygon is not something a GM asked for.
+
+**The notebook watcher ignores `.zk/`.** `zk list` rewrites the index there whenever it
+finds a note has changed, so a watcher that did not exclude it would be tripped by this
+tool's own queries.
 
 **Every invocation runs with the notes directory as its working directory**, because
 `zk new` resolves the note it creates against that directory — naming the notebook is not

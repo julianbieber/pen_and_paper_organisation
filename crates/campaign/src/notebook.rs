@@ -4,10 +4,10 @@
 //! `zk` is the authority on the notebook, its templates and its filenames. Nothing here
 //! reads a note's markdown, parses one, or writes one — a second implementation would be
 //! a second answer to what the notebook contains. What this module owns is the argument
-//! vector, and it owns it as a *value*: [`new_args`], [`init_args`] and [`edit_args`] are
-//! pure functions over their inputs, so which template a kind names, which flags carry
-//! which values, and how a printed path becomes a stored one are all decided where they
-//! can be checked without `zk` installed. The single impure function is [`Runner::run`].
+//! vector, and it owns it as a *value*: every `*_args` function is pure over its inputs,
+//! so which template a kind names, which flags carry which values, and how a printed path
+//! becomes a stored one are all decided where they can be checked without `zk` installed.
+//! The only impure functions are [`Runner`]'s two.
 //!
 //! The crate's tests still pass with nothing on `PATH`: everything above is tested
 //! against a recorded runner, and the handful of tests that want the real program ask
@@ -415,6 +415,41 @@ impl Notebook {
         runner.start(&self.root, &edit_args(&inside))
     }
 
+    /// Every note carrying `tag`, newest first, without the one the tag belongs to.
+    ///
+    /// A tag with no notes is `Ok(&[])`, never an error: `zk` prints nothing at all for
+    /// one and exits successfully, so an empty answer and a refusal are different things
+    /// here and only the second is a failure.
+    ///
+    /// Answers `Ok(&[])` without running anything when the notes directory is not a
+    /// notebook yet. That is not an optimisation: `zk` finds a notebook by walking up
+    /// from its working directory, so a campaign sitting inside the GM's own notes tree
+    /// would otherwise be answered from *that* notebook.
+    ///
+    /// Unlike [`Notebook::create`] this never calls [`Notebook::ensure`]. It is the one
+    /// `zk` call with no press behind it — a selection triggers it — and initialising a
+    /// notebook as a side effect of clicking a polygon is not something a GM asked for.
+    ///
+    /// `subject_slug` is the tag's own slug. A place note carries its own tag, so it
+    /// comes back in its own result set and is dropped here rather than by the caller.
+    /// A note whose path a feature could not carry is dropped too, by the same rule that
+    /// admits a created one — what `zk` prints is data, and it is checked like data.
+    pub fn references(
+        &self,
+        runner: &impl Runner,
+        tag: &str,
+        subject_slug: &str,
+    ) -> Result<Vec<Reference>, NoteError> {
+        if !self.is_initialised() {
+            return Ok(Vec::new());
+        }
+
+        let output = runner.run(&self.root, &list_args(tag))?;
+        refused(&output, "list")?;
+
+        parse_references(&output.stdout, subject_slug)
+    }
+
     fn contained(&self, path: &str) -> Result<PathBuf, NoteError> {
         let bad = |reason| NoteError::BadPath {
             printed: PathBuf::from(path),
@@ -496,6 +531,59 @@ pub fn new_args(kind: NoteKind, title: &str, subject: Option<FeatureId>) -> Vec<
     args
 }
 
+/// A note that carries some subject's tag: one answer to "what references this".
+///
+/// Every field is one `zk` gave us. `path` is relative to the notes directory, which is
+/// what a feature stores and what [`Notebook::open`] takes, so a row can be opened
+/// without deriving anything.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
+pub struct Reference {
+    /// Where the note is, relative to the campaign's notes directory.
+    pub path: String,
+    /// The note's title, as `zk` resolved it.
+    #[serde(default)]
+    pub title: String,
+    /// The note's opening line, which is what a row shows under its title.
+    ///
+    /// `lead` rather than the first of `snippets`: `zk` fills `snippets` from a `--match`
+    /// query, which this one is not, so the array is only incidentally populated and
+    /// would silently become "the first matching fragment" if a match were ever added.
+    #[serde(default)]
+    pub lead: String,
+    /// When the note last changed, as `zk` printed it. For display only — the ordering
+    /// is `zk`'s, because this string's fractional seconds are variable width and do not
+    /// compare bytewise.
+    #[serde(default)]
+    pub modified: String,
+}
+
+/// The tag a note of `kind` at `note_path` is found by.
+///
+/// The slug half is the note's own filename stem, which is what `{{filename-stem}}`
+/// renders into the template's tag — so this and the tag in the file have one definition
+/// rather than two that must agree.
+pub fn tag_of(kind: NoteKind, note_path: &str) -> String {
+    format!("{}/{}", kind.tag_prefix(), slug_of(note_path))
+}
+
+/// The arguments that list every note carrying `tag`.
+///
+/// Values are joined to their flags for the reason [`new_args`] gives. `--sort=modified`
+/// is what puts the newest first, so nothing here re-sorts: `zk` prints RFC3339 with the
+/// fraction's trailing zeros trimmed, and those do not compare bytewise. `--quiet`
+/// suppresses the "Found N notes" footer, which `zk` writes to stderr — so this is
+/// tidiness rather than what makes the output parse.
+pub fn list_args(tag: &str) -> Vec<OsString> {
+    vec![
+        OsString::from("--no-input"),
+        OsString::from("list"),
+        OsString::from(format!("--tag={tag}")),
+        OsString::from("--format=json"),
+        OsString::from("--quiet"),
+        OsString::from("--sort=modified"),
+    ]
+}
+
 /// The arguments that open one note.
 pub fn edit_args(path: &Path) -> Vec<OsString> {
     vec![
@@ -535,6 +623,32 @@ pub fn has_an_editor() -> bool {
     ["EDITOR", "VISUAL"]
         .into_iter()
         .any(|name| std::env::var_os(name).is_some_and(|value| !value.is_empty()))
+}
+
+/// The references in what `zk list --format=json` wrote, minus the subject's own note.
+///
+/// Empty output is an empty list. `zk` prints nothing whatsoever for a tag no note
+/// carries — not `[]` — so this case is decided before the bytes ever reach the parser.
+pub fn parse_references(stdout: &[u8], subject_slug: &str) -> Result<Vec<Reference>, NoteError> {
+    let text = std::str::from_utf8(stdout).map_err(|_| NoteError::ZkRefused {
+        verb: "list",
+        message: "it printed something that is not UTF-8".to_owned(),
+    })?;
+    if text.trim().is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let found: Vec<Reference> =
+        serde_json::from_str(text).map_err(|error| NoteError::ZkRefused {
+            verb: "list",
+            message: format!("its output could not be read: {error}"),
+        })?;
+
+    Ok(found
+        .into_iter()
+        .filter(|note| slug_of(&note.path) != subject_slug)
+        .filter(|note| note_path_refusal(&note.path).is_none())
+        .collect())
 }
 
 fn refused(output: &std::process::Output, verb: &'static str) -> Result<(), NoteError> {

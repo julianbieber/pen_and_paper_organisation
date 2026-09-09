@@ -1,0 +1,78 @@
+# Every acceptance criterion issue #7 states, driven through the panel a GM looks at.
+#
+# Needs `zk` on PATH — the references list is a `zk list` and nothing else. With zk absent
+# the run still completes: `observe references` reports the panel saying so.
+#
+#   cargo run -p campaign --example make_demo -- /tmp/demo-campaign
+#   PNP_CONTROL=/tmp/pnp.sock cargo run -p campaign_editor -- /tmp/demo-campaign &
+#   PNP_CONTROL=/tmp/pnp.sock cargo run -p campaign_editor --bin pnp-ctl -- run \
+#       crates/campaign_editor/scenarios/references.scenario
+#
+# Criterion 1 and 4 need a note written from outside this process, which no verb here can
+# do. Leave the window running afterwards and finish them by hand:
+#
+#   printf 'The party arrived at #place/<slug> in the rain.\n' \
+#       >> /tmp/demo-campaign/notes/<the session note>
+#   PNP_CONTROL=/tmp/pnp.sock cargo run -p campaign_editor --bin pnp-ctl -- step 120
+#   PNP_CONTROL=/tmp/pnp.sock cargo run -p campaign_editor --bin pnp-ctl -- observe references
+#
+# The slug and both filenames are in this scenario's own `observe world` replies. The
+# session note must then be listed under `references` with no restart and no Refresh
+# press — that is the watcher, and it is the whole of criterion 4.
+
+ping
+fixed-delta 0.016
+step 60                       # the terrain loads, the chrome appears, zk is probed
+
+# Nothing selected: the panel says so rather than erroring — half of criterion 2
+observe references
+
+# A settlement with no note yet: the panel offers Create rather than erroring, which is
+# the other half of criterion 2
+tool area
+kind settlement
+click 20 20
+click 60 20
+click 60 60
+click 20 60
+key enter
+tool select
+click 40 40
+step 30
+observe references            # subject is set, tag is null: "no note yet"
+
+# Give it a note, and the panel starts asking about that note's own tag
+label Riverford
+note place
+step 60
+observe world                 # the note path the tag is built from
+observe references            # tag is place/<slug>, and nothing references it yet
+
+# A session note for the tag to be found in, written through the same buttons
+note session Session 1
+step 60
+observe world
+
+# Criterion 3: select back and forth as fast as the socket will drive it. Only one query
+# may ever be in flight, and `observe references` waits for it rather than racing it.
+tool area
+kind settlement
+click 120 20
+click 160 20
+click 160 60
+click 120 60
+key enter
+tool select
+click 140 40
+click 40 40
+click 140 40
+click 40 40
+click 140 40
+click 40 40
+step 10
+observe references
+
+step 60
+observe references            # settled on whichever is selected, with no queue behind it
+
+capture /tmp/pnp-references.png

@@ -568,3 +568,163 @@ fn a_notebook_can_be_moved_to_another_thread() {
     assert_send::<NoteError>();
     assert_send::<notebook::NewNote>();
 }
+
+// A tag is the kind's prefix and the note's own filename stem, so it and the tag the
+// template writes from `{{filename-stem}}` have one definition rather than two.
+#[test]
+fn a_tag_is_the_kinds_prefix_and_the_notes_own_stem() {
+    assert_eq!(
+        notebook::tag_of(NoteKind::Place, "riverford-a1b2.md"),
+        "place/riverford-a1b2"
+    );
+    assert_eq!(
+        notebook::tag_of(NoteKind::Place, "places/riverford-a1b2.md"),
+        "place/riverford-a1b2"
+    );
+    assert_eq!(
+        notebook::tag_of(NoteKind::Person, "sir-bedivere-c3d4.md"),
+        "person/sir-bedivere-c3d4"
+    );
+}
+
+// Every value is joined to its flag, for the reason `new_args` documents: a following
+// word beginning with a dash is read by `zk` as another option.
+#[test]
+fn every_list_argument_is_joined_to_its_flag() {
+    let args: Vec<String> = notebook::list_args("place/riverford-a1b2")
+        .iter()
+        .map(|a| a.to_string_lossy().into_owned())
+        .collect();
+    assert_eq!(
+        args,
+        vec![
+            "--no-input",
+            "list",
+            "--tag=place/riverford-a1b2",
+            "--format=json",
+            "--quiet",
+            "--sort=modified",
+        ]
+    );
+}
+
+// The query runs from inside the notes directory, like every other invocation, because
+// that is what decides which notebook answers.
+#[test]
+fn the_query_runs_from_inside_the_notes_directory() {
+    let campaign = tempfile::tempdir().expect("tempdir");
+    let notebook = Notebook::of(campaign.path());
+    std::fs::create_dir_all(notebook.root().join(".zk")).expect("fake notebook");
+    let runner = Recorder::printing("[]");
+
+    notebook
+        .references(&runner, "place/riverford-a1b2", "riverford-a1b2")
+        .expect("references");
+
+    assert_eq!(runner.dirs(), vec![notebook.root().to_owned()]);
+}
+
+// A tag no note carries makes `zk` print nothing at all — not `[]` — and exit
+// successfully, so an empty answer has to be decided before the bytes reach the parser.
+#[test]
+fn a_tag_with_no_notes_is_an_empty_answer_not_an_error() {
+    assert_eq!(
+        notebook::parse_references(b"", "riverford-a1b2").expect("empty"),
+        Vec::new()
+    );
+    assert_eq!(
+        notebook::parse_references(b"   \n", "riverford-a1b2").expect("blank"),
+        Vec::new()
+    );
+}
+
+// Pins the parse against what `zk 0.15.2` actually prints — RECORDED_LIST is one of its
+// answers verbatim — rather than against what we remember of it: the four fields kept map
+// across, and every other field it sends is ignored, so a `zk` that grows one still reads.
+#[test]
+fn a_recorded_zk_answer_becomes_references() {
+    let found = notebook::parse_references(RECORDED_LIST.as_bytes(), "riverford-a1b2")
+        .expect("parse");
+
+    assert_eq!(found.len(), 1);
+    assert_eq!(found[0].path, "session-3-c3d4.md");
+    assert_eq!(found[0].title, "Session 3");
+    assert_eq!(found[0].lead, "The party reached #place/riverford-a1b2.");
+    assert_eq!(found[0].modified, "2026-09-09T15:12:39.494426868Z");
+}
+
+// A place note carries its own tag, so it comes back in its own result set; it is not a
+// reference to itself and never appears among them.
+#[test]
+fn the_subjects_own_note_is_dropped_from_its_own_references() {
+    let found = notebook::parse_references(RECORDED_LIST.as_bytes(), "riverford-a1b2")
+        .expect("parse");
+    assert!(found.iter().all(|note| note.path != "riverford-a1b2.md"));
+
+    let kept = notebook::parse_references(RECORDED_LIST.as_bytes(), "somewhere-else")
+        .expect("parse");
+    assert_eq!(kept.len(), 2);
+}
+
+// What `zk` prints is data, so a path a feature could not carry is dropped by the same
+// rule that admits a created one rather than reaching a row that would refuse on press.
+#[test]
+fn a_path_a_feature_could_not_carry_is_dropped() {
+    let escaping = r#"[{"path":"../outside.md","title":"Outside","lead":"","modified":""},
+                       {"path":"kept-a1b2.md","title":"Kept","lead":"","modified":""}]"#;
+    let found = notebook::parse_references(escaping.as_bytes(), "riverford-a1b2").expect("parse");
+
+    assert_eq!(found.len(), 1);
+    assert_eq!(found[0].path, "kept-a1b2.md");
+}
+
+// Output that is not the JSON we asked for is a refusal, not a panic.
+#[test]
+fn malformed_output_is_an_error_not_a_panic() {
+    let error = notebook::parse_references(b"not json at all", "riverford-a1b2")
+        .expect_err("malformed");
+    assert!(matches!(error, NoteError::ZkRefused { verb: "list", .. }));
+}
+
+// A refused `zk list` carries the first line it said for itself, like every other verb.
+#[test]
+fn a_refused_query_carries_the_first_line_zk_said() {
+    let campaign = tempfile::tempdir().expect("tempdir");
+    let notebook = Notebook::of(campaign.path());
+    std::fs::create_dir_all(notebook.root().join(".zk")).expect("fake notebook");
+    let runner = Recorder {
+        fail_with: Some("no such tag\nand more\n".to_owned()),
+        ..Recorder::default()
+    };
+
+    let error = notebook
+        .references(&runner, "place/riverford-a1b2", "riverford-a1b2")
+        .expect_err("refused");
+
+    match error {
+        NoteError::ZkRefused { verb, message } => {
+            assert_eq!(verb, "list");
+            assert_eq!(message, "no such tag");
+        }
+        other => panic!("wanted a refusal, got {other}"),
+    }
+}
+
+// A notes directory that is not a notebook is answered without running anything: `zk`
+// finds a notebook by walking up, so a campaign inside the GM's own notes tree would
+// otherwise have that notebook's notes reported as its references.
+#[test]
+fn a_directory_that_is_not_a_notebook_yet_is_asked_nothing() {
+    let campaign = tempfile::tempdir().expect("tempdir");
+    let notebook = Notebook::of(campaign.path());
+    let runner = Recorder::printing("[]");
+
+    let found = notebook
+        .references(&runner, "place/riverford-a1b2", "riverford-a1b2")
+        .expect("no notebook");
+
+    assert_eq!(found, Vec::new());
+    assert!(runner.args().is_empty());
+}
+
+const RECORDED_LIST: &str = r##"[{"filename":"session-3-c3d4.md","filenameStem":"session-3-c3d4","path":"session-3-c3d4.md","absPath":"/tmp/nb/session-3-c3d4.md","title":"Session 3","link":"[Session 3](session-3-c3d4)","lead":"The party reached #place/riverford-a1b2.","body":"The party reached #place/riverford-a1b2.","snippets":["The party reached #place/riverford-a1b2."],"rawContent":"---\ntitle: Session 3\n---\n\nThe party reached #place/riverford-a1b2.\n","wordCount":6,"tags":["place/riverford-a1b2"],"metadata":{"title":"Session 3"},"created":"2026-09-09T15:12:39.494426868Z","modified":"2026-09-09T15:12:39.494426868Z","checksum":"abc"},{"filename":"riverford-a1b2.md","filenameStem":"riverford-a1b2","path":"riverford-a1b2.md","absPath":"/tmp/nb/riverford-a1b2.md","title":"Riverford","link":"[Riverford](riverford-a1b2)","lead":"#place/riverford-a1b2","body":"#place/riverford-a1b2\n\nA river town.","snippets":["#place/riverford-a1b2"],"rawContent":"---\ntitle: Riverford\n---\n\n#place/riverford-a1b2\n\nA river town.\n","wordCount":8,"tags":["place/riverford-a1b2"],"metadata":{"title":"Riverford"},"created":"2026-09-09T15:12:39.494047205Z","modified":"2026-09-09T15:12:39.494047205Z","checksum":"def"}]"##;

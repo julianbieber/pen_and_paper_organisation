@@ -21,6 +21,7 @@ path = "src/bin/pnp-ctl.rs"
 campaign.workspace = true
 bevy.workspace = true
 log.workspace = true
+notify.workspace = true
 serde_json.workspace = true
 tracing.workspace = true
 

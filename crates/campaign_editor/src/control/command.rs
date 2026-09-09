@@ -34,6 +34,8 @@ use crate::map::camera::MapCamera;
 use crate::map::load::{MapAssets, MapTerrain};
 use crate::map::pointer::{MapPointer, PointerOverride};
 use crate::map::view::MapView;
+use crate::notes::references::{Answer, References};
+use crate::notes::watch::NotesWatch;
 use crate::notes::{self, NoteJob, ZkState};
 use crate::{OpenCampaign, StatusMessage};
 
@@ -141,6 +143,13 @@ pub(super) enum Topic {
     Tool,
     /// Why a press would or would not author anything.
     Input,
+    /// Which notes reference the selected place.
+    ///
+    /// Reports running while the query is in flight rather than an empty answer: it is a
+    /// subprocess, so a scenario that clicks a feature and asks in the same breath would
+    /// otherwise read the panel before it was filled. Answered whether or not a document
+    /// is open, because the references panel exists either way.
+    References,
 }
 
 impl Command {
@@ -248,6 +257,7 @@ impl Command {
                 "selection" => Topic::Selection,
                 "tool" => Topic::Tool,
                 "input" => Topic::Input,
+                "references" => Topic::References,
                 other => return Err(format!("nothing to observe called {other}")),
             })),
             "label" => {
@@ -413,7 +423,10 @@ impl Command {
                 _ => Poll::Done(json!({})),
             },
 
-            Self::Observe(topic) => Poll::Done(observe(world, topic)),
+            Self::Observe(topic) => match topic {
+                Topic::References => observe_references(world),
+                _ => Poll::Done(observe(world, topic)),
+            },
 
             Self::SetLabel { label, started } => {
                 let Some(id) = world.get_resource::<Selection>().and_then(Selection::only) else {
@@ -625,6 +638,42 @@ fn zoom(world: &mut World, cells_per_pixel: f32) -> Poll {
     Poll::Done(json!({ "cells_per_pixel": orthographic.scale / cell_size }))
 }
 
+fn observe_references(world: &mut World) -> Poll {
+    let Some(references) = world.get_resource::<References>() else {
+        return Poll::Done(json!({ "open": false }));
+    };
+    if references.busy() {
+        return Poll::Running;
+    }
+
+    let (found, failed) = match references.answer() {
+        Some(Answer::Found(found)) => (Some(found), None),
+        Some(Answer::Failed(why)) => (None, Some(why.clone())),
+        None => (None, None),
+    };
+
+    Poll::Done(json!({
+        "open": true,
+        "subject": references.subject.map(|id| id.0),
+        "tag": references.tag,
+        "watching": world.get_resource::<NotesWatch>().is_some(),
+        "failed": failed,
+        "references": found.map(|found| {
+            found
+                .iter()
+                .map(|note| {
+                    json!({
+                        "path": note.path,
+                        "title": note.title,
+                        "lead": note.lead,
+                        "modified": note.modified,
+                    })
+                })
+                .collect::<Vec<Value>>()
+        }),
+    }))
+}
+
 fn observe(world: &mut World, topic: &Topic) -> Value {
     if let Topic::Input = topic {
         return input(world);
@@ -679,7 +728,9 @@ fn observe(world: &mut World, topic: &Topic) -> Value {
                 }),
             })
         }
-        Topic::Input => unreachable!("answered before the document is looked for"),
+        Topic::Input | Topic::References => {
+            unreachable!("answered before the document is looked for")
+        }
         Topic::Tool => {
             let active = world.get_resource::<ActiveTool>();
             json!({
@@ -811,6 +862,7 @@ mod tests {
             ("note place", "note"),
             ("note person Sir Bedivere", "note"),
             ("observe world", "observe"),
+            ("observe references", "observe"),
             ("capture /tmp/a.png", "capture"),
             ("fixed-delta 0.016", "fixed-delta"),
             ("quit", "quit"),
