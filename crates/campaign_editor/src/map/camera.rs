@@ -1,15 +1,31 @@
-//! Where the camera is looking and how far out, within what the terrain allows.
+//! Where the camera is looking and how far out, within what the live backdrop allows.
 
 use bevy::camera::{Projection, ScalingMode};
 use bevy::input::mouse::{AccumulatedMouseMotion, AccumulatedMouseScroll};
 use bevy::prelude::*;
 
-use crate::map::load::{MapAssets, MapTerrain};
+use crate::map::backdrop::{Backdrop, CameraBookmark};
 use crate::map::view::MapView;
 
-/// Cells of slack kept around the terrain, so the map is not pinned flush to the edge
+/// Cells of slack kept around a backdrop, so the map is not pinned flush to the edge
 /// of the view.
+///
+/// A ceiling rather than the figure: it was calibrated against terrains thousands of cells
+/// wide, and on a dungeon a whole grid's width of slack lets the GM pan the map entirely
+/// off screen. [`margin_cells`] is what a caller asks.
 pub const CAMERA_MARGIN_CELLS: f32 = 64.0;
+
+/// How much of the backdrop's own share of slack it gets.
+pub const CAMERA_MARGIN_FRACTION: f32 = 0.25;
+
+/// Cells of slack kept around `view`.
+///
+/// A quarter of the shorter side, capped at [`CAMERA_MARGIN_CELLS`], so a terrain gets the
+/// margin it always had and a dungeon cannot be panned out of sight of itself.
+pub fn margin_cells(view: MapView) -> f32 {
+    let shorter = view.width.min(view.height) as f32;
+    (shorter * CAMERA_MARGIN_FRACTION).min(CAMERA_MARGIN_CELLS)
+}
 
 /// The most chunks allowed to be resident at once.
 ///
@@ -28,51 +44,66 @@ pub struct MapCamera;
 /// Spawns the one 2D camera the window draws through.
 ///
 /// `Camera2d` already brings an orthographic projection with it, so only the marker is
-/// added here; where it looks and how far out belong to [`frame_terrain`] and
+/// added here; where it looks and how far out belong to [`place_camera`] and
 /// [`drive_camera`].
 pub fn spawn_camera(mut commands: Commands) {
     commands.spawn((Camera2d, MapCamera));
 }
 
-/// Centres the camera on the terrain and fits it in view, once.
+/// Puts the camera where the live backdrop says it should be, once per backdrop.
 ///
-/// The world origin is the terrain's top-left corner, so without this a large terrain
-/// opens looking at a corner of itself.
+/// Either restores a remembered view or fits the whole backdrop, and the backdrop decides
+/// which — leaving a dungeon has to come back to where the GM was on the world map, and
+/// arriving at one for the first time has to frame it.
 ///
-/// Waits for the window to have a real viewport before it settles. A camera's own
-/// projection is recomputed in `PostUpdate`, and the window is resized a frame or two
-/// after it is created, so framing against whatever the first frame reports produces a
-/// zoom fitted to a window that no longer exists.
-pub fn frame_terrain(
-    terrain: Res<MapTerrain>,
-    assets: Res<MapAssets>,
-    mut framed: Local<bool>,
+/// Placement is keyed on the backdrop's generation rather than on a flag, and the reason is
+/// that both halves of this system can decline: it waits for the window to have a real
+/// viewport, because a camera's projection is recomputed in `PostUpdate` and the window is
+/// resized a frame or two after it is created, so fitting against the first frame produces
+/// a zoom for a window that no longer exists. A change-detection condition is true for one
+/// frame only and would lose that retry.
+///
+/// This is also the only writer of the camera's transform outside [`drive_camera`]. A
+/// system in the authoring set restoring a camera itself would be overwritten here on the
+/// following frame, since the map set runs first.
+pub fn place_camera(
+    backdrop: Res<Backdrop>,
+    mut placed: Local<Option<u32>>,
     camera: Single<(&mut Transform, &mut Projection, &Camera), With<MapCamera>>,
 ) {
-    if *framed {
+    if *placed == Some(backdrop.generation) {
         return;
     }
     let (mut transform, mut projection, camera) = camera.into_inner();
-    let view = MapView::new(terrain.width, terrain.height, assets.tile_size as f32);
-    let extent = view.extent();
-
-    transform.translation.x = extent.center().x;
-    transform.translation.y = extent.center().y;
-
     let Some(viewport) = viewport_of(camera) else {
         return;
     };
-    if let Projection::Orthographic(orthographic) = &mut *projection {
-        let fit = (extent.width() / viewport.x).max(extent.height() / viewport.y);
-        let (low, high) = zoom_bounds(view, viewport);
-        orthographic.scaling_mode = ScalingMode::WindowSize;
-        orthographic.scale = fit.clamp(low, high);
-        *framed = true;
+    let Projection::Orthographic(orthographic) = &mut *projection else {
+        return;
+    };
+    let view = backdrop.view;
+    let (low, high) = zoom_bounds(view, viewport);
+    orthographic.scaling_mode = ScalingMode::WindowSize;
+
+    match backdrop.restore {
+        Some(CameraBookmark { translation, scale }) => {
+            transform.translation.x = translation.x;
+            transform.translation.y = translation.y;
+            orthographic.scale = scale.clamp(low, high);
+        }
+        None => {
+            let extent = view.extent();
+            transform.translation.x = extent.center().x;
+            transform.translation.y = extent.center().y;
+            let fit = (extent.width() / viewport.x).max(extent.height() / viewport.y);
+            orthographic.scale = fit.clamp(low, high);
+        }
     }
+    *placed = Some(backdrop.generation);
 }
 
 /// Pans the map by drag, zooms it about the cursor by wheel, and clamps both to what
-/// the terrain allows.
+/// the live backdrop allows.
 ///
 /// Pans on the **middle or right** button. The left one authors — it selects, drags a
 /// vertex, box-selects and places one — so panning cannot also be on it.
@@ -81,8 +112,7 @@ pub fn frame_terrain(
 /// the projection alone: `MouseMotion` carries a raw device delta, not a delta in the
 /// logical pixels [`viewport_of`] and the zoom anchor are stated in.
 pub fn drive_camera(
-    terrain: Res<MapTerrain>,
-    assets: Res<MapAssets>,
+    backdrop: Res<Backdrop>,
     buttons: Res<ButtonInput<MouseButton>>,
     motion: Res<AccumulatedMouseMotion>,
     scroll: Res<AccumulatedMouseScroll>,
@@ -96,7 +126,7 @@ pub fn drive_camera(
     let Some(viewport) = viewport_of(camera) else {
         return;
     };
-    let view = MapView::new(terrain.width, terrain.height, assets.tile_size as f32);
+    let view = backdrop.view;
     let per_pixel = orthographic.scale * window.scale_factor();
 
     let panning = buttons.pressed(MouseButton::Middle) || buttons.pressed(MouseButton::Right);
@@ -119,7 +149,7 @@ pub fn drive_camera(
     }
 
     let half = viewport * orthographic.scale / 2.0;
-    let bounds = view.extent_with_margin(CAMERA_MARGIN_CELLS);
+    let bounds = view.extent_with_margin(margin_cells(view));
     transform.translation.x = hold(transform.translation.x, bounds.min.x, bounds.max.x, half.x);
     transform.translation.y = hold(transform.translation.y, bounds.min.y, bounds.max.y, half.y);
 }
@@ -162,7 +192,7 @@ pub fn zoom_bounds(view: MapView, viewport: Vec2) -> (f32, f32) {
 
     let closest = chunk / viewport.x;
     let budget = chunk * (MAX_RESIDENT_CHUNKS / (viewport.x * viewport.y)).sqrt();
-    let extent = view.extent_with_margin(CAMERA_MARGIN_CELLS);
+    let extent = view.extent_with_margin(margin_cells(view));
     let whole = (extent.width() / viewport.x).max(extent.height() / viewport.y);
 
     let furthest = budget.min(whole);

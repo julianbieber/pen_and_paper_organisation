@@ -160,6 +160,7 @@ fn new_note_button(kind: NoteKind) -> impl Scene {
             title: Res<NoteTitle>,
             campaign: Res<OpenCampaign>,
             zk: Res<ZkState>,
+            doc: Res<crate::document::WorldDoc>,
             mut job: ResMut<NoteJob>,
             mut status: ResMut<StatusMessage>| {
             let Ok(button) = buttons.get(activate.event_target()) else {
@@ -169,6 +170,7 @@ fn new_note_button(kind: NoteKind) -> impl Scene {
                 &mut job,
                 &zk,
                 &campaign,
+                doc.path.clone(),
                 &mut status,
                 button.kind,
                 &title.0,

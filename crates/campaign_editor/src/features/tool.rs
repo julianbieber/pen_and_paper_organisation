@@ -11,20 +11,26 @@ use bevy::feathers::theme::{ThemeBackgroundColor, ThemedText};
 use bevy::feathers::tokens;
 use bevy::prelude::*;
 use bevy::ui_widgets::Activate;
+use campaign::brush::Brush;
 use campaign::draft::DraftShape;
 use campaign::feature::{FeatureKind, Rank};
+use campaign::tiles::DungeonTile;
 
+use crate::document::WorldDoc;
 use crate::features::draw::Drafting;
 
 /// What the left button does on the map.
 ///
-/// Only two, because the three drawing tools differ in the shape they produce and in
-/// nothing else — carrying that as a [`DraftShape`] rather than as three more variants
-/// keeps one taxonomy of shapes instead of a second one that has to be kept in step.
+/// Three, because the three drawing tools differ in the shape they produce and in nothing
+/// else — carrying that as a [`DraftShape`] rather than as three more variants keeps one
+/// taxonomy of shapes instead of a second one that has to be kept in step. Painting is a
+/// fourth thing the button can do, and it is a tool rather than a shape because it authors
+/// the backdrop rather than a feature.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Tool {
     Select,
     Draw,
+    Paint,
 }
 
 /// The tool in hand, and what each drawing tool would place.
@@ -38,6 +44,10 @@ pub struct ActiveTool {
     pub point_kind: FeatureKind,
     pub polyline_kind: FeatureKind,
     pub polygon_kind: FeatureKind,
+    /// What a stroke does to the cells it covers.
+    pub brush: Brush,
+    /// The tile a stroke lays, which [`Brush::Room`] ignores.
+    pub tile: DungeonTile,
 }
 
 impl Default for ActiveTool {
@@ -48,14 +58,39 @@ impl Default for ActiveTool {
             point_kind: FeatureKind::Poi,
             polyline_kind: FeatureKind::Road,
             polygon_kind: FeatureKind::Territory,
+            brush: Brush::Freehand,
+            tile: DungeonTile::Floor,
         }
     }
 }
 
 impl ActiveTool {
-    /// Whether the active tool draws rather than selects.
+    /// Whether the active tool draws a feature.
     pub fn drawing(&self) -> bool {
         self.tool == Tool::Draw
+    }
+
+    /// Whether the active tool paints the backdrop.
+    pub fn painting(&self) -> bool {
+        self.tool == Tool::Paint
+    }
+
+    /// Whether the active tool selects.
+    ///
+    /// Stated rather than derived as "not drawing", which was true while there were two
+    /// tools and silently made selection run under a brush stroke when there were three.
+    pub fn selecting(&self) -> bool {
+        self.tool == Tool::Select
+    }
+
+    /// Fall back to the select tool when `left` says a grid is no longer open.
+    ///
+    /// The paint tool and its rows are hidden off a grid, and a hidden tool that is still
+    /// in hand is a left button that does nothing with no way to see why.
+    pub fn leave_a_grid_if(&mut self, left: bool) {
+        if left && self.painting() {
+            self.tool = Tool::Select;
+        }
     }
 
     /// The kind the active shape would place.
@@ -100,6 +135,22 @@ pub struct KindButton {
 pub struct KindRow {
     pub shape: DraftShape,
 }
+
+/// A button that chooses what a stroke does to the cells it covers.
+#[derive(Component, Debug, Clone, Copy, PartialEq)]
+pub struct BrushButton {
+    pub brush: Brush,
+}
+
+/// A button that chooses the tile a stroke lays.
+#[derive(Component, Debug, Clone, Copy, PartialEq)]
+pub struct TileButton {
+    pub tile: DungeonTile,
+}
+
+/// A row shown only while the document on screen has a grid to paint.
+#[derive(Component, Default, Debug, Clone, Copy, PartialEq)]
+pub struct GridRow;
 
 /// What the point tool offers.
 ///
@@ -161,25 +212,44 @@ pub fn build_tool_strip(mut commands: Commands) {
 /// to find out what was pressed.
 pub fn sync_tool_strip(
     active: Res<ActiveTool>,
-    mut tools: Query<(&ToolButton, &mut ButtonVariant), Without<KindButton>>,
-    mut kinds: Query<(&KindButton, &mut ButtonVariant), Without<ToolButton>>,
-    mut rows: Query<(&KindRow, &mut Node)>,
+    doc: Option<Res<WorldDoc>>,
+    mut tools: Query<(&ToolButton, &mut ButtonVariant), (Without<KindButton>, Without<BrushButton>, Without<TileButton>)>,
+    mut kinds: Query<(&KindButton, &mut ButtonVariant), (Without<ToolButton>, Without<BrushButton>, Without<TileButton>)>,
+    mut brushes: Query<(&BrushButton, &mut ButtonVariant), (Without<ToolButton>, Without<KindButton>, Without<TileButton>)>,
+    mut tiles: Query<(&TileButton, &mut ButtonVariant), (Without<ToolButton>, Without<KindButton>, Without<BrushButton>)>,
+    mut kind_rows: Query<(&KindRow, &mut Node), Without<GridRow>>,
+    mut grid_rows: Query<&mut Node, With<GridRow>>,
 ) {
+    let on_a_grid = doc.is_some_and(|doc| doc.document.world().grid().is_some());
+
     for (button, mut variant) in tools.iter_mut() {
         let live = button.tool == active.tool
-            && (button.tool == Tool::Select || button.shape == active.shape);
+            && (button.tool != Tool::Draw || button.shape == active.shape);
         set_variant(&mut variant, live);
     }
     for (button, mut variant) in kinds.iter_mut() {
         let live = active.kind_for(button.shape) == button.kind;
         set_variant(&mut variant, live);
     }
-    for (row, mut node) in rows.iter_mut() {
+    for (button, mut variant) in brushes.iter_mut() {
+        set_variant(&mut variant, button.brush == active.brush);
+    }
+    for (button, mut variant) in tiles.iter_mut() {
+        set_variant(&mut variant, button.tile == active.tile);
+    }
+    for (row, mut node) in kind_rows.iter_mut() {
         let shown = active.drawing() && row.shape == active.shape;
-        let display = if shown { Display::Flex } else { Display::None };
-        if node.display != display {
-            node.display = display;
-        }
+        show(&mut node, shown);
+    }
+    for mut node in grid_rows.iter_mut() {
+        show(&mut node, on_a_grid);
+    }
+}
+
+fn show(node: &mut Node, shown: bool) {
+    let display = if shown { Display::Flex } else { Display::None };
+    if node.display != display {
+        node.display = display;
     }
 }
 
@@ -220,10 +290,86 @@ fn strip() -> impl Scene {
                     tool_button("Area", Tool::Draw, DraftShape::Polygon)
                 ]
             ),
+            (
+                Node {
+                    display: Display::None,
+                    flex_direction: FlexDirection::Row,
+                    column_gap: px(6),
+                }
+                GridRow
+                Children [
+                    tool_button("Paint", Tool::Paint, DraftShape::Point),
+                    brush_button(Brush::Freehand),
+                    brush_button(Brush::Rectangle),
+                    brush_button(Brush::Flood),
+                    brush_button(Brush::Room)
+                ]
+            ),
+            (
+                Node {
+                    display: Display::None,
+                    flex_direction: FlexDirection::Row,
+                    flex_wrap: FlexWrap::Wrap,
+                    column_gap: px(6),
+                    row_gap: px(4),
+                    max_width: px(420),
+                }
+                GridRow
+                Children [
+                    tile_button(DungeonTile::Floor),
+                    tile_button(DungeonTile::Wall),
+                    tile_button(DungeonTile::Door),
+                    tile_button(DungeonTile::SecretDoor),
+                    tile_button(DungeonTile::StairsUp),
+                    tile_button(DungeonTile::StairsDown),
+                    tile_button(DungeonTile::Water),
+                    tile_button(DungeonTile::Rubble),
+                    tile_button(DungeonTile::Empty)
+                ]
+            ),
             kind_row(DraftShape::Point, POINT_KINDS),
             kind_row(DraftShape::Polyline, POLYLINE_KINDS),
             kind_row(DraftShape::Polygon, POLYGON_KINDS)
         ]
+    }
+}
+
+fn brush_button(brush: Brush) -> impl Scene {
+    bsn! {
+        @FeathersButton {
+            @caption: bsn! { Text({brush.label().to_string()}) ThemedText },
+        }
+        BrushButton { brush: {brush} }
+        on(|activate: On<Activate>,
+            buttons: Query<&BrushButton>,
+            mut active: ResMut<ActiveTool>,
+            mut stroking: ResMut<crate::features::paint::Stroking>| {
+            let Ok(button) = buttons.get(activate.event_target()) else {
+                return;
+            };
+            stroking.abandon();
+            active.brush = button.brush;
+            active.tool = Tool::Paint;
+        })
+    }
+}
+
+fn tile_button(tile: DungeonTile) -> impl Scene {
+    bsn! {
+        @FeathersButton {
+            @caption: bsn! { Text({tile.label().to_string()}) ThemedText },
+        }
+        TileButton { tile: {tile} }
+        on(|activate: On<Activate>,
+            buttons: Query<&TileButton>,
+            mut active: ResMut<ActiveTool>,
+            mut stroking: ResMut<crate::features::paint::Stroking>| {
+            let Ok(button) = buttons.get(activate.event_target()) else {
+                return;
+            };
+            stroking.abandon();
+            active.tile = button.tile;
+        })
     }
 }
 
@@ -236,11 +382,13 @@ fn tool_button(caption: &'static str, tool: Tool, shape: DraftShape) -> impl Sce
         on(|activate: On<Activate>,
             buttons: Query<&ToolButton>,
             mut active: ResMut<ActiveTool>,
-            mut drafting: ResMut<Drafting>| {
+            mut drafting: ResMut<Drafting>,
+            mut stroking: ResMut<crate::features::paint::Stroking>| {
             let Ok(button) = buttons.get(activate.event_target()) else {
                 return;
             };
             drafting.abandon();
+            stroking.abandon();
             active.tool = button.tool;
             if button.tool == Tool::Draw {
                 active.shape = button.shape;
@@ -306,6 +454,22 @@ impl Default for KindRow {
     fn default() -> Self {
         Self {
             shape: DraftShape::Point,
+        }
+    }
+}
+
+impl Default for BrushButton {
+    fn default() -> Self {
+        Self {
+            brush: Brush::Freehand,
+        }
+    }
+}
+
+impl Default for TileButton {
+    fn default() -> Self {
+        Self {
+            tile: DungeonTile::Floor,
         }
     }
 }

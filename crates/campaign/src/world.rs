@@ -1,18 +1,22 @@
-//! The set of features a map holds, the file it is read from and written to, and every
-//! rule a set of features must satisfy to be coherent.
+//! What a map document holds — its features and the backdrop it brings with it — the
+//! file it is read from and written to, and every rule such a document must satisfy to
+//! be coherent.
 //!
 //! A world is what the GM authored, and it is separate from the campaign that names
-//! where it sits: it is loaded from and saved to a path a caller supplies, so the same
-//! type serves the world map and, later, a child document. Changing one is not this
-//! module's business — [`crate::edit`] owns that, and is the only thing that can, through
-//! the single crate-visible accessor that exists for it and for nothing else.
+//! where it sits: it is loaded from and saved to a path a caller supplies, so the one
+//! type serves the world map and every child document. Which of the two a document is,
+//! is whether it carries a grid — the world map is drawn on the campaign's terrain and
+//! carries none. Changing one is not this module's business — [`crate::edit`] owns that,
+//! and is the only thing that can, through the crate-visible accessors that exist for it
+//! and for nothing else.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use crate::feature::{Feature, FeatureId, note_path_refusal, reveal_refusal};
+use crate::feature::{Feature, FeatureId, dungeon_name_refusal, note_path_refusal, reveal_refusal};
+use crate::grid::{GridProblem, TileGrid};
 
 /// The world document format this build writes, and the only one it reads.
 ///
@@ -109,6 +113,38 @@ pub enum WorldError {
         reason: &'static str,
     },
 
+    /// A feature carries a dungeon name a feature may not carry.
+    #[error("{feature} has a dungeon name that {reason}")]
+    BadDungeonName {
+        feature: FeatureId,
+        reason: &'static str,
+    },
+
+    /// A feature inside a document that has a grid names a dungeon of its own.
+    ///
+    /// A dungeon is a child of the world map and not of another dungeon: there is one
+    /// place to come back to, so opening a dungeon from inside one would have nowhere to
+    /// park what it left. Refused where it is stored rather than where it would be
+    /// opened, so the rule is checkable without a window.
+    #[error("{feature} is inside a dungeon and names a dungeon of its own, which nests")]
+    NestedDungeon { feature: FeatureId },
+
+    /// Two features name the same dungeon document.
+    #[error("{first} and {second} both name the dungeon `{name}`")]
+    SharedDungeon {
+        first: FeatureId,
+        second: FeatureId,
+        name: String,
+    },
+
+    /// The document's grid is not one a document may hold.
+    #[error("`{}` has a grid that cannot be drawn: {source}", .path.display())]
+    BadGrid {
+        path: PathBuf,
+        #[source]
+        source: GridProblem,
+    },
+
     /// The document could not be written.
     #[error("`{}` could not be written: {source}", .path.display())]
     WorldUnwritable {
@@ -155,6 +191,15 @@ pub struct World {
     version: u32,
     next_id: u64,
     features: BTreeMap<FeatureId, Feature>,
+    /// The backdrop this document is drawn on, when it brings its own.
+    ///
+    /// Absent on the world map, whose backdrop is the campaign's terrain, and present on
+    /// a dungeon, which has no meaningful position at terrain-cell scale and so carries
+    /// the grid it is drawn on. Defaulted and skipped when absent, so a `world.ron`
+    /// written before dungeons existed still reads and one written now still opens in a
+    /// build that has never heard of a grid.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    grid: Option<TileGrid>,
 }
 
 impl Default for World {
@@ -163,6 +208,7 @@ impl Default for World {
             version: WORLD_VERSION,
             next_id: 0,
             features: BTreeMap::new(),
+            grid: None,
         }
     }
 }
@@ -197,6 +243,13 @@ impl World {
     /// document is the only copy of everything the GM has drawn, and truncating it in
     /// place is the one unrecoverable way to lose that.
     ///
+    /// The temporary is opened with `create_new` and named with this process's id, so a
+    /// symlink sitting where it would go is refused rather than followed and written
+    /// through, and two campaigns open at once cannot stage over one another. The rename
+    /// over `path` itself is safe either way — a rename replaces a symlink and does not
+    /// follow it. A leftover temporary from a previous crash is removed first, so the
+    /// stricter open cannot make saving fail for ever.
+    ///
     /// Refuses [`WorldError::WorldTooLarge`] for a world that would serialize to more than
     /// [`MAX_WORLD_BYTES`], so that a world this build writes is always one it reads back.
     /// Nothing is written in that case — the document already on disk is left alone.
@@ -224,7 +277,8 @@ impl World {
         }
 
         let temporary = temporary_beside(path);
-        let mut file = std::fs::File::create(&temporary).map_err(unwritable)?;
+        let _ = std::fs::remove_file(&temporary);
+        let mut file = std::fs::File::create_new(&temporary).map_err(unwritable)?;
         file.write_all(text.as_bytes()).map_err(unwritable)?;
         file.sync_all().map_err(unwritable)?;
         drop(file);
@@ -282,6 +336,22 @@ impl World {
     /// loads as.
     pub fn is_empty(&self) -> bool {
         self.features.is_empty()
+    }
+
+    /// A world drawn on `grid`, holding no features.
+    ///
+    /// What a dungeon is created as. The world map is [`World::default`], which carries
+    /// no grid because its backdrop is the campaign's terrain.
+    pub fn on_a_grid(grid: TileGrid) -> Self {
+        Self {
+            grid: Some(grid),
+            ..Self::default()
+        }
+    }
+
+    /// The grid this document is drawn on, or `None` when its backdrop is the terrain.
+    pub fn grid(&self) -> Option<&TileGrid> {
+        self.grid.as_ref()
     }
 
     /// The feature `id` names, if this world holds one.
@@ -357,6 +427,10 @@ impl World {
         &mut self.features
     }
 
+    pub(crate) fn grid_mut(&mut self) -> Option<&mut TileGrid> {
+        self.grid.as_mut()
+    }
+
     fn read_to_string(path: &Path) -> Result<Option<String>, WorldError> {
         let unreadable = |source: std::io::Error| WorldError::WorldUnreadable {
             path: path.to_owned(),
@@ -386,6 +460,37 @@ impl World {
     }
 
     fn check(&self, path: &Path) -> Result<(), WorldError> {
+        if let Some(grid) = &self.grid
+            && let Some(source) = grid.refusal()
+        {
+            return Err(WorldError::BadGrid {
+                path: path.to_owned(),
+                source,
+            });
+        }
+
+        let mut dungeons: BTreeMap<&str, FeatureId> = BTreeMap::new();
+        for (id, feature) in &self.features {
+            if let Some(name) = feature.dungeon.as_deref() {
+                if let Some(reason) = dungeon_name_refusal(name) {
+                    return Err(WorldError::BadDungeonName {
+                        feature: *id,
+                        reason,
+                    });
+                }
+                if self.grid.is_some() {
+                    return Err(WorldError::NestedDungeon { feature: *id });
+                }
+                if let Some(first) = dungeons.insert(name, *id) {
+                    return Err(WorldError::SharedDungeon {
+                        first,
+                        second: *id,
+                        name: name.to_owned(),
+                    });
+                }
+            }
+        }
+
         for (id, feature) in &self.features {
             if !feature.geometry.is_finite() {
                 return Err(WorldError::NonFiniteCoordinate { feature: *id });
@@ -472,6 +577,6 @@ enum Mark {
 
 fn temporary_beside(path: &Path) -> PathBuf {
     let mut name = path.file_name().unwrap_or_default().to_owned();
-    name.push(".tmp");
+    name.push(format!(".{}.tmp", std::process::id()));
     path.with_file_name(name)
 }

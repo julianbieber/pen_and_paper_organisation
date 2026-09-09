@@ -50,6 +50,16 @@ pub fn dungeons(root: &Path) -> PathBuf {
     root.join(DUNGEONS_DIR)
 }
 
+/// Where the dungeon named `name` sits under `root`.
+///
+/// `name` is a file name and not a path — it is constrained by
+/// [`dungeon_name_refusal`](crate::feature::dungeon_name_refusal) wherever it is stored,
+/// so it carries its own `.ron` and no separator. This exists so that no consumer joins
+/// one by hand, which is the whole reason this module does.
+pub fn dungeon(root: &Path, name: &str) -> PathBuf {
+    dungeons(root).join(name)
+}
+
 /// Where imported backdrops sit under `root`.
 pub fn images(root: &Path) -> PathBuf {
     root.join(IMAGES_DIR)

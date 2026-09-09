@@ -19,9 +19,9 @@ use bevy::window::WindowCloseRequested;
 use campaign::FeatureId;
 use campaign::gesture::{self, Orphans};
 
-use crate::features::doc::{self, WorldDoc};
+use crate::document::{self as doc, WorldDoc};
 use crate::features::select::Selection;
-use crate::{OpenCampaign, StatusMessage};
+use crate::StatusMessage;
 
 /// What is being asked.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -112,7 +112,7 @@ pub fn guard_close(
     if requests.read().next().is_none() {
         return;
     }
-    if doc.document.is_dirty() {
+    if doc.anything_unsaved() {
         asking.raise(Question::UnsavedOnClose, None);
     } else {
         exit.write(AppExit::Success);
@@ -161,7 +161,6 @@ pub fn answer(
     asking: &mut Asking,
     doc: &mut WorldDoc,
     selection: &mut Selection,
-    campaign: &OpenCampaign,
     status: &mut StatusMessage,
     exit: &mut MessageWriter<AppExit>,
 ) {
@@ -172,7 +171,7 @@ pub fn answer(
     asking.settle();
 
     match (question, answer) {
-        (Question::UnsavedOnClose, Answer::Save) => match doc.save(&campaign.0) {
+        (Question::UnsavedOnClose, Answer::Save) => match doc.save().and_then(|()| doc.save_parked()) {
             Ok(()) => {
                 exit.write(AppExit::Success);
             }
@@ -275,7 +274,6 @@ fn answer_button(caption: &'static str, answer: Answer) -> impl Scene {
             mut asking: ResMut<Asking>,
             mut doc: ResMut<WorldDoc>,
             mut selection: ResMut<Selection>,
-            campaign: Res<OpenCampaign>,
             mut status: ResMut<StatusMessage>,
             mut exit: MessageWriter<AppExit>| {
             let Ok(button) = buttons.get(activate.event_target()) else {
@@ -286,7 +284,6 @@ fn answer_button(caption: &'static str, answer: Answer) -> impl Scene {
                 &mut asking,
                 &mut doc,
                 &mut selection,
-                &campaign,
                 &mut status,
                 &mut exit,
             );

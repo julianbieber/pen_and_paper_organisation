@@ -29,7 +29,8 @@ use campaign::edit::Edit;
 use campaign::feature::{FeatureId, FeatureKind, Rank};
 use campaign::notebook::NoteKind;
 
-use crate::features::doc::{self, WorldDoc};
+use crate::document::{self as doc, WorldDoc};
+use crate::features::dungeon::DungeonIntent;
 use crate::features::select::Selection;
 use crate::features::tool::{kind_label, rank_label};
 use crate::map::pointer::MapPointer;
@@ -332,8 +333,30 @@ fn panel() -> impl Scene {
                     note_button("Open note", NoteAction::Open)
                 ]
             ),
+            (
+                Node {
+                    display: Display::Flex,
+                    flex_direction: FlexDirection::Row,
+                    column_gap: px(6),
+                }
+                Children [
+                    switch_button("Open dungeon", DungeonIntent::Enter),
+                    switch_button("Back to map", DungeonIntent::Leave)
+                ]
+            ),
             (Text("") ThemedText NoteReasonLine)
         ]
+    }
+}
+
+fn switch_button(caption: &'static str, asks: DungeonIntent) -> impl Scene {
+    bsn! {
+        @FeathersButton {
+            @caption: bsn! { Text({caption.to_string()}) ThemedText },
+        }
+        on(move |_: On<Activate>, mut intent: ResMut<DungeonIntent>| {
+            *intent = asks;
+        })
     }
 }
 
@@ -368,6 +391,7 @@ fn note_button(caption: &'static str, action: NoteAction) -> impl Scene {
                         &mut job,
                         &zk,
                         &campaign,
+                        doc.path.clone(),
                         &mut status,
                         NoteKind::of_a_feature(),
                         &feature.label,

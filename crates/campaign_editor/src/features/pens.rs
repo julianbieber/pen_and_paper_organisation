@@ -58,6 +58,7 @@ macro_rules! pen_groups {
 }
 
 pen_groups!(
+    GridPen,
     RegionPen,
     BorderPen,
     IconPen,
@@ -71,10 +72,11 @@ pen_groups!(
 
 /// Every pen the map draws through, as one system parameter.
 ///
-/// One parameter rather than nine, because a system takes at most sixteen and the draw
+/// One parameter rather than ten, because a system takes at most sixteen and the draw
 /// pass already asks for ten resources of its own.
 #[derive(SystemParam)]
 pub struct Pens<'w, 's> {
+    pub grid: Gizmos<'w, 's, GridPen>,
     pub region: Gizmos<'w, 's, RegionPen>,
     pub border: Gizmos<'w, 's, BorderPen>,
     pub icon: Gizmos<'w, 's, IconPen>,
@@ -94,6 +96,7 @@ impl Pens<'_, '_> {
     /// silently.
     pub fn stroke(&mut self, stroke: Stroke) -> &mut dyn StrokePen {
         match stroke {
+            Stroke::Grid => &mut self.grid,
             Stroke::Region => &mut self.region,
             Stroke::Border => &mut self.border,
             Stroke::Icon => &mut self.icon,
@@ -106,8 +109,8 @@ impl Pens<'_, '_> {
 
 /// Drawing a line through a pen without naming which pen it is.
 ///
-/// Exists only so that [`Pens::stroke`] can hand one back: the nine `Gizmos` fields have
-/// nine different types, and every one of them draws a line the same way.
+/// Exists only so that [`Pens::stroke`] can hand one back: the `Gizmos` fields all have
+/// different types, and every one of them draws a line the same way.
 pub trait StrokePen {
     fn line(&mut self, from: Vec2, to: Vec2, depth: f32, colour: Color);
 }
@@ -120,11 +123,13 @@ impl<T: bevy::gizmos::config::GizmoConfigGroup> StrokePen for Gizmos<'_, '_, T> 
 
 /// Registers every pen, in the order they paint.
 ///
-/// The registration order is the paint order — the region fills, then the feature strokes,
-/// then labels, then the draft, then the handles — so the handles a GM is dragging are
-/// never hidden under the shape they belong to.
+/// The registration order is the paint order — the grid, then the region fills, then the
+/// feature strokes, then labels, then the draft, then the handles — so the handles a GM is
+/// dragging are never hidden under the shape they belong to, and a dungeon's grid rules the
+/// backdrop without ruling over what is drawn on it.
 pub fn register_pens(app: &mut App) {
-    app.init_gizmo_group::<RegionPen>()
+    app.init_gizmo_group::<GridPen>()
+        .init_gizmo_group::<RegionPen>()
         .init_gizmo_group::<BorderPen>()
         .init_gizmo_group::<IconPen>()
         .init_gizmo_group::<TrailPen>()
@@ -168,6 +173,7 @@ pub fn size_pens(
         let width = (logical * factor).max(1.0);
         let style = line_style(stroke.dash());
         match stroke {
+            Stroke::Grid => set::<GridPen>(&mut store, width, style),
             Stroke::Region => set::<RegionPen>(&mut store, width, style),
             Stroke::Border => set::<BorderPen>(&mut store, width, style),
             Stroke::Icon => set::<IconPen>(&mut store, width, style),

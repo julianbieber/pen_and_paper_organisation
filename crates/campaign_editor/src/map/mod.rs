@@ -7,7 +7,9 @@
 
 use bevy::prelude::*;
 
-/// Where the camera is looking and how far out, within what the terrain allows.
+/// What the open document is drawn on, and where the camera should be looking at it.
+pub mod backdrop;
+/// Where the camera is looking and how far out, within what the live backdrop allows.
 pub mod camera;
 /// Which chunks are resident, and what each one currently holds.
 pub mod chunks;
@@ -21,6 +23,7 @@ pub mod pointer;
 pub mod view;
 
 use crate::{EditorSet, OpenCampaign};
+use backdrop::Backdrop;
 use load::{MapAssets, MapState, MapTerrain, TilesetRoot};
 use panel::RiverThreshold;
 use pointer::{MapPointer, PointerOverride};
@@ -32,6 +35,7 @@ impl Plugin for MapPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<RiverThreshold>()
             .init_resource::<chunks::MapChunks>()
+            .init_resource::<chunks::PaintedCells>()
             .init_resource::<MapPointer>()
             .init_resource::<PointerOverride>()
             .insert_resource(TilesetRoot(tileset_root()))
@@ -46,22 +50,28 @@ impl Plugin for MapPlugin {
                         load::watch_tileset.run_if(resource_exists::<MapAssets>),
                         load::show_map_state.run_if(resource_exists_and_changed::<MapState>),
                         panel::build_map_panel.run_if(resource_added::<MapTerrain>),
-                        camera::frame_terrain.run_if(resource_exists::<MapTerrain>),
+                        panel::show_map_panel.run_if(resource_exists_and_changed::<Backdrop>),
+                        camera::place_camera.run_if(resource_exists::<Backdrop>),
                     ),
                     panel::land_threshold,
                     camera::drive_camera.run_if(
-                        resource_exists::<MapTerrain>
+                        resource_exists::<Backdrop>
                             .and_then(not(pointer_is_over_ui))
                             .and_then(not(crate::features::prompt::a_question_is_up)),
                     ),
-                    pointer::track_pointer.run_if(
-                        resource_exists::<MapTerrain>.and_then(resource_exists::<MapAssets>),
-                    ),
+                    pointer::track_pointer.run_if(resource_exists::<Backdrop>),
                     chunks::stream_chunks
-                        .run_if(resource_exists::<MapTerrain>.and_then(load::tileset_is_ready)),
+                        .run_if(resource_exists::<Backdrop>.and_then(load::tileset_is_ready)),
                     chunks::refill_chunks.run_if(
-                        resource_exists::<MapTerrain>.and_then(resource_changed::<RiverThreshold>),
+                        resource_changed::<RiverThreshold>
+                            .and_then(backdrop::backdrop_is_the_terrain),
                     ),
+                    (chunks::repaint_grid_chunks, chunks::clear_painted_cells)
+                        .chain()
+                        .run_if(
+                            chunks::cells_were_painted
+                                .and_then(resource_exists::<crate::document::WorldDoc>),
+                        ),
                 )
                     .chain()
                     .in_set(EditorSet::Map)

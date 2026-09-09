@@ -1,5 +1,5 @@
-//! The one table saying what a feature looks like, in numbers nothing has to be looked at
-//! to check.
+//! The one table saying what a feature and a dungeon tile look like, in numbers nothing
+//! has to be looked at to check.
 //!
 //! Every colour, alpha, width, dash, hatch and icon on the map is decided here and
 //! nowhere else. The renderer asks and draws; it holds no palette of its own, so "what
@@ -13,6 +13,7 @@
 //! rather than drawing the new stroke as nothing.
 
 use crate::feature::{FeatureKind, Rank};
+use crate::tiles::DungeonTile;
 
 /// How wide an icon is drawn, in logical pixels, whatever the zoom.
 ///
@@ -34,6 +35,11 @@ pub const RANK_ICON_STEP: f32 = 1.45;
 /// is matched — a stroke added later must be given a pen and a paint order explicitly.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Stroke {
+    /// The pen a dungeon's grid lines are drawn with.
+    ///
+    /// Painted before everything else, so a grid line sits over the backdrop and under
+    /// every feature authored on it — a grid is a ruler, not something drawn on the map.
+    Grid,
     /// The pen a point feature's symbol is drawn with.
     ///
     /// Heavier than a region's outline rather than lighter: an icon is a target the GM
@@ -56,8 +62,9 @@ impl Stroke {
     /// Gizmos carry no depth against one another, so this order — and not a z coordinate
     /// — is what decides which stroke covers which. The renderer registers its
     /// configuration groups in exactly this sequence.
-    pub const fn all() -> [Self; 6] {
+    pub const fn all() -> [Self; 7] {
         [
+            Self::Grid,
             Self::Region,
             Self::Border,
             Self::Icon,
@@ -76,6 +83,7 @@ impl Stroke {
     /// number here is what it is drawn at before the first frame has measured anything.
     pub const fn width_pixels(self) -> f32 {
         match self {
+            Self::Grid => 1.0,
             Self::Region => 1.0,
             Self::Icon => 2.0,
             Self::Trail => 1.5,
@@ -93,7 +101,7 @@ impl Stroke {
     /// moved.
     pub const fn dash(self) -> Dash {
         match self {
-            Self::Icon | Self::Region | Self::Road | Self::River => Dash::Solid,
+            Self::Grid | Self::Icon | Self::Region | Self::Road | Self::River => Dash::Solid,
             Self::Trail => Dash::Dashed {
                 line: 2.0,
                 gap: 2.0,
@@ -303,5 +311,41 @@ fn settlement_priority(rank: Option<Rank>) -> u32 {
         Some(Rank::City) => 100,
         Some(Rank::Town) => 90,
         None | Some(Rank::Hamlet) => 80,
+    }
+}
+
+/// How bright a grid line is drawn, as sRGB in zero to one.
+///
+/// Dimmer than anything authored: the grid is there to be measured against, and one that
+/// competes with a wall for attention is worse than none.
+pub const GRID_LINE: [f32; 3] = [0.55, 0.55, 0.60];
+
+/// How opaque a grid line is drawn.
+pub const GRID_LINE_ALPHA: f32 = 0.45;
+
+/// What colour a dungeon tile is drawn, as sRGB in zero to one.
+///
+/// The dungeon strip is built from this table rather than painted by hand, so this is the
+/// only place a dungeon's backdrop palette is written — the same thing [`of`] is for a
+/// feature. Kept as three numbers for the reason [`Style`]'s colour is: this crate must
+/// not need a renderer to be tested.
+///
+/// The four door and stair kinds differ by hue alone, which is deliberate rather than
+/// unfinished: a flat colour per kind is what a generated strip can carry, and swapping in
+/// a hand-drawn strip later replaces the strip and leaves every other decision alone.
+///
+/// Total over every tile, with no catch-all arm, so adding a [`DungeonTile`] is a compile
+/// error here rather than a tile that draws as nothing.
+pub fn dungeon_tile(tile: DungeonTile) -> [f32; 3] {
+    match tile {
+        DungeonTile::Empty => [0.09, 0.09, 0.11],
+        DungeonTile::Floor => [0.62, 0.58, 0.51],
+        DungeonTile::Wall => [0.29, 0.27, 0.26],
+        DungeonTile::Door => [0.72, 0.48, 0.20],
+        DungeonTile::SecretDoor => [0.55, 0.28, 0.42],
+        DungeonTile::StairsUp => [0.44, 0.66, 0.78],
+        DungeonTile::StairsDown => [0.26, 0.40, 0.62],
+        DungeonTile::Water => [0.20, 0.42, 0.55],
+        DungeonTile::Rubble => [0.45, 0.42, 0.36],
     }
 }

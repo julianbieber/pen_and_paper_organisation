@@ -7,6 +7,7 @@ use bevy::prelude::*;
 use bevy::scene::CommandsSceneExt;
 use bevy::ui_widgets::{SliderValue, slider_self_update};
 
+use crate::map::backdrop::Backdrop;
 use crate::map::load::MapTerrain;
 
 /// Where the threshold starts, as a fraction of the accumulation the terrain reaches.
@@ -38,6 +39,28 @@ impl Default for RiverThreshold {
 /// The slider the threshold is read from.
 #[derive(Component, Default, Clone)]
 pub struct ThresholdSlider;
+
+/// The panel's root, so it can be taken off screen where it controls nothing.
+#[derive(Component, Default, Clone)]
+pub struct MapPanel;
+
+/// Hides the river-threshold control while a dungeon is on screen.
+///
+/// The threshold decides which terrain cells are drawn as channels, and a dungeon has no
+/// terrain — so left up it would be a control that visibly does nothing, which is the same
+/// fault the brush row is hidden to avoid.
+pub fn show_map_panel(backdrop: Res<Backdrop>, mut panels: Query<&mut Node, With<MapPanel>>) {
+    let display = if backdrop.is_grid() {
+        Display::None
+    } else {
+        Display::Flex
+    };
+    for mut node in panels.iter_mut() {
+        if node.display != display {
+            node.display = display;
+        }
+    }
+}
 
 /// Hangs the river-threshold panel over the map, once there is a map to control.
 ///
@@ -72,6 +95,7 @@ fn panel(value: f32, ceiling: f32) -> impl Scene {
             width: px(420),
         }
         ThemeBackgroundColor(tokens::WINDOW_BG)
+        MapPanel
         Children [
             (Text("Rivers above") ThemedText),
             (

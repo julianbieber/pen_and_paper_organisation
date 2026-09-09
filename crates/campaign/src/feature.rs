@@ -248,6 +248,11 @@ pub struct Feature {
     /// How big a settlement this is, if it is one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rank: Option<Rank>,
+    /// The dungeon document this feature opens, as a file name inside the campaign's
+    /// `dungeons` directory. Constrained by [`dungeon_name_refusal`] wherever it is
+    /// stored.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dungeon: Option<String>,
     /// The coarsest map scale this feature is drawn at, in terrain cells per logical
     /// pixel, or `None` to be drawn at every scale its parents allow.
     ///
@@ -274,6 +279,7 @@ impl Feature {
             note: None,
             parent: None,
             rank: None,
+            dungeon: None,
             max_cells_per_pixel: None,
         }
     }
@@ -295,6 +301,53 @@ pub fn reveal_refusal(scale: f32) -> Option<&'static str> {
     }
     None
 }
+
+/// Why `name` is not one a feature may carry as its dungeon, or `None` if it is fine.
+///
+/// Deliberately stricter than [`note_path_refusal`], because the two names are owned by
+/// different things. A note's name is chosen by `zk` and this tool only checks what came
+/// back; a dungeon's is derived here from a label the GM typed, and it names a file this
+/// tool **creates and writes**. So it is one path component and nothing else: no
+/// separator to hang a symlinked directory off, no `..`, no `.`, and a `.ron` extension
+/// so the dungeons directory stays one kind of file.
+///
+/// The containment this gives is still **lexical**. A single component cannot climb out
+/// of the dungeons directory by name, but the directory itself, or the file, may be a
+/// symlink — so a caller that opens the result should treat it as a name inside a
+/// directory it trusts, exactly as it must for a note.
+pub fn dungeon_name_refusal(name: &str) -> Option<&'static str> {
+    if name.is_empty() {
+        return Some("is empty");
+    }
+    if name.starts_with('-') {
+        return Some("opens with a dash");
+    }
+    if name.len() > MAX_DUNGEON_NAME_BYTES {
+        return Some("is longer than a file name may be");
+    }
+    if name.chars().any(char::is_control) {
+        return Some("carries a control character, which no file name may");
+    }
+    if name.contains(['/', '\\']) {
+        return Some("carries a path separator, and a dungeon is one file in one directory");
+    }
+    if name == "." || name == ".." {
+        return Some("names a directory rather than a document");
+    }
+    if !name.ends_with(DUNGEON_EXTENSION) {
+        return Some("does not end in `.ron`, which every document in that directory does");
+    }
+    None
+}
+
+/// The extension every dungeon document carries.
+pub const DUNGEON_EXTENSION: &str = ".ron";
+
+/// The most bytes a dungeon's file name may run to.
+///
+/// Under what a filesystem admits with room for the temporary suffix a save writes
+/// beside it, so a name this build accepts is one a save can actually land.
+pub const MAX_DUNGEON_NAME_BYTES: usize = 200;
 
 /// Why `path` is not one a feature may carry as its note, or `None` if it is fine.
 ///

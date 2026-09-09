@@ -10,11 +10,11 @@ use campaign::edit::Edit;
 use campaign::feature::Geometry;
 use campaign::gesture;
 
-use crate::features::doc::{self, WorldDoc};
+use crate::document::{self as doc, WorldDoc};
 use crate::features::draw::Drafting;
 use crate::features::prompt::{Answer, Asking, Question};
 use crate::features::select::{Dragging, Selection};
-use crate::{OpenCampaign, StatusMessage};
+use crate::StatusMessage;
 
 /// Undo, redo, save, delete and escape.
 ///
@@ -28,7 +28,6 @@ use crate::{OpenCampaign, StatusMessage};
 /// of acting.
 pub fn authoring_keys(
     keys: Res<ButtonInput<KeyCode>>,
-    campaign: Res<OpenCampaign>,
     mut doc: ResMut<WorldDoc>,
     mut selection: ResMut<Selection>,
     mut drafting: ResMut<Drafting>,
@@ -67,7 +66,7 @@ pub fn authoring_keys(
     }
 
     if control && keys.just_pressed(KeyCode::KeyS) {
-        match doc.save(&campaign.0) {
+        match doc.save() {
             Ok(()) => status.say(format!("saved {} feature(s)", doc.document.world().len())),
             Err(error) => {
                 error!("{error}");
@@ -101,7 +100,6 @@ pub fn escape_answers_a_question(
     mut asking: ResMut<Asking>,
     mut doc: ResMut<WorldDoc>,
     mut selection: ResMut<Selection>,
-    campaign: Res<OpenCampaign>,
     mut status: ResMut<StatusMessage>,
     mut exit: MessageWriter<AppExit>,
 ) {
@@ -113,7 +111,6 @@ pub fn escape_answers_a_question(
         &mut asking,
         &mut doc,
         &mut selection,
-        &campaign,
         &mut status,
         &mut exit,
     );

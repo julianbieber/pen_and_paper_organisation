@@ -9,8 +9,10 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::brush::TileChange;
 use crate::feature::{
-    CellPoint, Feature, FeatureId, FeatureKind, Rank, note_path_refusal, reveal_refusal,
+    CellPoint, Feature, FeatureId, FeatureKind, Rank, dungeon_name_refusal, note_path_refusal,
+    reveal_refusal,
 };
 use crate::world::{ParentProblem, World};
 
@@ -82,6 +84,47 @@ pub enum EditError {
         scale: f32,
         reason: &'static str,
     },
+
+    /// A dungeon name a feature may not carry.
+    #[error("{feature} cannot take that dungeon name: it {reason}")]
+    BadDungeonName {
+        feature: FeatureId,
+        reason: &'static str,
+    },
+
+    /// A dungeon name another feature in this world already carries.
+    #[error("{feature} cannot take the dungeon `{name}`: {holder} already names it")]
+    DungeonNameInUse {
+        feature: FeatureId,
+        holder: FeatureId,
+        name: String,
+    },
+
+    /// A dungeon named on a feature inside a document that is itself a dungeon.
+    #[error("{feature} is inside a dungeon, and a dungeon does not open another")]
+    NestedDungeon { feature: FeatureId },
+
+    /// A tile edit against a document whose backdrop is the terrain.
+    #[error("this document is drawn on the terrain and has no grid to paint")]
+    NoGrid,
+
+    /// A tile edit naming a cell the grid does not hold.
+    #[error("({x}, {y}) is outside a grid of {width}x{height}")]
+    CellOutOfGrid {
+        x: u32,
+        y: u32,
+        width: u32,
+        height: u32,
+    },
+
+    /// A tile edit that would change nothing.
+    ///
+    /// Refused rather than applied, so an entry on the undo stack always undoes
+    /// something: a stroke that lands entirely on cells already carrying the tile is a
+    /// gesture that did not author anything, and a press of undo that appears to do
+    /// nothing is indistinguishable from one that was not noticed.
+    #[error("that stroke changes no cell")]
+    EmptyPaint,
 }
 
 fn children_list(children: &[FeatureId]) -> String {
@@ -141,6 +184,16 @@ pub enum Edit {
         id: FeatureId,
         scale: Option<f32>,
     },
+    /// Point a feature at the dungeon it opens, or at none.
+    SetDungeon {
+        id: FeatureId,
+        dungeon: Option<String>,
+    },
+    /// Put tiles into the document's grid.
+    ///
+    /// One edit however many cells the stroke covered, which is what makes a brush
+    /// stroke a single press of undo without a [`Edit::Batch`] holding a change per cell.
+    PaintTiles { changes: Vec<TileChange> },
     /// Several edits that apply, undo and redo as one.
     ///
     /// What makes deleting a settlement together with everything parented to it a single
@@ -177,6 +230,7 @@ impl Edit {
                 check_geometry(id, &feature)?;
                 check_note(id, feature.note.as_deref())?;
                 check_reveal(id, feature.max_cells_per_pixel)?;
+                check_dungeon(world, id, feature.dungeon.as_deref())?;
                 world.may_take_parent(id, feature.parent)?;
 
                 world.features_mut().insert(id, feature);
@@ -300,6 +354,62 @@ impl Edit {
                 Ok(Self::SetMaxCellsPerPixel { id, scale: was })
             }
 
+            Self::SetDungeon { id, dungeon } => {
+                feature_of(world, id)?;
+                check_dungeon(world, id, dungeon.as_deref())?;
+                let was = std::mem::replace(&mut feature_mut(world, id).dungeon, dungeon);
+                Ok(Self::SetDungeon { id, dungeon: was })
+            }
+
+            Self::PaintTiles { changes } => {
+                let grid = world.grid().ok_or(EditError::NoGrid)?;
+
+                for change in &changes {
+                    if !grid.holds(i64::from(change.x), i64::from(change.y)) {
+                        return Err(EditError::CellOutOfGrid {
+                            x: change.x,
+                            y: change.y,
+                            width: grid.width(),
+                            height: grid.height(),
+                        });
+                    }
+                }
+
+                let mut wanted: Vec<TileChange> = Vec::with_capacity(changes.len());
+                for change in changes {
+                    if let Some(seen) = wanted
+                        .iter_mut()
+                        .find(|held| held.x == change.x && held.y == change.y)
+                    {
+                        seen.tile = change.tile;
+                    } else {
+                        wanted.push(change);
+                    }
+                }
+                wanted.retain(|change| {
+                    grid.get(i64::from(change.x), i64::from(change.y)) != Some(change.tile)
+                });
+                if wanted.is_empty() {
+                    return Err(EditError::EmptyPaint);
+                }
+
+                let grid = world.grid_mut().expect("the grid was there a moment ago");
+                let was: Vec<TileChange> = wanted
+                    .iter()
+                    .map(|change| {
+                        let tile = grid
+                            .set(i64::from(change.x), i64::from(change.y), change.tile)
+                            .expect("the cell was in bounds a moment ago");
+                        TileChange {
+                            x: change.x,
+                            y: change.y,
+                            tile,
+                        }
+                    })
+                    .collect();
+                Ok(Self::PaintTiles { changes: was })
+            }
+
             Self::Batch(edits) => {
                 let mut inverses: Vec<Self> = Vec::with_capacity(edits.len());
                 for edit in edits {
@@ -376,6 +486,29 @@ fn check_reveal(id: FeatureId, scale: Option<f32>) -> Result<(), EditError> {
             feature: id,
             scale,
             reason,
+        });
+    }
+    Ok(())
+}
+
+fn check_dungeon(world: &World, id: FeatureId, dungeon: Option<&str>) -> Result<(), EditError> {
+    let Some(name) = dungeon else {
+        return Ok(());
+    };
+    if let Some(reason) = dungeon_name_refusal(name) {
+        return Err(EditError::BadDungeonName { feature: id, reason });
+    }
+    if world.grid().is_some() {
+        return Err(EditError::NestedDungeon { feature: id });
+    }
+    if let Some((holder, _)) = world
+        .features()
+        .find(|(other, feature)| *other != id && feature.dungeon.as_deref() == Some(name))
+    {
+        return Err(EditError::DungeonNameInUse {
+            feature: id,
+            holder,
+            name: name.to_owned(),
         });
     }
     Ok(())
