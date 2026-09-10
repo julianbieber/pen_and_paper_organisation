@@ -35,6 +35,7 @@ use bevy::ui_widgets::{Activate, SliderValue, slider_self_update};
 use campaign::edit::Edit;
 use campaign::feature::CellPoint;
 use campaign::image::{self, ImageBackdrop, Imported};
+use campaign::measure::{self, CellWorth};
 
 use crate::document::{self, WorldDoc};
 use crate::features::PointerOverUi;
@@ -264,6 +265,7 @@ pub fn place_image(
     over_ui: Res<PointerOverUi>,
     active: Res<ActiveTool>,
     held: Res<ImageAsset>,
+    open: Res<OpenCampaign>,
     mut apart: ResMut<CalibrationDistance>,
     mut placing: ResMut<Placing>,
     mut doc: ResMut<WorldDoc>,
@@ -284,9 +286,10 @@ pub fn place_image(
     };
 
     if placing.is_calibrating() {
+        let worth = measure::worth_of(doc.document.world(), open.0.manifest());
         calibrating(
-            &buttons, &pointer, &over_ui, &declared, &mut apart, &mut placing, &mut doc,
-            &mut status,
+            &buttons, &pointer, &over_ui, &declared, &worth, &mut apart, &mut placing,
+            &mut doc, &mut status,
         );
         return;
     }
@@ -412,6 +415,7 @@ fn calibrating(
     pointer: &MapPointer,
     over_ui: &PointerOverUi,
     declared: &ImageBackdrop,
+    worth: &CellWorth,
     apart: &mut CalibrationDistance,
     placing: &mut Placing,
     doc: &mut WorldDoc,
@@ -422,7 +426,10 @@ fn calibrating(
         && let Some(at) = pointer.cell
     {
         if placing.mark(at) {
-            status.say("both marks placed; give the distance between them");
+            status.say(format!(
+                "both marks placed; give the distance between them, in {}",
+                worth.unit()
+            ));
         } else {
             status.say("first mark placed; click the second");
         }
@@ -438,16 +445,14 @@ fn calibrating(
 
     let first_pixel = declared.pixel_of_cell(first);
     let second_pixel = declared.pixel_of_cell(second);
-    let units_per_cell = units_per_cell(doc);
-
-    let cells_per_pixel = match image::calibrate(first_pixel, second_pixel, distance, units_per_cell)
-    {
-        Ok(scale) => scale,
-        Err(problem) => {
-            status.say(problem.to_string());
-            return;
-        }
-    };
+    let cells_per_pixel =
+        match image::calibrate(first_pixel, second_pixel, distance, worth.units_per_cell()) {
+            Ok(scale) => scale,
+            Err(problem) => {
+                status.say(problem.to_string());
+                return;
+            }
+        };
     let origin = declared.anchored(first_pixel.0, first_pixel.1, first, cells_per_pixel);
 
     placing.cancel();
@@ -459,17 +464,13 @@ fn calibrating(
             cells_per_pixel,
         },
     ) {
-        status.say(format!("calibrated: one cell is {units_per_cell}"));
+        status.say(format!(
+            "calibrated: one cell is {}",
+            measure::figure(worth.units_per_cell(), worth.unit())
+        ));
     }
 }
 
-fn units_per_cell(doc: &WorldDoc) -> f32 {
-    doc.document
-        .world()
-        .grid()
-        .map(|grid| grid.metres_per_cell())
-        .unwrap_or(1.0)
-}
 
 /// The slider the backdrop's opacity is read from.
 #[derive(Component, Default, Clone)]

@@ -195,6 +195,10 @@ pub(super) enum Topic {
     },
     /// The picture the open document is drawn over, and whether it could be read.
     Image,
+    /// The measurement in hand, and the figures shown for it.
+    Measure,
+    /// The scale bar's label and how wide it is drawn.
+    ScaleBar,
     /// Which notes reference the selected place.
     ///
     /// Reports running while the query is in flight rather than an empty answer: it is a
@@ -259,6 +263,7 @@ impl Command {
                 let (tool, shape) = match *word {
                     "select" => (Tool::Select, DraftShape::Point),
                     "image" => (Tool::Image, DraftShape::Point),
+                    "measure" => (Tool::Measure, DraftShape::Point),
                     "point" => (Tool::Draw, DraftShape::Point),
                     "line" | "polyline" => (Tool::Draw, DraftShape::Polyline),
                     "area" | "polygon" => (Tool::Draw, DraftShape::Polygon),
@@ -330,6 +335,8 @@ impl Command {
                 "selection" => Topic::Selection,
                 "tool" => Topic::Tool,
                 "input" => Topic::Input,
+                "measure" => Topic::Measure,
+                "scalebar" => Topic::ScaleBar,
                 "references" => Topic::References,
                 "image" => Topic::Image,
                 "grid" => {
@@ -433,6 +440,14 @@ impl Command {
             Self::Tool { tool, shape } => {
                 if let Some(mut drafting) = world.get_resource_mut::<Drafting>() {
                     drafting.abandon();
+                }
+                if let Some(mut placing) =
+                    world.get_resource_mut::<crate::features::image::Placing>()
+                {
+                    placing.cancel();
+                }
+                if let Some(mut ruler) = world.get_resource_mut::<crate::features::ruler::Ruler>() {
+                    ruler.clear();
                 }
                 let Some(mut active) = world.get_resource_mut::<ActiveTool>() else {
                     return Poll::Failed("no campaign is open".into());
@@ -865,9 +880,68 @@ fn observe_references(world: &mut World) -> Poll {
     }))
 }
 
+fn measure_topic(world: &mut World) -> Value {
+    let Some(worth) = worth_in(world) else {
+        return json!({ "open": false });
+    };
+    let path = world
+        .get_resource::<crate::features::ruler::Ruler>()
+        .map(|ruler| ruler.path(None))
+        .unwrap_or_default();
+    let finished = world
+        .get_resource::<crate::features::ruler::Ruler>()
+        .map(|ruler| ruler.is_finished());
+    let pace = world
+        .get_resource::<crate::features::ruler::TravelSpeed>()
+        .map(|speed| speed.units_per_day)
+        .unwrap_or_default();
+    let measured = campaign::measure::measure_of(&path, false, &worth, pace);
+
+    json!({
+        "open": true,
+        "points": path.len(),
+        "finished": finished,
+        "unit": worth.unit(),
+        "units_per_cell": worth.units_per_cell(),
+        "path": measured.map(|measured| measured.path.distance),
+        "straight": measured
+            .and_then(|measured| measured.straight)
+            .map(|leg| leg.distance),
+        "days": measured.and_then(|measured| measured.path.days),
+    })
+}
+
+fn scale_bar_topic(world: &mut World) -> Value {
+    let label = world
+        .query_filtered::<&Text, With<crate::map::scalebar::ScaleBarLabel>>()
+        .iter(world)
+        .next()
+        .map(|text| text.0.clone());
+    let width = world
+        .query_filtered::<&Node, With<crate::map::scalebar::ScaleBarTrack>>()
+        .iter(world)
+        .next()
+        .map(|node| format!("{:?}", node.width));
+
+    json!({
+        "open": label.is_some(),
+        "label": label,
+        "width": width,
+    })
+}
+
+fn worth_in(world: &mut World) -> Option<campaign::measure::CellWorth> {
+    let manifest = world.get_resource::<OpenCampaign>()?.0.manifest().clone();
+    let doc = world.get_resource::<WorldDoc>()?;
+    Some(campaign::measure::worth_of(doc.document.world(), &manifest))
+}
+
 fn observe(world: &mut World, topic: &Topic) -> Value {
-    if let Topic::Input = topic {
-        return input(world);
+    match topic {
+        Topic::Input => return input(world),
+        Topic::Measure => return measure_topic(world),
+        Topic::ScaleBar => return scale_bar_topic(world),
+        _ => {}
     }
     let Some(doc) = world.get_resource::<WorldDoc>() else {
         return json!({ "open": false });
@@ -920,7 +994,7 @@ fn observe(world: &mut World, topic: &Topic) -> Value {
                 }),
             })
         }
-        Topic::Input | Topic::References => {
+        Topic::Input | Topic::References | Topic::Measure | Topic::ScaleBar => {
             unreachable!("answered before the document is looked for")
         }
         Topic::Image => {
@@ -977,6 +1051,7 @@ fn observe(world: &mut World, topic: &Topic) -> Value {
                     Tool::Select => "select",
                     Tool::Paint => "paint",
                     Tool::Image => "image",
+                    Tool::Measure => "measure",
                     Tool::Draw => match active.shape {
                         DraftShape::Point => "point",
                         DraftShape::Polyline => "line",

@@ -36,7 +36,7 @@ mod notes;
 pub enum EditorSet {
     /// Loading the terrain, driving the camera, streaming the chunks.
     Map,
-    /// Everything that draws, selects and reshapes what the GM authored.
+    /// Everything that draws, selects, reshapes and measures what the GM authored.
     Authoring,
 }
 

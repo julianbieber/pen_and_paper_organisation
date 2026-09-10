@@ -27,11 +27,13 @@ use bevy::ui::InteractionDisabled;
 use bevy::ui_widgets::Activate;
 use campaign::edit::Edit;
 use campaign::feature::{FeatureId, FeatureKind, Rank};
+use campaign::measure::{self, CellWorth};
 use campaign::notebook::NoteKind;
 
 use crate::document::{self as doc, WorldDoc};
 use crate::features::dungeon::DungeonIntent;
 use crate::features::select::Selection;
+use crate::features::ruler::TravelSpeed;
 use crate::features::tool::{kind_label, rank_label};
 use crate::map::pointer::MapPointer;
 use crate::notes::{NoteJob, ZkState};
@@ -45,6 +47,7 @@ pub enum Property {
     Reveal,
     Parent,
     Note,
+    Length,
 }
 
 /// The panel's root.
@@ -127,12 +130,15 @@ pub fn build_property_panel(mut commands: Commands) {
 /// by its label, falling back to its id when it has never been named.
 pub fn show_properties(
     doc: Res<WorldDoc>,
+    open: Res<OpenCampaign>,
+    speed: Res<TravelSpeed>,
     selection: Res<Selection>,
     mut pending: ResMut<PendingLabel>,
     mut readouts: Query<(&PropertyReadout, &mut Text)>,
     mut fields: Query<&mut EditableText, With<LabelField>>,
 ) {
     let world = doc.document.world();
+    let worth = measure::worth_of(world, open.0.manifest());
     let chosen = selection.only();
     let feature = chosen.and_then(|id| world.feature(id));
 
@@ -160,6 +166,7 @@ pub fn show_properties(
                 Some(note) => format!("note: {note}"),
                 None => "no note".to_owned(),
             },
+            (Some(feature), Property::Length) => length_of(feature, &worth, speed.units_per_day),
         };
         if text.0 != shown {
             text.0 = shown;
@@ -210,6 +217,29 @@ pub fn commit_label(
 
     let label = pending.text.clone();
     doc::apply(&mut doc, &mut status, Edit::SetLabel { id, label });
+}
+
+fn length_of(feature: &campaign::feature::Feature, worth: &CellWorth, pace: f64) -> String {
+    let vertices = feature.geometry.vertices();
+    let closed = measure::closes(&feature.geometry);
+    let Some(measured) = measure::measure_of(vertices, closed, worth, pace) else {
+        return "a point has no length".to_owned();
+    };
+
+    let mut shown = match closed {
+        true => format!("around {}", measure::figure(measured.path.distance, worth.unit())),
+        false => measure::figure(measured.path.distance, worth.unit()),
+    };
+    if let Some(days) = measured.path.days {
+        shown.push_str(&format!(" ({})", measure::duration(days)));
+    }
+    if let Some(straight) = measured.straight {
+        shown.push_str(&format!(
+            ", {} direct",
+            measure::figure(straight.distance, worth.unit())
+        ));
+    }
+    shown
 }
 
 fn name_of(world: &campaign::world::World, id: FeatureId) -> String {
@@ -271,6 +301,7 @@ fn panel() -> impl Scene {
             (Text("") ThemedText PropertyReadout { property: {Property::Reveal} }),
             (Text("") ThemedText PropertyReadout { property: {Property::Parent} }),
             (Text("") ThemedText PropertyReadout { property: {Property::Note} }),
+            (Text("") ThemedText PropertyReadout { property: {Property::Length} }),
             (
                 Node {
                     display: Display::Flex,
@@ -568,7 +599,7 @@ fn clear_button(caption: &'static str, property: Property) -> impl Scene {
                 Property::Note => Edit::SetNote { id, note: None },
                 Property::Rank => Edit::SetRank { id, rank: None },
                 Property::Reveal => Edit::SetMaxCellsPerPixel { id, scale: None },
-                Property::Kind => return,
+                Property::Kind | Property::Length => return,
             };
             doc::apply(&mut doc, &mut status, edit);
         })

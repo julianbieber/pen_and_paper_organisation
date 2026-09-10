@@ -37,6 +37,8 @@ pub mod pens;
 pub mod prompt;
 /// Drawing the features in view, the draft, the selection and its handles.
 pub mod render;
+/// The measurement in hand, and the figures shown for it.
+pub mod ruler;
 /// What is selected, and carrying a drag until it lands as one Edit.
 pub mod select;
 /// Which tool is active, and which kind each drawing tool will place.
@@ -73,6 +75,8 @@ impl Plugin for FeaturesPlugin {
             .init_resource::<select::Dragging>()
             .init_resource::<prompt::Asking>()
             .init_resource::<panel::PendingLabel>()
+            .init_resource::<ruler::Ruler>()
+            .init_resource::<ruler::TravelSpeed>()
             .init_resource::<PointerOverUi>()
             .add_systems(
                 Update,
@@ -87,6 +91,7 @@ impl Plugin for FeaturesPlugin {
                         panel::build_property_panel,
                         prompt::build_prompt,
                         image::build_image_panel,
+                        ruler::build_ruler_readout,
                     )
                         .run_if(resource_added::<WorldDoc>),
                     crate::notes::panel::build_notes_panel
@@ -105,6 +110,7 @@ impl Plugin for FeaturesPlugin {
                         image::place_image,
                         keys::authoring_keys,
                         panel::commit_label,
+                        ruler::run_ruler.run_if(ruler::the_measure_tool_is_active),
                     )
                         .run_if(authoring_is_live),
                     (
@@ -125,7 +131,9 @@ impl Plugin for FeaturesPlugin {
                         panel::show_properties.run_if(
                             resource_exists::<WorldDoc>.and_then(
                                 resource_changed::<select::Selection>
-                                    .or_else(resource_changed::<WorldDoc>),
+                                    .or_else(resource_changed::<WorldDoc>)
+                                    .or_else(resource_changed::<ruler::TravelSpeed>)
+                                    .or_else(resource_changed::<OpenCampaign>),
                             ),
                         ),
                         (image::show_image_panel, image::land_opacity)
@@ -168,9 +176,18 @@ impl Plugin for FeaturesPlugin {
                     prompt::guard_close.run_if(resource_exists::<WorldDoc>),
                     prompt::show_prompt.run_if(resource_exists_and_changed::<prompt::Asking>),
                     pens::size_pens.run_if(resource_exists::<crate::map::load::MapAssets>),
-                    render::render_features.run_if(
-                        resource_exists::<WorldDoc>.and_then(resource_exists::<Backdrop>),
-                    ),
+                    (
+                        render::render_features.run_if(
+                            resource_exists::<WorldDoc>.and_then(resource_exists::<Backdrop>),
+                        ),
+                        ruler::draw_ruler.run_if(
+                            ruler::the_measure_tool_is_active
+                                .and_then(resource_exists::<WorldDoc>)
+                                .and_then(resource_exists::<Backdrop>)
+                                .and_then(resource_exists::<OpenCampaign>),
+                        ),
+                    )
+                        .chain(),
                 )
                     .chain()
                     .in_set(EditorSet::Authoring)

@@ -21,6 +21,10 @@ pub mod load;
 pub mod panel;
 /// Where the cursor is, in terrain cells.
 pub mod pointer;
+/// What one cell is worth and how fast the party travels, as the GM sets them.
+pub mod scale;
+/// The bar saying how far a stretch of screen is.
+pub mod scalebar;
 /// The one conversion between terrain cells and world units.
 pub mod view;
 
@@ -41,6 +45,7 @@ impl Plugin for MapPlugin {
             .init_resource::<MapPointer>()
             .init_resource::<image::ImageAsset>()
             .init_resource::<PointerOverride>()
+            .init_resource::<scale::ScaleFields>()
             .insert_resource(TilesetRoot(tileset_root()))
             .add_systems(Startup, camera::spawn_camera)
             .add_systems(
@@ -54,15 +59,26 @@ impl Plugin for MapPlugin {
                         load::show_map_state.run_if(resource_exists_and_changed::<MapState>),
                         panel::build_map_panel.run_if(resource_added::<MapTerrain>),
                         panel::show_map_panel.run_if(resource_exists_and_changed::<Backdrop>),
+                        scalebar::build_scale_bar.run_if(resource_added::<MapTerrain>),
+                        scale::build_scale_panel.run_if(
+                            resource_added::<MapTerrain>.and_then(resource_exists::<OpenCampaign>),
+                        ),
                         camera::place_camera.run_if(resource_exists::<Backdrop>),
                     ),
                     panel::land_threshold,
+                    scale::land_speed,
+                    (scale::commit_scale, scale::land_campaign_scale)
+                        .chain()
+                        .run_if(resource_exists::<OpenCampaign>),
                     camera::drive_camera.run_if(
                         resource_exists::<Backdrop>
                             .and_then(not(pointer_is_over_ui))
                             .and_then(not(crate::features::prompt::a_question_is_up)),
                     ),
                     pointer::track_pointer.run_if(resource_exists::<Backdrop>),
+                    scalebar::show_scale_bar.run_if(
+                        resource_exists::<Backdrop>.and_then(resource_exists::<OpenCampaign>),
+                    ),
                     chunks::stream_chunks
                         .run_if(resource_exists::<Backdrop>.and_then(load::tileset_is_ready)),
                     image::sync_backdrop_image.run_if(image::a_document_is_open),

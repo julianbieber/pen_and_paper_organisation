@@ -32,6 +32,7 @@ pub enum Tool {
     Draw,
     Paint,
     Image,
+    Measure,
 }
 
 /// The tool in hand, and what each drawing tool would place.
@@ -79,6 +80,11 @@ impl ActiveTool {
     /// Whether the active tool places the imported picture.
     pub fn placing(&self) -> bool {
         self.tool == Tool::Image
+    }
+
+    /// Whether the active tool measures.
+    pub fn measuring(&self) -> bool {
+        self.tool == Tool::Measure
     }
 
     /// Whether the active tool selects.
@@ -294,7 +300,8 @@ fn strip() -> impl Scene {
                     tool_button("Point", Tool::Draw, DraftShape::Point),
                     tool_button("Line", Tool::Draw, DraftShape::Polyline),
                     tool_button("Area", Tool::Draw, DraftShape::Polygon),
-                    tool_button("Image", Tool::Image, DraftShape::Point)
+                    tool_button("Image", Tool::Image, DraftShape::Point),
+                    tool_button("Measure", Tool::Measure, DraftShape::Point)
                 ]
             ),
             (
@@ -393,13 +400,15 @@ fn tool_button(caption: &'static str, tool: Tool, shape: DraftShape) -> impl Sce
             mut active: ResMut<ActiveTool>,
             mut drafting: ResMut<Drafting>,
             mut stroking: ResMut<crate::features::paint::Stroking>,
-            mut placing: ResMut<crate::features::image::Placing>| {
+            mut placing: ResMut<crate::features::image::Placing>,
+            mut ruler: ResMut<crate::features::ruler::Ruler>| {
             let Ok(button) = buttons.get(activate.event_target()) else {
                 return;
             };
             drafting.abandon();
             stroking.abandon();
             placing.cancel();
+            ruler.clear();
             active.tool = button.tool;
             if button.tool == Tool::Draw {
                 active.shape = button.shape;
