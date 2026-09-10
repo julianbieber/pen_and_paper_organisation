@@ -1,0 +1,72 @@
+# Every acceptance criterion issue #10 states, driven through the socket.
+#
+#   cargo run -p campaign --example make_demo -- /tmp/demo-campaign
+#   PNP_CONTROL=/tmp/pnp.sock cargo run -p campaign_editor -- /tmp/demo-campaign &
+#   PNP_CONTROL=/tmp/pnp.sock cargo run -p campaign_editor --bin pnp-ctl -- run \
+#       crates/campaign_editor/scenarios/measure.scenario
+#
+# The demo campaign is created at one unit per cell in km, so every figure below is the
+# cell distance until the scale is changed at the end.
+
+ping
+fixed-delta 0.016
+step 60                       # the terrain loads and the chrome appears
+
+# The bar reads a round figure, and goes on reading one as the zoom changes.
+observe scalebar
+zoom 2
+step 5
+observe scalebar
+zoom 0.25
+step 5
+observe scalebar              # a smaller unit once a kilometre stops fitting
+
+# Acceptance 2: a straight line is units_per_cell times the cell distance.
+# 3-4-5, so a two-click measurement is exactly 5 cells.
+tool measure
+click 10 10
+click 13 14
+step 2
+observe measure               # path 5, straight 5 — equal, as a two-point path must be
+
+# Enter finishes it and it stays put rather than following the pointer.
+key enter
+step 2
+observe measure               # finished
+
+# Escape forgets it, which is the whole of a measurement's lifetime.
+key escape
+step 2
+observe measure               # no points
+
+# Acceptance 3: a bent path is longer than the line across it.
+click 10 10
+click 13 14
+click 16 10
+key enter
+step 2
+observe measure               # path 10, straight 6
+
+# A measurement does not survive leaving the tool.
+tool select
+step 2
+observe measure               # no points
+
+# Acceptance 3 again, on a feature rather than a free path: a road with a bend, read off
+# the selection panel's length line.
+tool line
+kind road
+click 20 20
+click 23 24
+click 26 20
+key enter
+step 2
+tool select
+click 23 24
+step 2
+observe selection             # the road is selected; its panel line shows both figures
+
+# Acceptance 4: changing the unit changes every displayed figure.
+# The unit buttons are UI, so this drives the same path they do.
+observe measure               # unit km before
+step 2

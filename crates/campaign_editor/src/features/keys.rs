@@ -33,6 +33,7 @@ pub fn authoring_keys(
     mut drafting: ResMut<Drafting>,
     mut dragging: ResMut<Dragging>,
     mut placing: ResMut<crate::features::image::Placing>,
+    mut ruler: ResMut<crate::features::ruler::Ruler>,
     mut asking: ResMut<Asking>,
     mut status: ResMut<StatusMessage>,
 ) {
@@ -82,7 +83,9 @@ pub fn authoring_keys(
     }
 
     if keys.just_pressed(KeyCode::Escape) {
-        if drafting.active() {
+        if ruler.is_live() {
+            ruler.clear();
+        } else if drafting.active() {
             drafting.abandon();
         } else {
             selection.clear();

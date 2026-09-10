@@ -110,6 +110,24 @@ impl Campaign {
         })
     }
 
+    /// Measure this campaign at `units_per_cell` of `unit`, writing `campaign.ron` to say
+    /// so.
+    ///
+    /// Fails as [`CampaignManifest::write_scale`] does, leaving both the file and this
+    /// value as they were.
+    ///
+    /// The scale is the one thing about an open campaign that changes, and it changes only
+    /// by being written to disk first and read back after — so this value still says what
+    /// `campaign.ron` says, which is the whole of what it is for. The root and the terrain
+    /// are fixed at [`open`](Campaign::open); a scale is a few bytes of manifest, and
+    /// re-reading a terrain to change one would block the caller for as long as the
+    /// terrain is large.
+    pub fn rescale(&mut self, units_per_cell: f64, unit: &str) -> Result<(), CampaignError> {
+        CampaignManifest::write_scale(&self.root, units_per_cell, unit)?;
+        self.manifest = CampaignManifest::read(&self.root)?;
+        Ok(())
+    }
+
     /// Create a campaign directory at `root` recording a terrain that already sits
     /// at `terrain_dir`, and open it.
     ///

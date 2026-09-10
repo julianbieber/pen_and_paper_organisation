@@ -31,8 +31,10 @@ pub mod label;
 pub mod layout;
 /// How much detail a feature is drawn at, for a given map scale.
 pub mod lod;
-/// What `campaign.ron` says, and reading it back off disk.
+/// What `campaign.ron` says, reading it back off disk, and changing the scale in it.
 pub mod manifest;
+/// What one cell of a document is worth, and every figure derived from it.
+pub mod measure;
 /// What makes the notes directory a zk notebook, what a note is found by, and the one
 /// place this workspace runs zk.
 pub mod notebook;
@@ -63,5 +65,7 @@ pub use slug::dungeon_name;
 pub use notebook::{NewNote, NoteError, NoteKind, Notebook, Runner, SystemRunner};
 pub use manifest::{
     CAMPAIGN_VERSION, CampaignManifest, DEFAULT_UNIT, DEFAULT_UNITS_PER_CELL, MAX_MANIFEST_BYTES,
+    MAX_UNITS_PER_CELL, MIN_UNITS_PER_CELL,
 };
+pub use measure::{CellWorth, DistanceUnit, Leg, Measurement, UnitFamily};
 pub use world::{MAX_WORLD_BYTES, ParentProblem, WORLD_VERSION, World, WorldError};

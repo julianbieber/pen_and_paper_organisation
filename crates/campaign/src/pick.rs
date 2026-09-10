@@ -19,6 +19,7 @@
 
 use crate::feature::{CellPoint, FeatureId, FeatureKind, Geometry};
 use crate::world::World;
+use crate::measure::distance;
 
 /// Which part of a feature a position landed on.
 ///
@@ -287,9 +288,6 @@ fn segments(geometry: &Geometry) -> impl Iterator<Item = (CellPoint, CellPoint)>
     (0..count).map(move |index| (vertices[index], vertices[(index + 1) % vertices.len()]))
 }
 
-fn distance(from: CellPoint, to: CellPoint) -> f32 {
-    ((to.x - from.x).powi(2) + (to.y - from.y).powi(2)).sqrt()
-}
 
 fn distance_to_segment(at: CellPoint, from: CellPoint, to: CellPoint) -> f32 {
     let (dx, dy) = (to.x - from.x, to.y - from.y);

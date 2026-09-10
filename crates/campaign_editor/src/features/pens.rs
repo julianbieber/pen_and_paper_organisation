@@ -39,6 +39,12 @@ pub const LABEL_PIXELS: f32 = 11.0;
 /// The width the draft, the handles and the box-select rectangle are drawn at.
 pub const OVERLAY_WIDTH_PIXELS: f32 = 1.5;
 
+/// The width a measurement is drawn at, in logical pixels.
+///
+/// Heavier than the other overlays: a measurement is read rather than manipulated, and it
+/// is drawn over terrain and features alike.
+pub const MEASURE_WIDTH_PIXELS: f32 = 2.5;
+
 /// The widest a river is drawn, in logical pixels.
 ///
 /// A river matches the terrain's own channel, which is one cell wide, so its pen is
@@ -68,6 +74,8 @@ pen_groups!(
     LabelPen,
     DraftPen,
     HandlePen,
+    MeasurePen,
+    MeasureGhostPen,
 );
 
 /// Every pen the map draws through, as one system parameter.
@@ -86,6 +94,18 @@ pub struct Pens<'w, 's> {
     pub label: Gizmos<'w, 's, LabelPen>,
     pub draft: Gizmos<'w, 's, DraftPen>,
     pub handle: Gizmos<'w, 's, HandlePen>,
+}
+
+/// The two pens a measurement is drawn through.
+///
+/// Separate from [`Pens`] because a measurement is not a feature: it is drawn by its own
+/// system, and a system takes at most sixteen parameters. Two groups rather than one
+/// because the path is solid and the line across it is dashed, and a dash belongs to the
+/// group's *type* — one pen cannot be both in the same frame.
+#[derive(SystemParam)]
+pub struct MeasurePens<'w, 's> {
+    pub path: Gizmos<'w, 's, MeasurePen>,
+    pub ghost: Gizmos<'w, 's, MeasureGhostPen>,
 }
 
 impl Pens<'_, '_> {
@@ -124,8 +144,9 @@ impl<T: bevy::gizmos::config::GizmoConfigGroup> StrokePen for Gizmos<'_, '_, T> 
 /// Registers every pen, in the order they paint.
 ///
 /// The registration order is the paint order — the grid, then the region fills, then the
-/// feature strokes, then labels, then the draft, then the handles — so the handles a GM is
-/// dragging are never hidden under the shape they belong to, and a dungeon's grid rules the
+/// feature strokes, then labels, then the draft, then the handles, then the measurement —
+/// so the handles a GM is dragging are never hidden under the shape they belong to, a
+/// measurement is never hidden under what it measures, and a dungeon's grid rules the
 /// backdrop without ruling over what is drawn on it.
 pub fn register_pens(app: &mut App) {
     app.init_gizmo_group::<GridPen>()
@@ -137,7 +158,9 @@ pub fn register_pens(app: &mut App) {
         .init_gizmo_group::<RiverPen>()
         .init_gizmo_group::<LabelPen>()
         .init_gizmo_group::<DraftPen>()
-        .init_gizmo_group::<HandlePen>();
+        .init_gizmo_group::<HandlePen>()
+        .init_gizmo_group::<MeasurePen>()
+        .init_gizmo_group::<MeasureGhostPen>();
 }
 
 /// Writes every pen's width and dash into the configuration store.
@@ -187,6 +210,17 @@ pub fn size_pens(
     set::<LabelPen>(&mut store, (LABEL_WIDTH_PIXELS * factor).max(1.0), solid);
     set::<DraftPen>(&mut store, (OVERLAY_WIDTH_PIXELS * factor).max(1.0), solid);
     set::<HandlePen>(&mut store, (OVERLAY_WIDTH_PIXELS * factor).max(1.0), solid);
+
+    let measure = (MEASURE_WIDTH_PIXELS * factor).max(1.0);
+    set::<MeasurePen>(&mut store, measure, solid);
+    set::<MeasureGhostPen>(
+        &mut store,
+        measure,
+        line_style(Dash::Dashed {
+            line: 3.0,
+            gap: 3.0,
+        }),
+    );
 }
 
 /// How wide a river is drawn at this zoom, in logical pixels: one terrain cell, capped.

@@ -21,7 +21,10 @@ and linked to features (#6): `campaign::notebook` owns the whole `zk` dependency
 `campaign_editor/src/notes` runs it off the frame. Selecting a place shows what references
 it (#7): the same module builds the tag and the `zk list`, `notes/references.rs` caches an
 answer per tag behind one query at a time, and `notes/watch.rs` drops the cache when the
-notebook changes underneath us. Dungeons are authored on a square tile grid (#8):
+notebook changes underneath us. Distances are measured at campaign scale (#10):
+`campaign::measure` says what one cell is worth and rounds every figure, `map/scalebar.rs`
+draws the bar, `map/scale.rs` is where the GM sets the scale and the party's pace, and
+`features/ruler.rs` owns the measure tool. Dungeons are authored on a square tile grid (#8):
 `campaign::grid` and `campaign::brush` own the grid and the four brushes,
 `campaign_editor/src/document.rs` holds the open document and the parked ones, and
 `map/backdrop.rs` is the one thing that says what is being drawn on. A document may also be
@@ -67,6 +70,40 @@ parses, both taking the same `apply`, which returns its own inverse. Undo/redo a
 headless testing fall out of this; they cannot be retrofitted onto direct mutation. Copied
 from `~/fun_repos/watershed/crates/watershed_editor/src/edit.rs` — read it before
 extending `Edit`.
+
+## What one cell is worth
+
+**`campaign::measure` answers it, and every figure a GM reads comes from there** (#10):
+the scale bar, the ruler, the selection panel's length line and image calibration are all
+handed the same `CellWorth`, so a distance typed into a calibration and one measured with
+the ruler cannot disagree. `campaign_editor/src/map/scalebar.rs` owns a node's width,
+`features/ruler.rs` owns the clicks, and neither chooses a figure.
+
+**A document carrying a `TileGrid` is measured in feet off that grid**, whatever the
+campaign's own unit is, and a cell of a dungeon this build creates is exactly five feet
+(`DEFAULT_METRES_PER_CELL` is 1.524). Every other document uses `campaign.ron`'s
+`units_per_cell` and `unit` — which before #10 were read by nothing at all, so the world
+map silently measured one unit per cell.
+
+**A dungeon carries no travel time.** A pace in days says nothing about a corridor, so
+`CellWorth::travelled` is false there and every duration is absent rather than absurd.
+That means changing `campaign.ron`'s unit does *not* change a figure inside a dungeon,
+which amends #10's fourth acceptance criterion.
+
+**The bar changes unit as the map zooms.** A figure below one steps down to a smaller unit
+of the same family, so a kilometre campaign zoomed into a city reads in metres. That needs
+`DistanceUnit` to carry a factor and a family, so `unit` is no longer a label nothing
+branches on — but it stays a `String` on disk, and one this build does not know keeps its
+own label at every zoom rather than being refused.
+
+**`units_per_cell` is bounded above and below.** The scale bar is the first thing that
+divides by it, and over the range `check` used to admit the round-figure search either did
+not terminate or answered zero.
+
+**A measurement is session state.** It becomes no `Edit`, reaches no document and is never
+saved; leaving the tool, switching document or pressing Escape forgets it. It is therefore
+cleared wherever every other in-flight gesture is — the tool button, `Command::Tool` and
+`switch_document` — rather than defending itself.
 
 ## Cities are on the world map
 
@@ -189,10 +226,15 @@ It records where a terrain is — which may be an absolute path anywhere on the 
 and the world document belongs to #3. **One terrain per campaign**: `campaign.ron` has a
 single `terrain` field, and `open` loads it eagerly, so a second would be a second load.
 
-**A `Campaign` is immutable after `open`.** It holds what is on disk — root, manifest,
-terrain. The undo stack, the dirty flag, the notebook handle and any tile cache are
-editor-session state and never fields of it, so #3's mutable world document is its own
-type rather than a `ResMut<Campaign>` serialising against #2's terrain reads every frame.
+**A `Campaign`'s root and terrain are fixed at `open`; its scale is the one thing that
+changes.** It holds what is on disk — root, manifest, terrain — and the undo stack, the
+dirty flag, the notebook handle and any tile cache are editor-session state and never
+fields of it, so #3's mutable world document is its own type rather than a
+`ResMut<Campaign>` serialising against #2's terrain reads every frame. `Campaign::rescale`
+(#10) is the sole mutation, and it keeps the rule's point intact: it writes `campaign.ron`
+first and re-reads the manifest after, so the value still says only what is on disk. It
+deliberately does **not** re-open — a scale is a few bytes of manifest, and `open` would
+read the whole terrain again on the thread drawing the window.
 
 **An absent `world.ron` is an empty world, not an error** — `create` writes none, so #3
 reads "missing" as "default" rather than inventing a migration.

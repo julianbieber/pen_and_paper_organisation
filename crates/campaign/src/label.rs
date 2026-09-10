@@ -12,6 +12,7 @@
 //! font into the crate that must not need one.
 
 use crate::feature::{CellPoint, FeatureId, Geometry};
+use crate::measure::distance;
 
 /// The most labels drawn in one frame.
 ///
@@ -277,6 +278,3 @@ fn widest_span(vertices: &[CellPoint], row: f32) -> Option<CellPoint> {
         .map(|(_, middle)| CellPoint::new(middle, row))
 }
 
-fn distance(from: CellPoint, to: CellPoint) -> f32 {
-    ((to.x - from.x).powi(2) + (to.y - from.y).powi(2)).sqrt()
-}

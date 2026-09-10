@@ -392,3 +392,68 @@ fn the_terrain_error_carries_watersheds_own_error() {
         other => panic!("expected TerrainUnreadable, got {other:?}"),
     }
 }
+
+// The GM's scale is what every figure on screen is derived from, so it has to survive the
+// round trip through campaign.ron rather than being held only in memory.
+#[test]
+fn a_rescale_reaches_the_manifest_on_disk() {
+    let (_tmp, root) = root_with_terrain();
+    let mut campaign = Campaign::create(&root, "terrain").expect("create");
+
+    campaign.rescale(12.5, "miles").expect("a legal scale");
+    assert_eq!(campaign.manifest().units_per_cell, 12.5);
+    assert_eq!(campaign.manifest().unit, "miles");
+
+    let reread = CampaignManifest::read(&root).expect("read it back");
+    assert_eq!(reread.units_per_cell, 12.5);
+    assert_eq!(reread.unit, "miles");
+}
+
+// `read` promises a later additive field stays readable, and re-serializing the parsed
+// struct would quietly destroy exactly that.
+#[test]
+fn a_rescale_keeps_a_field_this_build_does_not_know() {
+    let (_tmp, root) = root_with_terrain();
+    Campaign::create(&root, "terrain").expect("create");
+
+    let path = root.join("campaign.ron");
+    let text = std::fs::read_to_string(&path).expect("read");
+    let widened = text.replace("version: 1,", "version: 1,\n    weather: \"rain\",");
+    std::fs::write(&path, widened).expect("write");
+
+    CampaignManifest::write_scale(&root, 3.0, "leagues").expect("a legal scale");
+
+    let after = std::fs::read_to_string(&path).expect("read");
+    assert!(after.contains("weather"), "{after}");
+    assert!(after.contains("leagues"), "{after}");
+}
+
+// A refused scale must leave the file exactly as it was, not half written.
+#[test]
+fn a_refused_rescale_changes_nothing() {
+    let (_tmp, root) = root_with_terrain();
+    let mut campaign = Campaign::create(&root, "terrain").expect("create");
+    let before = std::fs::read_to_string(root.join("campaign.ron")).expect("read");
+
+    let refusal = campaign.rescale(0.0, "km").expect_err("zero is not a scale");
+    assert!(matches!(refusal, CampaignError::ManifestMalformed(_)));
+
+    let after = std::fs::read_to_string(root.join("campaign.ron")).expect("read");
+    assert_eq!(before, after);
+    assert_eq!(campaign.manifest().units_per_cell, 1.0);
+}
+
+// The write goes through a temporary file, which must not be left behind.
+#[test]
+fn a_rescale_leaves_no_temporary_file() {
+    let (_tmp, root) = root_with_terrain();
+    let mut campaign = Campaign::create(&root, "terrain").expect("create");
+    campaign.rescale(2.0, "km").expect("a legal scale");
+
+    let names: Vec<String> = std::fs::read_dir(&root)
+        .expect("read dir")
+        .filter_map(|entry| entry.ok())
+        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .collect();
+    assert!(!names.iter().any(|name| name.contains("writing")), "{names:?}");
+}

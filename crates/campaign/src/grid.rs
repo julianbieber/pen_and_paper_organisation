@@ -21,7 +21,7 @@ pub const DEFAULT_GRID_CELLS: u32 = 64;
 ///
 /// A five-foot square, which is what the room descriptions this tool is pointed at are
 /// written in.
-pub const DEFAULT_METRES_PER_CELL: f32 = 1.5;
+pub const DEFAULT_METRES_PER_CELL: f32 = 1.524;
 
 /// The most cells a grid may cover.
 ///

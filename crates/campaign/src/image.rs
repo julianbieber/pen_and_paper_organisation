@@ -315,9 +315,10 @@ impl ImageBackdrop {
 ///
 /// This is the whole of two-point calibration: the GM marks two places they know the real
 /// distance between, and the picture is scaled so the map agrees. It takes
-/// `units_per_cell` rather than reading it, because a cell is worth the grid's metres in a
-/// dungeon and the manifest's units on the world map, and only the caller knows which
-/// document this is.
+/// `units_per_cell` rather than reading it, because what a cell is worth depends on the
+/// document and only the caller has one — ask
+/// [`measure::worth_of`](crate::measure::worth_of) for it, so the distance typed here and
+/// a distance measured with the ruler are in the same unit.
 ///
 /// Fails [`ImageProblem::MarksCoincide`] when the two marks are the same pixel,
 /// [`ImageProblem::BadDistance`] for a distance that is not a finite positive number, and
@@ -327,14 +328,14 @@ pub fn calibrate(
     first: (f32, f32),
     second: (f32, f32),
     distance: f32,
-    units_per_cell: f32,
+    units_per_cell: f64,
 ) -> Result<f32, ImageProblem> {
     if let Some(reason) = distance_refusal(distance) {
         return Err(ImageProblem::BadDistance { distance, reason });
     }
-    if let Some(reason) = scale_refusal(units_per_cell) {
+    if let Some(reason) = crate::measure::worth_refusal(units_per_cell) {
         return Err(ImageProblem::BadScale {
-            cells_per_pixel: units_per_cell,
+            cells_per_pixel: units_per_cell as f32,
             reason,
         });
     }
@@ -346,7 +347,7 @@ pub fn calibrate(
         return Err(ImageProblem::MarksCoincide);
     }
 
-    let cells_per_pixel = (distance / units_per_cell) / apart;
+    let cells_per_pixel = ((f64::from(distance) / units_per_cell) / f64::from(apart)) as f32;
     match scale_refusal(cells_per_pixel) {
         Some(reason) => Err(ImageProblem::BadScale {
             cells_per_pixel,
