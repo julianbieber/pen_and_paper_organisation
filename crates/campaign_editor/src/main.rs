@@ -131,7 +131,7 @@ fn main() {
                 app.insert_resource(StatusMessage(error.to_string()));
                 app.insert_resource(dialog::DialogFields {
                     root: path,
-                    terrain: String::new(),
+                    ..default()
                 });
             }
         }

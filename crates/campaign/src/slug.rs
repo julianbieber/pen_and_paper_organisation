@@ -1,9 +1,11 @@
-//! Turning a label the GM typed into the name of a file this tool creates.
+//! Turning a label the GM typed into the name of a file or directory this tool creates.
 //!
 //! The only place in this workspace where that happens. A note's name is chosen by `zk`
 //! and [`crate::notebook`] merely checks what came back; a dungeon's is derived here, and
-//! then opened for writing — so this is the one trust boundary the campaign format
-//! crosses, and it is closed with an allowlist rather than a list of things to reject.
+//! then opened for writing, and a campaign directory's is derived here too, then claimed
+//! by [`crate::campaign::Campaign::create_named`] — so this is the one trust boundary the
+//! campaign format crosses, and it is closed with an allowlist rather than a list of
+//! things to reject.
 //!
 //! Deriving a name and deciding whether a name is allowed are kept apart, exactly as they
 //! are for a note: [`dungeon_name_refusal`](crate::feature::dungeon_name_refusal) is the

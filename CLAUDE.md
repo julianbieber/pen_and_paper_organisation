@@ -46,8 +46,11 @@ refusing `git` is reported through `Created::repository` rather than refusing th
 The campaigns opened before are listed in the dialog (#26): `crates/campaign/src/recent.rs`
 owns the recent-campaigns file, its dedup-and-cap rule and whether a remembered root still
 holds a manifest, and `crates/campaign_editor/src/dialog.rs` lists them and remembers one
-whenever a campaign opens.
-Remaining: create-by-name (#27), a folder picker (#28),
+whenever a campaign opens. The *Create* form takes a name, a parent and a terrain rather
+than a full path (#27): `Campaign::create_named` in `crates/campaign/src/campaign.rs` roots
+the campaign at `<parent>/<slug>` through `campaign::slug` and refuses, never uniques, a
+root that already exists; `recent::default_parent` decides where it goes by default.
+Remaining: a folder picker (#28),
 close-and-switch (#29), sync from the editor (#30) and clone from the dialog (#31). Order is
 dependency order; the plan, with the two decisions it makes, is at
 `~/fun_repos/hobby-mimisbrunnr/notes/pen_and_paper_organisation/planning/campaign_management/plan-2026-09-12-campaign-directory-and-sync.md`.
@@ -255,6 +258,12 @@ move with the directory; the status line warns when it will not. `world.ron` sit
 inside the campaign directory stays a convention `Campaign::create` does not write —
 that belongs to #3. **One terrain per campaign**: `campaign.ron` has a single `terrain`
 field, and `open` loads it eagerly, so a second would be a second load.
+
+`Campaign::create_named` (#27) is the dialog's way in. Its name refusals come before
+anything is read or written. It claims the root with `create_dir`, so an existing
+directory is refused rather than adopted, which is the opposite of `create`, which still
+adopts one and names the campaign after its basename for `make_demo` and the tests. The
+typed name is what `campaign.ron` and the recent list carry.
 
 **A `Campaign`'s root and terrain are fixed at `open`; its scale is the one thing that
 changes.** It holds what is on disk — root, manifest, terrain — and the undo stack, the

@@ -1,5 +1,5 @@
-//! What the editor shows when it has no campaign: the two paths it needs to open or
-//! create one, whatever went wrong last time, and the campaigns opened before.
+//! What the editor shows when it has no campaign: what it needs to open or create
+//! one, whatever went wrong last time, and the campaigns opened before.
 //!
 //! Opening a campaign loads its terrain, which is as slow as the terrain is large, so
 //! the work happens off the render thread and lands when it is done. Opening reads the
@@ -20,7 +20,7 @@ use bevy::feathers::tokens;
 use bevy::input_focus::tab_navigation::TabIndex;
 use bevy::prelude::*;
 use bevy::tasks::{AsyncComputeTaskPool, IoTaskPool, Task, block_on, futures_lite::future};
-use bevy::text::{EditableText, TextEditChange};
+use bevy::text::{EditableText, TextEdit, TextEditChange};
 use bevy::ui::InteractionDisabled;
 use bevy::ui_widgets::Activate;
 use campaign::recent::{self, Listed, MAX_RECENT, RecentError};
@@ -46,19 +46,26 @@ impl Plugin for DialogPlugin {
                     scan_recents.run_if(recents_have_not_answered),
                     show_recents.run_if(resource_changed::<RecentList>),
                     remember_campaign.run_if(resource_added::<OpenCampaign>),
+                    seed_parent
+                        .run_if(resource_changed::<RecentList>)
+                        .run_if(not(resource_exists::<OpenCampaign>)),
                 ),
             );
     }
 }
 
-/// The paths typed into the dialog.
+/// The fields typed into the dialog.
 #[derive(Resource, Default)]
 pub struct DialogFields {
-    /// The campaign directory to open, or to create.
+    /// The campaign directory to open.
     pub root: String,
     /// The terrain a created campaign copies in. Ignored when opening, which takes
     /// the terrain from the manifest.
     pub terrain: String,
+    /// What a created campaign is called; its directory is derived from it.
+    pub name: String,
+    /// The directory a created campaign goes in.
+    pub parent: String,
 }
 
 /// The campaign load in flight, if there is one.
@@ -80,6 +87,12 @@ struct RootInput;
 
 #[derive(Component, Default, Clone)]
 struct TerrainInput;
+
+#[derive(Component, Default, Clone)]
+struct NameInput;
+
+#[derive(Component, Default, Clone)]
+struct ParentInput;
 
 /// The recent-campaigns scan in flight, and what it found.
 ///
@@ -112,7 +125,7 @@ pub struct RecentRow {
     pub present: bool,
 }
 
-/// The dialog's scene: two paths and two actions.
+/// The dialog's scene: an Open section and a Create section.
 ///
 /// The status line is deliberately not part of it: the map reports a failure there
 /// long after the dialog has been closed.
@@ -173,6 +186,84 @@ pub fn dialog() -> impl Scene {
                 Node {
                     display: Display::Flex,
                     flex_direction: FlexDirection::Row,
+                    column_gap: px(8),
+                }
+                Children [
+                    (
+                        @FeathersButton {
+                            @caption: bsn! { Text("Open") ThemedText },
+                            @variant: ButtonVariant::Primary,
+                        }
+                        on(|_: On<Activate>,
+                            fields: Res<DialogFields>,
+                            mut job: ResMut<OpenJob>,
+                            mut status: ResMut<StatusMessage>| {
+                            start_open(PathBuf::from(fields.root.trim()), &mut job, &mut status);
+                        })
+                    )
+                ]
+            ),
+            (Text("Create a campaign") ThemedText),
+            (
+                Node {
+                    display: Display::Flex,
+                    flex_direction: FlexDirection::Row,
+                    align_items: AlignItems::Center,
+                    column_gap: px(6),
+                }
+                Children [
+                    (Text("Name") ThemedText),
+                    (
+                        @FeathersTextInputContainer
+                        Node { width: px(320) }
+                        Children [
+                            (
+                                @FeathersTextInput
+                                NameInput
+                                on(|change: On<TextEditChange>,
+                                    texts: Query<&EditableText>,
+                                    mut fields: ResMut<DialogFields>| {
+                                    if let Ok(text) = texts.get(change.event_target()) {
+                                        fields.name = text.value().to_string();
+                                    }
+                                })
+                            )
+                        ]
+                    )
+                ]
+            ),
+            (
+                Node {
+                    display: Display::Flex,
+                    flex_direction: FlexDirection::Row,
+                    align_items: AlignItems::Center,
+                    column_gap: px(6),
+                }
+                Children [
+                    (Text("Where") ThemedText),
+                    (
+                        @FeathersTextInputContainer
+                        Node { width: px(320) }
+                        Children [
+                            (
+                                @FeathersTextInput
+                                ParentInput
+                                on(|change: On<TextEditChange>,
+                                    texts: Query<&EditableText>,
+                                    mut fields: ResMut<DialogFields>| {
+                                    if let Ok(text) = texts.get(change.event_target()) {
+                                        fields.parent = text.value().to_string();
+                                    }
+                                })
+                            )
+                        ]
+                    )
+                ]
+            ),
+            (
+                Node {
+                    display: Display::Flex,
+                    flex_direction: FlexDirection::Row,
                     align_items: AlignItems::Center,
                     column_gap: px(6),
                 }
@@ -204,18 +295,6 @@ pub fn dialog() -> impl Scene {
                     column_gap: px(8),
                 }
                 Children [
-                    (
-                        @FeathersButton {
-                            @caption: bsn! { Text("Open") ThemedText },
-                            @variant: ButtonVariant::Primary,
-                        }
-                        on(|_: On<Activate>,
-                            fields: Res<DialogFields>,
-                            mut job: ResMut<OpenJob>,
-                            mut status: ResMut<StatusMessage>| {
-                            start_open(PathBuf::from(fields.root.trim()), &mut job, &mut status);
-                        })
-                    ),
                     (
                         @FeathersButton {
                             @caption: bsn! { Text("Create") ThemedText },
@@ -257,12 +336,21 @@ fn start_create(fields: &DialogFields, job: &mut OpenJob, status: &mut StatusMes
     if job.busy() {
         return;
     }
-    let root = std::path::PathBuf::from(fields.root.trim());
+    let name = fields.name.trim().to_owned();
+    let parent = std::path::PathBuf::from(fields.parent.trim());
     let terrain = std::path::PathBuf::from(fields.terrain.trim());
+
+    let root = match campaign::campaign::root_for(&parent, &name) {
+        Ok(root) => root,
+        Err(error) => {
+            status.0 = error.to_string();
+            return;
+        }
+    };
 
     status.0 = format!("creating {}…", root.display());
     let task = AsyncComputeTaskPool::get()
-        .spawn(async move { Campaign::create(root, terrain, &SystemGit) });
+        .spawn(async move { Campaign::create_named(parent, &name, terrain, &SystemGit) });
     job.0 = Some(task);
 }
 
@@ -420,6 +508,35 @@ fn remember_campaign(campaign: Res<OpenCampaign>) {
             }
         })
         .detach();
+}
+
+fn seed_parent(
+    list: Res<RecentList>,
+    mut fields: ResMut<DialogFields>,
+    mut inputs: Query<&mut EditableText, With<ParentInput>>,
+    mut seeded: Local<bool>,
+) {
+    if *seeded || !list.answered {
+        return;
+    }
+    *seeded = true;
+    if !fields.parent.is_empty() {
+        return;
+    }
+
+    let newest = list.listed.first().map(|listed| listed.recent.root.as_path());
+    let home = std::env::var_os("HOME");
+    let Some(parent) = recent::default_parent(newest, home.as_deref()) else {
+        return;
+    };
+
+    let text = parent.display().to_string();
+    fields.parent = text.clone();
+    for mut field in inputs.iter_mut() {
+        field.queue_edit(TextEdit::SelectAll);
+        field.queue_edit(TextEdit::Backspace);
+        field.queue_edit(TextEdit::Insert(text.as_str().into()));
+    }
 }
 
 fn recent_row(slot: usize) -> impl Scene {

@@ -198,3 +198,49 @@ fn config_dir_from_prefers_an_absolute_xdg_and_falls_back_to_home() {
     );
     assert_eq!(recent::config_dir_from(None, None), None);
 }
+
+// A newest campaign with a usable parent decides where a new one goes by default.
+#[test]
+fn default_parent_uses_the_newest_campaigns_directory() {
+    use std::ffi::OsStr;
+
+    assert_eq!(
+        recent::default_parent(
+            Some(std::path::Path::new("/games/coast")),
+            Some(OsStr::new("/home/gm"))
+        ),
+        Some(std::path::PathBuf::from("/games"))
+    );
+}
+
+// No newest campaign at all falls back to the home directory.
+#[test]
+fn default_parent_falls_back_to_home_with_no_newest() {
+    use std::ffi::OsStr;
+
+    assert_eq!(
+        recent::default_parent(None, Some(OsStr::new("/home/gm"))),
+        Some(std::path::PathBuf::from("/home/gm"))
+    );
+}
+
+// A newest with no usable parent — at the filesystem root, or a bare relative name —
+// falls back to home rather than answering with nothing or with itself.
+#[test]
+fn default_parent_falls_back_to_home_when_the_newest_has_no_parent() {
+    use std::ffi::OsStr;
+
+    for newest in ["/", "coast"] {
+        assert_eq!(
+            recent::default_parent(Some(std::path::Path::new(newest)), Some(OsStr::new("/home/gm"))),
+            Some(std::path::PathBuf::from("/home/gm")),
+            "{newest:?} should have fallen back to home"
+        );
+    }
+}
+
+// Neither a newest campaign nor a home directory leaves no default at all.
+#[test]
+fn default_parent_is_none_with_neither_input() {
+    assert_eq!(recent::default_parent(None, None), None);
+}

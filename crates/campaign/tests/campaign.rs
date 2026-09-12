@@ -5,6 +5,7 @@
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
+use campaign::campaign::root_for;
 use campaign::repo::GitError;
 use campaign::{CAMPAIGN_VERSION, Campaign, CampaignError, CampaignManifest, GitRunner};
 use glam::UVec2;
@@ -627,4 +628,151 @@ fn a_rescale_leaves_no_temporary_file() {
         .map(|entry| entry.file_name().to_string_lossy().into_owned())
         .collect();
     assert!(!names.iter().any(|name| name.contains("writing")), "{names:?}");
+}
+
+fn named_source() -> (tempfile::TempDir, PathBuf, PathBuf) {
+    let tmp = tempfile::tempdir().expect("temp dir");
+    let source = tmp.path().join("source");
+    write_loadable_terrain(&source);
+    let parent = tmp.path().join("c");
+    (tmp, parent, source)
+}
+
+// The acceptance observation itself: a name and a where, no directory typed.
+#[test]
+fn create_named_derives_the_root_from_the_name() {
+    let (_tmp, parent, source) = named_source();
+    assert!(!parent.exists());
+
+    let created = Campaign::create_named(&parent, "The Shattered Coast", &source, &NoGit)
+        .expect("create_named");
+    let root = parent.join("the-shattered-coast");
+
+    assert!(root.join("campaign.ron").is_file());
+    assert_eq!(created.campaign.root(), root);
+    let opened = Campaign::open(&root).expect("open");
+    assert_eq!(opened.manifest().name, "The Shattered Coast");
+    assert_eq!(tree(&root.join("terrain")), tree(&source));
+}
+
+// A second create over the same name is refused, not uniqued, and names the
+// directory in the way.
+#[test]
+fn create_named_twice_is_refused_by_the_second_call() {
+    let (_tmp, parent, source) = named_source();
+    Campaign::create_named(&parent, "The Shattered Coast", &source, &NoGit).expect("first create");
+    let root = parent.join("the-shattered-coast");
+
+    match Campaign::create_named(&parent, "The Shattered Coast", &source, &NoGit) {
+        Err(CampaignError::AlreadyACampaign(reported)) => {
+            assert_eq!(reported, root);
+            assert!(reported.to_string_lossy().len() > 0);
+            assert!(reported.starts_with(&parent));
+        }
+        other => panic!("expected AlreadyACampaign, got {other:?}"),
+    }
+}
+
+// A plain directory already sitting at the derived root is refused, not adopted —
+// unlike `create`, which adopts an existing directory.
+#[test]
+fn create_named_refuses_a_plain_directory_already_at_the_root() {
+    let (_tmp, parent, source) = named_source();
+    let root = parent.join("the-shattered-coast");
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::write(root.join("already-here.txt"), "keep me").unwrap();
+    let before = tree(&root);
+
+    match Campaign::create_named(&parent, "The Shattered Coast", &source, &NoGit) {
+        Err(CampaignError::RootInTheWay(reported)) => assert_eq!(reported, root),
+        other => panic!("expected RootInTheWay, got {other:?}"),
+    }
+    assert_eq!(tree(&root), before, "an existing directory must not be touched");
+}
+
+// An empty or unsluggable name is refused before the parent directory is created.
+#[test]
+fn create_named_refuses_a_name_with_nothing_to_slug() {
+    let (_tmp, parent, source) = named_source();
+
+    for name in ["", "   "] {
+        assert!(matches!(
+            Campaign::create_named(&parent, name, &source, &NoGit),
+            Err(CampaignError::NameEmpty)
+        ));
+        assert!(!parent.exists(), "{name:?} must not create the parent");
+    }
+
+    assert!(matches!(
+        Campaign::create_named(&parent, "!!!", &source, &NoGit),
+        Err(CampaignError::NameUnsluggable(_))
+    ));
+    assert!(!parent.exists(), "an unsluggable name must not create the parent");
+}
+
+// An empty `where` is refused rather than resolving relative to the current
+// directory.
+#[test]
+fn create_named_refuses_an_empty_parent() {
+    let (_tmp, _parent, source) = named_source();
+    assert!(matches!(
+        Campaign::create_named("", "The Shattered Coast", &source, &NoGit),
+        Err(CampaignError::NoParent)
+    ));
+}
+
+// The stored name is the typed name with only its surrounding whitespace trimmed —
+// the slug is derived from it, not the other way around.
+#[test]
+fn create_named_trims_the_name_it_stores() {
+    let (_tmp, parent, source) = named_source();
+    let created =
+        Campaign::create_named(&parent, "  Riverford  ", &source, &NoGit).expect("create_named");
+
+    assert_eq!(created.campaign.root(), parent.join("riverford"));
+    assert_eq!(created.campaign.manifest().name, "Riverford");
+}
+
+// A terrain source that cannot be read is refused before the parent directory
+// exists, exactly as an unreadable terrain leaves `create` writing nothing.
+#[test]
+fn create_named_writes_nothing_when_the_terrain_is_refused() {
+    let tmp = tempfile::tempdir().unwrap();
+    let parent = tmp.path().join("c");
+    let missing_source = tmp.path().join("does-not-exist");
+
+    assert!(matches!(
+        Campaign::create_named(&parent, "The Shattered Coast", &missing_source, &NoGit),
+        Err(CampaignError::TerrainUnreadable { .. })
+    ));
+    assert!(!parent.exists(), "create_named left a directory behind");
+}
+
+// A source that contains the derived root cannot be copied, and the attempt leaves
+// nothing under the parent for a retry to trip over.
+#[test]
+fn create_named_leaves_nothing_when_the_source_contains_the_root() {
+    let tmp = tempfile::tempdir().unwrap();
+    let source = tmp.path().join("shared-terrain");
+    write_loadable_terrain(&source);
+    let parent = source.join("campaigns");
+
+    assert!(matches!(
+        Campaign::create_named(&parent, "The Shattered Coast", &source, &NoGit),
+        Err(CampaignError::TerrainNotCopyable { .. })
+    ));
+    assert!(
+        !parent.join("the-shattered-coast").exists(),
+        "the refused create left a root behind"
+    );
+}
+
+// `root_for` only stats: it derives the same root `create_named` would use and
+// writes nothing on the way.
+#[test]
+fn root_for_derives_the_slugged_path_and_writes_nothing() {
+    let (_tmp, parent, _source) = named_source();
+    let root = root_for(&parent, "The Shattered Coast").expect("root_for");
+    assert_eq!(root, parent.join("the-shattered-coast"));
+    assert!(!parent.exists(), "root_for must not create anything");
 }
