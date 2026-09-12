@@ -40,8 +40,8 @@ impl Plugin for DialogPlugin {
 pub struct DialogFields {
     /// The campaign directory to open, or to create.
     pub root: String,
-    /// The terrain directory a created campaign records. Ignored when opening, which
-    /// takes the terrain from the manifest.
+    /// The terrain a created campaign copies in. Ignored when opening, which takes
+    /// the terrain from the manifest.
     pub terrain: String,
 }
 
@@ -198,10 +198,10 @@ fn start_create(fields: &DialogFields, job: &mut OpenJob, status: &mut StatusMes
         return;
     }
     let root = std::path::PathBuf::from(fields.root.trim());
-    let terrain = fields.terrain.trim().to_owned();
+    let terrain = std::path::PathBuf::from(fields.terrain.trim());
 
     status.0 = format!("creating {}…", root.display());
-    let task = AsyncComputeTaskPool::get().spawn(async move { Campaign::create(root, &terrain) });
+    let task = AsyncComputeTaskPool::get().spawn(async move { Campaign::create(root, terrain) });
     job.0 = Some(task);
 }
 
@@ -221,7 +221,7 @@ fn finish_open(
     match result {
         Ok(campaign) => {
             info!("opened campaign at {}", campaign.root().display());
-            status.0.clear();
+            status.opened(&campaign);
             commands.insert_resource(OpenCampaign(campaign));
         }
         Err(error) => {
