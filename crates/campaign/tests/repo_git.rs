@@ -1,9 +1,11 @@
 //! The handful of things only the real `git` can answer: that a created campaign is a
 //! repository with nothing to commit and one commit in its log, that adoption inside an
 //! outer repository does not disturb what the outer repository already had staged, that
-//! a clone of a created campaign can save into a directory it never held, and the four
+//! a clone of a created campaign can save into a directory it never held, the four
 //! acceptance shapes a *Sync* must produce — a plain commit, a first push, a pull that
-//! brings a change in, and a conflict that leaves the working tree at the wip commit.
+//! brings a change in, and a conflict that leaves the working tree at the wip commit —
+//! and [`Campaign::clone_from`]'s two failure shapes: a real clone that lands but holds
+//! no manifest, and a real `git clone` refusing outright.
 //!
 //! Every test here skips itself when `git` is not installed, so `cargo test -p campaign`
 //! still passes with nothing on `PATH`. Set `PNP_REQUIRE_GIT=1` to turn the skip into a
@@ -15,6 +17,7 @@ use std::path::Path;
 use std::process::Output;
 
 use campaign::repo::{GitError, GitRunner, RemoteOutcome, Repo, SystemGit, git_is_installed};
+use campaign::{Campaign, CampaignError};
 
 fn git_or_skip(test: &str) -> bool {
     if git_is_installed() {
@@ -276,6 +279,53 @@ fn a_conflicting_sync_aborts_and_leaves_the_wip_commit() {
     let rebase_merge = git(&b, &["rev-parse", "--git-path", "rebase-merge"]);
     let path = String::from_utf8_lossy(&rebase_merge.stdout).trim().to_owned();
     assert!(!b.join(&path).exists(), "a rebase is still in progress at {path}");
+}
+
+// A real clone of a repository with no `campaign.ron` fails `ClonedNotACampaign`, and the
+// clone — `.git` included — is left where it landed for the GM to look at.
+#[test]
+fn clone_from_a_repository_with_no_manifest_fails_and_leaves_the_git_dir() {
+    if !git_or_skip("clone_from_a_repository_with_no_manifest_fails_and_leaves_the_git_dir") {
+        return;
+    }
+    let tmp = tempfile::tempdir().expect("temp dir");
+    let origin = tmp.path().join("origin");
+    std::fs::create_dir_all(&origin).expect("origin dir");
+    std::fs::write(origin.join("README"), "not a campaign").expect("a file to commit");
+    Repo::at(&origin).begin(&WithIdentity).expect("begin");
+
+    let parent = tmp.path().join("clone-parent");
+    let origin_url = origin.to_str().unwrap().to_owned();
+
+    match Campaign::clone_from(&parent, &origin_url, &WithIdentity) {
+        Err(CampaignError::ClonedNotACampaign(reported)) => {
+            assert_eq!(reported, parent.join("origin"));
+        }
+        other => panic!("expected ClonedNotACampaign, got {other:?}"),
+    }
+    assert!(parent.join("origin/.git").is_dir());
+}
+
+// A clone of a path that does not exist fails with git's own last line, which for a
+// missing source starts with `fatal:` — and git cleans up its own failed clone, so no
+// root is left behind.
+#[test]
+fn clone_from_a_path_that_does_not_exist_fails_and_leaves_no_root() {
+    if !git_or_skip("clone_from_a_path_that_does_not_exist_fails_and_leaves_no_root") {
+        return;
+    }
+    let tmp = tempfile::tempdir().expect("temp dir");
+    let parent = tmp.path().join("clone-parent");
+    let missing = tmp.path().join("does-not-exist");
+    let missing_url = missing.to_str().unwrap().to_owned();
+
+    match Campaign::clone_from(&parent, &missing_url, &WithIdentity) {
+        Err(CampaignError::CloneFailed(GitError::GitRefused { verb: "clone", message })) => {
+            assert!(message.starts_with("fatal:"), "{message}");
+        }
+        other => panic!("expected CloneFailed(GitRefused), got {other:?}"),
+    }
+    assert!(!parent.join("does-not-exist").exists());
 }
 
 fn two_clones_of_a_pushed_origin(name: &str) -> (tempfile::TempDir, std::path::PathBuf, std::path::PathBuf) {

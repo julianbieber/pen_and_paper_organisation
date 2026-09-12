@@ -46,7 +46,7 @@ pub mod pick;
 /// still there.
 pub mod recent;
 /// What makes a campaign directory a git repository, and the one place this workspace
-/// runs git — including syncing one with its remote.
+/// runs git — including syncing one with its remote and cloning one from a remote.
 pub mod repo;
 /// Turning a label the GM typed into the name of a file this tool creates.
 pub mod slug;

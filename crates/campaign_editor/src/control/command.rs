@@ -180,6 +180,16 @@ pub(super) enum Command {
         /// thread, so the reply never races the file.
         started: bool,
     },
+    /// Clones `url` into `parent`, exactly as typing both into the dialog's Clone
+    /// fields and pressing the button would, and waits for the world document to
+    /// answer too.
+    CloneCampaign {
+        url: String,
+        parent: PathBuf,
+        /// Whether [`dialog::start_clone`] has been asked. The clone runs off the
+        /// render thread, so the reply never races the `git` process.
+        started: bool,
+    },
     /// Closes the open campaign, going through the same unsaved guard the Close button
     /// does.
     CloseCampaign {
@@ -272,6 +282,7 @@ impl Command {
             Self::Capture { .. } => "capture",
             Self::FixedDelta(_) => "fixed-delta",
             Self::OpenCampaign { .. } => "open",
+            Self::CloneCampaign { .. } => "clone",
             Self::CloseCampaign { .. } => "close",
             Self::Sync { .. } => "sync",
             Self::Remote { .. } => "remote",
@@ -453,6 +464,18 @@ impl Command {
                 root: PathBuf::from(rest.join(" ")),
                 started: false,
             }),
+            "clone" => {
+                let url = rest.first().ok_or("clone needs a URL and a parent directory")?;
+                let parent = &rest[1..];
+                if parent.is_empty() {
+                    return Err("clone needs a URL and a parent directory".to_owned());
+                }
+                Ok(Self::CloneCampaign {
+                    url: (*url).to_owned(),
+                    parent: PathBuf::from(parent.join(" ")),
+                    started: false,
+                })
+            }
             "close" => Ok(Self::CloseCampaign { started: false }),
             "sync" => Ok(Self::Sync { started: false }),
             "remote" => {
@@ -822,27 +845,32 @@ impl Command {
                     return Poll::Running;
                 }
 
-                if let Some(state) = world.get_resource::<WorldState>() {
-                    let outcome = match state.outcome {
-                        WorldOutcome::Ready => "ready",
-                        WorldOutcome::Unavailable => "unavailable",
-                    };
-                    let Some(campaign) = world.get_resource::<OpenCampaign>() else {
-                        return Poll::Failed("the campaign closed before it finished opening".into());
-                    };
-                    return Poll::Done(json!({
-                        "root": campaign.0.root().display().to_string(),
-                        "name": campaign.0.manifest().name.clone(),
-                        "world": outcome,
-                    }));
+                poll_campaign_load(world)
+            }
+
+            Self::CloneCampaign { url, parent, started } => {
+                if !*started {
+                    if world.get_resource::<OpenCampaign>().is_some() {
+                        return Poll::Failed("a campaign is already open; close it first".into());
+                    }
+                    if world.resource::<dialog::OpenJob>().busy() {
+                        return Poll::Failed("a campaign is already being opened".into());
+                    }
+                    *started = true;
+                    let asked_url = url.clone();
+                    let asked_parent = parent.clone();
+                    world.resource_scope(|world, mut job: Mut<dialog::OpenJob>| {
+                        world.resource_scope(|_world, mut status: Mut<StatusMessage>| {
+                            dialog::start_clone(asked_parent, asked_url, &mut job, &mut status);
+                        });
+                    });
+                    if !world.resource::<dialog::OpenJob>().busy() {
+                        return Poll::Failed(world.resource::<StatusMessage>().0.clone());
+                    }
+                    return Poll::Running;
                 }
 
-                if world.get_resource::<OpenCampaign>().is_none()
-                    && !world.resource::<dialog::OpenJob>().busy()
-                {
-                    return Poll::Failed(world.resource::<StatusMessage>().0.clone());
-                }
-                Poll::Running
+                poll_campaign_load(world)
             }
 
             Self::CloseCampaign { started } => {
@@ -987,6 +1015,28 @@ fn press_keys(world: &mut World, keys: &[KeyCode], down: bool) {
             input.release(*key);
         }
     }
+}
+
+fn poll_campaign_load(world: &mut World) -> Poll {
+    if let Some(state) = world.get_resource::<WorldState>() {
+        let outcome = match state.outcome {
+            WorldOutcome::Ready => "ready",
+            WorldOutcome::Unavailable => "unavailable",
+        };
+        let Some(campaign) = world.get_resource::<OpenCampaign>() else {
+            return Poll::Failed("the campaign closed before it finished opening".into());
+        };
+        return Poll::Done(json!({
+            "root": campaign.0.root().display().to_string(),
+            "name": campaign.0.manifest().name.clone(),
+            "world": outcome,
+        }));
+    }
+
+    if world.get_resource::<OpenCampaign>().is_none() && !world.resource::<dialog::OpenJob>().busy() {
+        return Poll::Failed(world.resource::<StatusMessage>().0.clone());
+    }
+    Poll::Running
 }
 
 fn author(world: &mut World, build: impl Fn(campaign::FeatureId) -> Edit) -> Poll {
@@ -1395,6 +1445,7 @@ mod tests {
             ("capture /tmp/a.png", "capture"),
             ("fixed-delta 0.016", "fixed-delta"),
             ("open /tmp/a", "open"),
+            ("clone /tmp/origin /tmp/dest", "clone"),
             ("close", "close"),
             ("sync", "sync"),
             ("remote git@example.invalid:campaign.git", "remote"),
@@ -1412,7 +1463,7 @@ mod tests {
     fn a_line_that_is_not_a_command_is_refused_by_name() {
         for line in [
             "", "fly", "tool wobble", "kind wobble", "at 1", "at x y", "key wobble", "note",
-            "note wobble", "note place Riverford", "label", "remote",
+            "note wobble", "note place Riverford", "label", "remote", "clone", "clone /tmp/origin",
         ] {
             assert!(Command::parse(line).is_err(), "{line:?} should be refused");
         }

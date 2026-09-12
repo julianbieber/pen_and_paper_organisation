@@ -1,0 +1,32 @@
+# Clones a local origin into a fresh destination and confirms the terrain came in.
+# Proves the acceptance's first half: paste a URL, choose a parent, and the campaign
+# opens with its terrain drawn.
+#
+#   rm -rf /tmp/clone-origin /tmp/clone-dest /tmp/not-a-campaign
+#   cargo run -p campaign --example make_demo -- /tmp/clone-origin
+#   git -C /tmp/clone-origin init -q && git -C /tmp/clone-origin add -A \
+#       && git -C /tmp/clone-origin commit -qm demo
+#   git init -q /tmp/not-a-campaign && git -C /tmp/not-a-campaign commit -q --allow-empty -m empty
+#   mkdir -p /tmp/clone-dest
+#   PNP_CONTROL=/tmp/pnp-clone.sock cargo run -p campaign_editor &
+#   PNP_CONTROL=/tmp/pnp-clone.sock cargo run -p campaign_editor --bin pnp-ctl -- run \
+#       crates/campaign_editor/scenarios/clone.scenario
+
+ping
+fixed-delta 0.016
+
+clone /tmp/clone-origin /tmp/clone-dest
+step 60
+observe world
+
+close
+
+# The refusal half is not scripted here: `pnp-ctl run` stops replay at the first failed
+# step, and a refused clone is exactly that — there would be nothing left in the
+# scenario to run afterward. By hand instead:
+#
+#   PNP_CONTROL=/tmp/pnp-clone.sock cargo run -p campaign_editor --bin pnp-ctl -- \
+#       clone /tmp/not-a-campaign /tmp/clone-dest
+#       # refused: `/tmp/clone-dest/not-a-campaign` was cloned but holds no
+#       # campaign.ron, so it is not a campaign; it is left there for you
+#   ls /tmp/clone-dest/not-a-campaign   # the clone stays on disk

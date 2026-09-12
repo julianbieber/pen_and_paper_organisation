@@ -1,6 +1,6 @@
 //! Everything this workspace does with git: the one place a `git` process is run, what
-//! makes a fresh campaign directory a repository from birth, and what a *Sync* commits,
-//! pulls and pushes.
+//! makes a fresh campaign directory a repository from birth, what a *Sync* commits,
+//! pulls and pushes, and cloning one from a remote.
 //!
 //! Shelled out to exactly as `zk` is in [`crate::notebook`]: the argument vectors are
 //! pure functions tested against a recorded runner, and the handful of tests that want
@@ -39,8 +39,11 @@ pub enum GitError {
     #[error("`{GIT}` is not installed, or not on PATH, so the campaign is not a git repository")]
     GitMissing,
 
-    /// From every call: `git` ran and refused. The message is the first line of what it
-    /// said for itself, for the reason [`crate::notebook::NoteError::ZkRefused`] gives.
+    /// From every call, including [`Repo::clone_into`]: `git` ran and refused. The
+    /// message is the first line of what it said for itself, for the reason
+    /// [`crate::notebook::NoteError::ZkRefused`] gives — except a clone's, which is the
+    /// *last* line, since `git clone`'s own refusal comes after its `Cloning into '…'`
+    /// announcement.
     #[error("`{GIT} {verb}` failed: {message}")]
     GitRefused { verb: &'static str, message: String },
 
@@ -83,6 +86,7 @@ impl GitRunner for SystemGit {
             .env_remove("GIT_DIR")
             .env_remove("GIT_WORK_TREE")
             .env_remove("GIT_INDEX_FILE")
+            .env("GIT_TERMINAL_PROMPT", "0")
             .stdin(Stdio::null())
             .output()
             .map_err(missing_or)
@@ -276,6 +280,42 @@ pub fn remote_refusal(url: &str) -> Option<&'static str> {
     None
 }
 
+/// The arguments that clone `url` into `destination`.
+///
+/// The `--` before `url` is there for the reason [`add_origin_args`] carries one.
+pub fn clone_args(url: &str, destination: &Path) -> Vec<OsString> {
+    vec![
+        OsString::from("clone"),
+        OsString::from("--quiet"),
+        OsString::from("--"),
+        OsString::from(url),
+        destination.as_os_str().to_owned(),
+    ]
+}
+
+/// The directory name `git clone url` would make, or `None` when [`crate::feature::file_name_refusal`]
+/// refuses it.
+///
+/// Trims `url`, strips trailing `/`s, strips one trailing `.git`, strips trailing `/`s
+/// again (so `host/repo/.git` names `repo`), then takes what follows the last `/` or
+/// `:` — the `:` is what an scp-style remote (`git@host:user/repo.git`) separates its
+/// path on. The name comes back exactly as the repository has it, not slugged: a clone
+/// lands at `<where>/<repository name>`, the same name a clone made by hand elsewhere
+/// would use.
+pub fn repository_name(url: &str) -> Option<String> {
+    let trimmed = url.trim().trim_end_matches('/');
+    let trimmed = trimmed.strip_suffix(".git").unwrap_or(trimmed);
+    let trimmed = trimmed.trim_end_matches('/');
+    let name = match trimmed.rfind(['/', ':']) {
+        Some(index) => &trimmed[index + 1..],
+        None => trimmed,
+    };
+    if crate::feature::file_name_refusal(name, 255).is_some() {
+        return None;
+    }
+    Some(name.to_owned())
+}
+
 /// The epoch seconds and the UTC offset in minutes a `GIT_COMMITTER_IDENT` line ends in,
 /// or `None` when its last two words are not a timestamp and an offset.
 ///
@@ -464,6 +504,36 @@ impl Repo {
         Ok(Some(String::from_utf8_lossy(&output.stdout).trim().to_owned()))
     }
 
+    /// Clone `url` into `destination`, running `clone` from `destination`'s parent (or
+    /// `.` when there is none).
+    ///
+    /// Refuses [`remote_refusal`] before running anything, as [`GitError::GitRefused`]
+    /// naming `clone`. A failed clone's message is git's own **last** stderr line, not
+    /// its first — `git clone` prints `Cloning into '…'` before the `fatal:` line, so the
+    /// first line would only repeat the destination the caller already typed. Not named
+    /// `clone`, so it cannot be misread as [`Clone::clone`].
+    pub fn clone_into(
+        runner: &impl GitRunner,
+        url: &str,
+        destination: &Path,
+    ) -> Result<Self, GitError> {
+        if let Some(reason) = remote_refusal(url) {
+            return Err(GitError::GitRefused {
+                verb: "clone",
+                message: reason.to_owned(),
+            });
+        }
+        let dir = destination.parent().filter(|parent| !parent.as_os_str().is_empty());
+        let output = runner.run(dir.unwrap_or_else(|| Path::new(".")), &clone_args(url, destination))?;
+        if !output.status.success() {
+            return Err(GitError::GitRefused {
+                verb: "clone",
+                message: last_line(&output.stderr),
+            });
+        }
+        Ok(Self::at(destination))
+    }
+
     /// Set `origin` to `url`.
     ///
     /// Refuses [`remote_refusal`] before running anything, as [`GitError::GitRefused`]
@@ -637,6 +707,15 @@ fn refused(output: &Output, verb: &'static str) -> Result<(), GitError> {
 
 fn first_line(stderr: &[u8]) -> String {
     first_nonempty_line(stderr).unwrap_or_else(|| "it said nothing".to_owned())
+}
+
+fn last_line(stderr: &[u8]) -> String {
+    String::from_utf8_lossy(stderr)
+        .lines()
+        .map(str::trim)
+        .rfind(|line| !line.is_empty())
+        .map(str::to_owned)
+        .unwrap_or_else(|| "it said nothing".to_owned())
 }
 
 fn message_of(output: &Output) -> String {
