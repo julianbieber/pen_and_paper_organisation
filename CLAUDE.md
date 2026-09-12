@@ -43,7 +43,11 @@ copies it into `<root>/terrain`, `crates/campaign/src/layout.rs` fixes that path
 repository from birth (#25): `crates/campaign/src/repo.rs` is the one place this workspace
 runs `git`, `Campaign::create` runs it after the manifest is written, and a missing or
 refusing `git` is reported through `Created::repository` rather than refusing the campaign.
-Remaining: a recent list (#26), create-by-name (#27), a folder picker (#28),
+The campaigns opened before are listed in the dialog (#26): `crates/campaign/src/recent.rs`
+owns the recent-campaigns file, its dedup-and-cap rule and whether a remembered root still
+holds a manifest, and `crates/campaign_editor/src/dialog.rs` lists them and remembers one
+whenever a campaign opens.
+Remaining: create-by-name (#27), a folder picker (#28),
 close-and-switch (#29), sync from the editor (#30) and clone from the dialog (#31). Order is
 dependency order; the plan, with the two decisions it makes, is at
 `~/fun_repos/hobby-mimisbrunnr/notes/pen_and_paper_organisation/planning/campaign_management/plan-2026-09-12-campaign-directory-and-sync.md`.
@@ -232,6 +236,11 @@ my-campaign/
 ├── images/              imported backdrops, copied in so the directory stays portable
 └── notes/               zk notebook; .zk/templates/ holds place, person, faction, session
 ```
+
+The recent-campaigns list is the one file this tool keeps **outside** a campaign, at
+`$XDG_CONFIG_HOME/pnp/recent.ron` (or `$HOME/.config/pnp/recent.ron`), which is why it is
+`campaign::recent`'s and not `campaign::layout`'s — `layout` fixes the names *inside* a
+campaign root.
 
 The crate split is the one `watershed` uses and exists for the same reason: the model is
 testable without a window. **Anything that can live in `campaign` does.** A rule that
