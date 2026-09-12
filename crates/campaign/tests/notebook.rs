@@ -18,8 +18,8 @@ use std::process::{ExitStatus, Output};
 
 use campaign::feature::FeatureId;
 use campaign::notebook::{
-    self, NoteError, NoteKind, Notebook, Runner, edit_args, init_args, new_args, printed_path,
-    slug_of,
+    self, NoteError, NoteKind, Notebook, Runner, edit_args, excerpt_args, init_args, new_args,
+    printed_path, slug_of,
 };
 
 #[derive(Default)]
@@ -28,6 +28,8 @@ struct Recorder {
     stdout: String,
     fail_with: Option<String>,
     init_makes: Option<PathBuf>,
+    match_stdout: Option<String>,
+    match_fails_with: Option<String>,
 }
 
 impl Recorder {
@@ -60,7 +62,26 @@ impl Runner for Recorder {
             std::fs::write(root.join(".zk").join("config.toml"), "# zk's own default\n")
                 .expect("fake init config");
         }
+        let is_match = text.iter().any(|a| a.starts_with("--match="));
         self.calls.borrow_mut().push((dir.to_owned(), text));
+
+        if is_match {
+            if let Some(message) = &self.match_fails_with {
+                return Ok(Output {
+                    status: ExitStatus::from_raw(256),
+                    stdout: Vec::new(),
+                    stderr: message.clone().into_bytes(),
+                });
+            }
+            if let Some(stdout) = &self.match_stdout {
+                return Ok(Output {
+                    status: ExitStatus::from_raw(0),
+                    stdout: stdout.clone().into_bytes(),
+                    stderr: Vec::new(),
+                });
+            }
+        }
+
         match &self.fail_with {
             Some(message) => Ok(Output {
                 status: ExitStatus::from_raw(256),
@@ -726,5 +747,148 @@ fn a_directory_that_is_not_a_notebook_yet_is_asked_nothing() {
     assert_eq!(found, Vec::new());
     assert!(runner.args().is_empty());
 }
+
+// The match value has to obey the same rule `new_args` documents: a following word
+// beginning with a dash is read by `zk` as another option, so it is joined to its flag.
+#[test]
+fn every_excerpt_argument_is_joined_to_its_flag() {
+    let args: Vec<String> = excerpt_args("place/riverford-a1b2")
+        .iter()
+        .map(|a| a.to_string_lossy().into_owned())
+        .collect();
+    assert_eq!(
+        args,
+        vec![
+            "--no-input",
+            "list",
+            "--tag=place/riverford-a1b2",
+            "--match=\"place/riverford-a1b2\"",
+            "--match-strategy=fts",
+            "--format=json",
+            "--quiet",
+        ]
+    );
+}
+
+// Issue #19's acceptance case: the row shows the words around the tag, not the note's
+// heading, when the note's text differs from its lead.
+#[test]
+fn a_note_whose_text_carries_the_tag_shows_the_words_around_it() {
+    let campaign = tempfile::tempdir().expect("tempdir");
+    let notebook = Notebook::of(campaign.path());
+    std::fs::create_dir_all(notebook.root().join(".zk")).expect("fake notebook");
+    let runner = Recorder {
+        stdout: RECORDED_LIST.to_owned(),
+        match_stdout: Some(RECORDED_MATCH.to_owned()),
+        ..Recorder::default()
+    };
+
+    let found = notebook
+        .references(&runner, "place/riverford-a1b2", "riverford-a1b2")
+        .expect("references");
+
+    assert_eq!(found.len(), 1);
+    assert!(
+        found[0].excerpt.contains("Drowned Rat"),
+        "{}",
+        found[0].excerpt
+    );
+    assert_ne!(found[0].excerpt, found[0].lead);
+    assert_eq!(
+        runner.dirs(),
+        vec![notebook.root().to_owned(), notebook.root().to_owned()],
+        "both queries run from the notes directory"
+    );
+}
+
+// A tag given only in frontmatter is still found by the tag query; the match query
+// cannot see it, so the row falls back to `lead` rather than showing nothing.
+#[test]
+fn a_note_tagged_only_in_frontmatter_falls_back_to_its_lead() {
+    let campaign = tempfile::tempdir().expect("tempdir");
+    let notebook = Notebook::of(campaign.path());
+    std::fs::create_dir_all(notebook.root().join(".zk")).expect("fake notebook");
+    let runner = Recorder {
+        stdout: RECORDED_LIST.to_owned(),
+        match_stdout: Some("[]".to_owned()),
+        ..Recorder::default()
+    };
+
+    let found = notebook
+        .references(&runner, "place/riverford-a1b2", "riverford-a1b2")
+        .expect("references");
+
+    assert_eq!(found.len(), 1);
+    assert_eq!(found[0].excerpt, found[0].lead);
+}
+
+// A row is one line; a snippet crossing blank lines or a heading has to collapse before
+// it reaches a caption.
+#[test]
+fn a_snippet_spread_over_lines_becomes_one_line() {
+    let stdout = br##"[{"path":"x.md","snippets":["# A\n\n#place/x\n\n## B"]}]"##;
+    let excerpts = notebook::parse_excerpts(stdout).expect("parse");
+    assert_eq!(excerpts.get("x.md").unwrap(), "# A #place/x ## B");
+}
+
+// The second query only supplies excerpts for notes the first found; finding none means
+// there is nothing to ask about.
+#[test]
+fn a_tag_nothing_carries_asks_zk_once() {
+    let campaign = tempfile::tempdir().expect("tempdir");
+    let notebook = Notebook::of(campaign.path());
+    std::fs::create_dir_all(notebook.root().join(".zk")).expect("fake notebook");
+    let runner = Recorder::printing("");
+
+    notebook
+        .references(&runner, "place/riverford-a1b2", "riverford-a1b2")
+        .expect("references");
+
+    assert_eq!(runner.dirs().len(), 1);
+}
+
+// A refused match query fails the whole answer, the same rule every other verb here
+// follows, rather than silently falling back to `lead`.
+#[test]
+fn a_refused_excerpt_query_is_a_failure() {
+    let campaign = tempfile::tempdir().expect("tempdir");
+    let notebook = Notebook::of(campaign.path());
+    std::fs::create_dir_all(notebook.root().join(".zk")).expect("fake notebook");
+    let runner = Recorder {
+        stdout: RECORDED_LIST.to_owned(),
+        match_fails_with: Some("fts5: syntax error\n".to_owned()),
+        ..Recorder::default()
+    };
+
+    let error = notebook
+        .references(&runner, "place/riverford-a1b2", "riverford-a1b2")
+        .expect_err("refused");
+
+    assert!(
+        matches!(error, NoteError::ZkRefused { verb: "list", .. }),
+        "{error:?}"
+    );
+}
+
+// A tag carrying a `"` cannot be quoted for the FTS match, so the row keeps its lead
+// rather than running a query that would misparse.
+#[test]
+fn a_tag_that_cannot_be_quoted_is_not_matched() {
+    let stdout = r#"[{"path":"x.md","title":"X","lead":"the lead","modified":""}]"#;
+    let campaign = tempfile::tempdir().expect("tempdir");
+    let notebook = Notebook::of(campaign.path());
+    std::fs::create_dir_all(notebook.root().join(".zk")).expect("fake notebook");
+    let runner = Recorder::printing(stdout);
+
+    let found = notebook
+        .references(&runner, "place/a\"b", "riverford-a1b2")
+        .expect("references");
+
+    assert_eq!(found.len(), 1);
+    assert_eq!(found[0].excerpt, "the lead");
+    assert_eq!(runner.dirs().len(), 1, "no second process for an unquotable tag");
+}
+
+const RECORDED_MATCH: &str = r##"[{"filename":"session-3-c3d4.md","filenameStem":"session-3-c3d4","path":"session-3-c3d4.md","absPath":"/tmp/nb/session-3-c3d4.md","title":"Session 3","link":"[Session 3](session-3-c3d4)","lead":"#session/session-3-c3d4","body":"#session/session-3-c3d4\n\nThey set out from the capital at dawn, arguing about the weather and the map, Riverford\nsomewhere far ahead of them still. The road was long and the talk was longer, full of\ncomplaints about the cart's bad wheel and a merchant who had cheated them the week before.\n\nLate on the fourth day they finally reached #place/riverford-a1b2 and took rooms at the Drowned Rat. Nobody wanted to talk about what they had seen on the road that morning.","snippets":["…Late on the fourth day they finally reached #place/riverford-a1b2 and took rooms at the Drowned Rat. Nobody wanted to…"],"rawContent":"# Session 3\n\n#session/session-3-c3d4\n\nThey set out from the capital at dawn, arguing about the weather and the map, Riverford\nsomewhere far ahead of them still. The road was long and the talk was longer, full of\ncomplaints about the cart's bad wheel and a merchant who had cheated them the week before.\n\nLate on the fourth day they finally reached #place/riverford-a1b2 and took rooms at the Drowned Rat. Nobody wanted to talk about what they had seen on the road that morning.\n","wordCount":83,"tags":["session/session-3-c3d4","place/riverford-a1b2"],"metadata":{},"created":"2026-09-12T22:38:54.93431352Z","modified":"2026-09-12T22:38:54.936844372Z","checksum":"9061fb35e92e361b2b068bd7b6ee437e833db528081912ad4503e2724f2af5b7"}]"##;
 
 const RECORDED_LIST: &str = r##"[{"filename":"session-3-c3d4.md","filenameStem":"session-3-c3d4","path":"session-3-c3d4.md","absPath":"/tmp/nb/session-3-c3d4.md","title":"Session 3","link":"[Session 3](session-3-c3d4)","lead":"The party reached #place/riverford-a1b2.","body":"The party reached #place/riverford-a1b2.","snippets":["The party reached #place/riverford-a1b2."],"rawContent":"---\ntitle: Session 3\n---\n\nThe party reached #place/riverford-a1b2.\n","wordCount":6,"tags":["place/riverford-a1b2"],"metadata":{"title":"Session 3"},"created":"2026-09-09T15:12:39.494426868Z","modified":"2026-09-09T15:12:39.494426868Z","checksum":"abc"},{"filename":"riverford-a1b2.md","filenameStem":"riverford-a1b2","path":"riverford-a1b2.md","absPath":"/tmp/nb/riverford-a1b2.md","title":"Riverford","link":"[Riverford](riverford-a1b2)","lead":"#place/riverford-a1b2","body":"#place/riverford-a1b2\n\nA river town.","snippets":["#place/riverford-a1b2"],"rawContent":"---\ntitle: Riverford\n---\n\n#place/riverford-a1b2\n\nA river town.\n","wordCount":8,"tags":["place/riverford-a1b2"],"metadata":{"title":"Riverford"},"created":"2026-09-09T15:12:39.494047205Z","modified":"2026-09-09T15:12:39.494047205Z","checksum":"def"}]"##;

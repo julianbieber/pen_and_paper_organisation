@@ -19,6 +19,9 @@
 # The slug and both filenames are in this scenario's own `observe world` replies. The
 # session note must then be listed under `references` with no restart and no Refresh
 # press — that is the watcher, and it is the whole of criterion 4.
+#
+# That row's `excerpt` must be the appended sentence — "The party arrived at
+# #place/<slug> in the rain." — not `# Session 1`, the note's heading (issue #19).
 
 ping
 fixed-delta 0.016
