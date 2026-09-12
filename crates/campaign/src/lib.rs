@@ -13,7 +13,7 @@ pub mod brush;
 pub mod browse;
 /// Opening and creating a campaign directory, and why either failed.
 pub mod campaign;
-/// A world under authorship: its undo and redo stacks, and whether it is unsaved.
+/// A value under authorship: its undo and redo stacks, and whether it is unsaved.
 pub mod document;
 /// A shape part-way through being drawn, and the feature it becomes.
 pub mod draft;
@@ -63,12 +63,12 @@ pub use atlas::{AtlasError, AtlasMeta};
 pub use browse::{BrowseError, Listing, Subdirectory};
 pub use brush::{Brush, TileChange};
 pub use campaign::{Campaign, CampaignError, Created};
-pub use document::{Document, UNDO_LIMIT};
+pub use document::{Authored, Document, UNDO_LIMIT};
 pub use draft::{Draft, DraftShape};
 pub use edit::{Edit, EditError};
 pub use feature::{CellPoint, Feature, FeatureId, FeatureKind, Geometry, Rank};
 pub use gesture::Orphans;
-pub use grid::{DEFAULT_GRID_CELLS, DEFAULT_METRES_PER_CELL, GridProblem, MAX_GRID_CELLS, TileGrid};
+pub use grid::{DEFAULT_GRID_CELLS, DEFAULT_METRES_PER_CELL, GridProblem, MAX_GRID_CELLS, TileGrid, TileVocabulary};
 pub use image::{ImageBackdrop, ImageProblem, Imported, ImportError};
 pub use tiles::DungeonTile;
 pub use pick::{Hit, Landing, Snap};

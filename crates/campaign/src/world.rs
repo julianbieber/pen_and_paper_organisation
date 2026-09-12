@@ -18,6 +18,7 @@ use serde::{Deserialize, Serialize};
 use crate::feature::{Feature, FeatureId, dungeon_name_refusal, note_path_refusal, reveal_refusal};
 use crate::grid::{GridProblem, TileGrid};
 use crate::image::{ImageBackdrop, ImageProblem};
+use crate::tiles::DungeonTile;
 
 /// The world document format this build writes, and the only one it reads.
 ///
@@ -213,7 +214,7 @@ pub struct World {
     /// written before dungeons existed still reads and one written now still opens in a
     /// build that has never heard of a grid.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    grid: Option<TileGrid>,
+    grid: Option<TileGrid<DungeonTile>>,
     /// The picture this document is drawn over, when the GM has imported one.
     ///
     /// Independent of the grid: a dungeon may be drawn on its grid with a scan laid over
@@ -373,7 +374,7 @@ impl World {
     ///
     /// What a dungeon is created as. The world map is [`World::default`], which carries
     /// no grid because its backdrop is the campaign's terrain.
-    pub fn on_a_grid(grid: TileGrid) -> Self {
+    pub fn on_a_grid(grid: TileGrid<DungeonTile>) -> Self {
         Self {
             grid: Some(grid),
             ..Self::default()
@@ -381,7 +382,7 @@ impl World {
     }
 
     /// The grid this document is drawn on, or `None` when its backdrop is the terrain.
-    pub fn grid(&self) -> Option<&TileGrid> {
+    pub fn grid(&self) -> Option<&TileGrid<DungeonTile>> {
         self.grid.as_ref()
     }
 
@@ -463,7 +464,7 @@ impl World {
         &mut self.features
     }
 
-    pub(crate) fn grid_mut(&mut self) -> Option<&mut TileGrid> {
+    pub(crate) fn grid_mut(&mut self) -> Option<&mut TileGrid<DungeonTile>> {
         self.grid.as_mut()
     }
 

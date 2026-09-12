@@ -79,9 +79,12 @@ four brushes through a second hand-drawn strip, `assets/combat_tiles.png`, whose
 `CombatTile` fixes, and either discarded or saved to `combat/<slug>.ron` and opened again
 from the list. Tokens are named, sized 1–4 cells and otherwise alike, and are **session
 state** on the ruler's model: no `Edit`, no undo, never saved, kept while the map is parked,
-dropped on campaign close. #42 is the one enabling task — the grid, the brushes and the
-paint edit become generic over their tile vocabulary — and #43 consumes it. Nothing about
-dungeons changes for the GM, and the dungeon's generated strip stays generated. The plan,
+dropped on campaign close. `TileGrid<T>`, `TileChange<T>` and `brush::cells` are generic
+over `grid::TileVocabulary` — a default tile, a strip index, a serde name, and the room
+brush's wall and floor — with the paint edit's rules in `edit::paint`, `Document<D>` generic
+over `document::Authored`, and `AtlasMeta::read` taking the tile count it checks (#42); #43
+consumes it. Nothing about dungeons changes for the GM, and the dungeon's generated strip
+stays generated. The plan,
 with its settled decisions and the assumptions it makes on its own, is at
 `~/fun_repos/hobby-mimisbrunnr/notes/pen_and_paper_organisation/planning/combat_map/plan-2026-09-13-combat-map.md`.
 

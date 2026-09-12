@@ -13,6 +13,7 @@ use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
 use bevy::sprite_render::{TileData, TilemapChunk, TilemapChunkTileData};
 use campaign::brush::TileChange;
+use campaign::grid::TileVocabulary;
 use campaign::tiles::{self, CHUNK_CELLS, ChunkScratch, ChunkTiles, DungeonTile, MapTile};
 
 use crate::OpenCampaign;
@@ -265,7 +266,7 @@ pub fn repaint_grid_chunks(
 /// Cleared by [`repaint_grid_chunks`] once it has acted, so a stroke redraws once rather
 /// than every frame until the next one.
 #[derive(Resource, Debug, Default)]
-pub struct PaintedCells(pub Vec<TileChange>);
+pub struct PaintedCells(pub Vec<TileChange<DungeonTile>>);
 
 /// Whether a stroke is waiting to be drawn.
 pub fn cells_were_painted(changes: Res<PaintedCells>) -> bool {
@@ -307,7 +308,7 @@ pub fn refill_chunks(
     }
 }
 
-fn to_grid_data(tiles: &[Option<DungeonTile>]) -> Vec<Option<TileData>> {
+fn to_grid_data<T: TileVocabulary>(tiles: &[Option<T>]) -> Vec<Option<TileData>> {
     tiles
         .iter()
         .map(|tile| {

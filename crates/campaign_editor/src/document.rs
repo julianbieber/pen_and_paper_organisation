@@ -311,6 +311,7 @@ mod tests {
     use campaign::edit::Edit;
     use campaign::feature::{CellPoint, Feature, FeatureKind, Geometry};
     use campaign::grid::{DEFAULT_GRID_CELLS, DEFAULT_METRES_PER_CELL, TileGrid};
+    use campaign::tiles::DungeonTile;
     use campaign::world::World;
 
     use super::*;
@@ -334,7 +335,7 @@ mod tests {
         document.world().clone()
     }
 
-    fn default_grid() -> TileGrid {
+    fn default_grid() -> TileGrid<DungeonTile> {
         TileGrid::new(DEFAULT_GRID_CELLS, DEFAULT_GRID_CELLS, DEFAULT_METRES_PER_CELL)
             .expect("the default extent and scale are legal by construction")
     }

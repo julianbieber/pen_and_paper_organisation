@@ -43,7 +43,7 @@ fn a_sidecar_from_the_art_tool_loads_with_its_extra_blocks_ignored() {
     let tmp = tempfile::tempdir().expect("temp dir");
     let base = write_sidecar(tmp.path(), &good_json(u32::from(TILE_COUNT)));
 
-    let meta = AtlasMeta::read(&base).expect("a well-formed sidecar loads");
+    let meta = AtlasMeta::read(&base, TILE_COUNT).expect("a well-formed sidecar loads");
     assert_eq!(meta.tile_size, 16);
     assert_eq!(meta.width_in_tiles, u32::from(TILE_COUNT));
     assert_eq!(meta.height_in_tiles, 1);
@@ -56,7 +56,7 @@ fn a_sidecar_from_the_art_tool_loads_with_its_extra_blocks_ignored() {
 fn a_longer_strip_is_accepted() {
     let tmp = tempfile::tempdir().expect("temp dir");
     let base = write_sidecar(tmp.path(), &good_json(u32::from(TILE_COUNT) + 8));
-    assert!(AtlasMeta::read(&base).is_ok());
+    assert!(AtlasMeta::read(&base, TILE_COUNT).is_ok());
 }
 
 // Two different things to fix — write the file, or fix the file — so they must not
@@ -66,13 +66,13 @@ fn a_missing_sidecar_is_told_apart_from_a_malformed_one() {
     let tmp = tempfile::tempdir().expect("temp dir");
     let missing = tmp.path().join("terrain_tiles");
     assert!(matches!(
-        AtlasMeta::read(&missing),
+        AtlasMeta::read(&missing, TILE_COUNT),
         Err(AtlasError::SidecarUnreadable { .. })
     ));
 
     let base = write_sidecar(tmp.path(), "{ this is not json");
     assert!(matches!(
-        AtlasMeta::read(&base),
+        AtlasMeta::read(&base, TILE_COUNT),
         Err(AtlasError::SidecarMalformed { .. })
     ));
 }
@@ -87,7 +87,7 @@ fn a_tileset_that_is_not_a_single_row_is_refused() {
         r#"{"version":"1.0","tile_size":16,"width_in_tiles":24,"height_in_tiles":2}"#,
     );
     assert!(matches!(
-        AtlasMeta::read(&base),
+        AtlasMeta::read(&base, TILE_COUNT),
         Err(AtlasError::NotAStrip { rows: 2, .. })
     ));
 }
@@ -102,14 +102,14 @@ fn an_atlas_with_no_tiles_or_no_tile_size_is_refused() {
         tmp.path(),
         r#"{"version":"1.0","tile_size":16,"width_in_tiles":0,"height_in_tiles":1}"#,
     );
-    assert!(matches!(AtlasMeta::read(&empty), Err(AtlasError::NoTiles(_))));
+    assert!(matches!(AtlasMeta::read(&empty, TILE_COUNT), Err(AtlasError::NoTiles(_))));
 
     let sizeless = write_sidecar(
         tmp.path(),
         r#"{"version":"1.0","tile_size":0,"width_in_tiles":24,"height_in_tiles":1}"#,
     );
     assert!(matches!(
-        AtlasMeta::read(&sizeless),
+        AtlasMeta::read(&sizeless, TILE_COUNT),
         Err(AtlasError::ZeroTileSize(_))
     ));
 }
@@ -121,7 +121,7 @@ fn a_strip_shorter_than_the_map_draws_is_refused() {
     let tmp = tempfile::tempdir().expect("temp dir");
     let base = write_sidecar(tmp.path(), &good_json(u32::from(TILE_COUNT) - 1));
     assert!(matches!(
-        AtlasMeta::read(&base),
+        AtlasMeta::read(&base, TILE_COUNT),
         Err(AtlasError::TooFewTiles { .. })
     ));
 }
@@ -132,7 +132,7 @@ fn a_strip_shorter_than_the_map_draws_is_refused() {
 fn an_image_that_is_not_the_shape_the_sidecar_promised_is_refused() {
     let tmp = tempfile::tempdir().expect("temp dir");
     let base = write_sidecar(tmp.path(), &good_json(u32::from(TILE_COUNT)));
-    let meta = AtlasMeta::read(&base).expect("sidecar");
+    let meta = AtlasMeta::read(&base, TILE_COUNT).expect("sidecar");
     let png = campaign::atlas::image_path(&base);
 
     assert!(meta.check_image(&png, 16 * u32::from(TILE_COUNT), 16).is_ok());
@@ -151,6 +151,23 @@ fn an_unknown_version_still_loads_and_says_so() {
         tmp.path(),
         r#"{"version":"9.9","tile_size":16,"width_in_tiles":24,"height_in_tiles":1}"#,
     );
-    let meta = AtlasMeta::read(&base).expect("an unknown version is not a refusal");
+    let meta = AtlasMeta::read(&base, TILE_COUNT).expect("an unknown version is not a refusal");
     assert!(!meta.is_known_version());
+}
+
+// A second strip is checked against its own length, not the terrain's.
+#[test]
+fn a_strip_is_refused_only_below_the_count_it_was_read_against() {
+    let tmp = tempfile::tempdir().expect("a temporary directory");
+    let base = write_sidecar(tmp.path(), &good_json(12));
+
+    assert!(AtlasMeta::read(&base, 12).is_ok());
+    assert!(matches!(
+        AtlasMeta::read(&base, 13),
+        Err(AtlasError::TooFewTiles {
+            found: 12,
+            want: 13,
+            ..
+        })
+    ));
 }

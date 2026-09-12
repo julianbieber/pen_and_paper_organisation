@@ -11,7 +11,7 @@
 use serde::{Deserialize, Serialize};
 use watershed::{FieldRole, Terrain};
 
-use crate::grid::TileGrid;
+use crate::grid::{TileGrid, TileVocabulary};
 
 /// Bands the height range is quantised into.
 pub const LAND_BANDS: u8 = 6;
@@ -117,6 +117,15 @@ pub enum DungeonTile {
     StairsDown,
     Water,
     Rubble,
+}
+
+impl TileVocabulary for DungeonTile {
+    const WALL: Self = Self::Wall;
+    const FLOOR: Self = Self::Floor;
+
+    fn index(self) -> u16 {
+        DungeonTile::index(self)
+    }
 }
 
 impl DungeonTile {
@@ -562,18 +571,22 @@ pub fn accumulation_ceiling(terrain: &Terrain) -> Option<f32> {
     Some(ceiling)
 }
 
-/// The dungeon tiles of the chunk at `chunk_x, chunk_y`, in tilemap order.
+/// The grid tiles of the chunk at `chunk_x, chunk_y`, in tilemap order.
 ///
 /// The grid counterpart of [`chunk_tiles`], and it makes the same two promises: the row
 /// flip happens here, and a cell outside the grid comes back `None` rather than as an
 /// error — so a grid whose extent is not a whole number of chunks has a ragged edge, and
-/// a chunk entirely off the grid draws nothing. `None` and
-/// [`DungeonTile::Empty`] stay different answers: unexcavated rock is a tile the GM can
-/// paint over, and off the grid is not.
+/// a chunk entirely off the grid draws nothing. `None` and the vocabulary's [`Default`]
+/// tile stay different answers: unexcavated rock is a tile the GM can paint over, and off
+/// the grid is not.
 ///
 /// Chunk coordinates are signed, so every cell is bounded through
 /// [`TileGrid::get`](crate::grid::TileGrid::get), which checks each axis on its own.
-pub fn grid_chunk_tiles(grid: &TileGrid, chunk_x: i32, chunk_y: i32) -> Vec<Option<DungeonTile>> {
+pub fn grid_chunk_tiles<T: TileVocabulary>(
+    grid: &TileGrid<T>,
+    chunk_x: i32,
+    chunk_y: i32,
+) -> Vec<Option<T>> {
     let side = i64::from(CHUNK_CELLS);
     let origin_x = i64::from(chunk_x) * side;
     let origin_y = i64::from(chunk_y) * side;
