@@ -40,6 +40,9 @@ pub mod measure;
 pub mod notebook;
 /// What a position in cells lands on, what a rectangle encloses, and where a vertex snaps.
 pub mod pick;
+/// The campaigns opened before, where that list is kept, and whether one of them is
+/// still there.
+pub mod recent;
 /// What makes a campaign directory a git repository, and the one place this workspace
 /// runs git.
 pub mod repo;
@@ -64,6 +67,7 @@ pub use grid::{DEFAULT_GRID_CELLS, DEFAULT_METRES_PER_CELL, GridProblem, MAX_GRI
 pub use image::{ImageBackdrop, ImageProblem, Imported, ImportError};
 pub use tiles::DungeonTile;
 pub use pick::{Hit, Landing, Snap};
+pub use recent::{Listed, MAX_RECENT, Recent, RecentError, Recents};
 pub use slug::dungeon_name;
 pub use notebook::{NewNote, NoteError, NoteKind, Notebook, Runner, SystemRunner};
 pub use repo::{GitError, GitRunner, Repo, SystemGit};
