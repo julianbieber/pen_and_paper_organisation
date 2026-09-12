@@ -33,6 +33,7 @@ use crate::map::scale::ScaleFields;
 use crate::notes::references::References;
 use crate::notes::watch::NotesWatch;
 use crate::notes::{NoteJob, NoteTitle};
+use crate::sync::{SyncFields, SyncJob};
 use crate::{CampaignChrome, EditorSet, OpenCampaign, StatusMessage};
 
 /// What the GM has asked of the open campaign, written by the Close button and the
@@ -171,6 +172,8 @@ fn close_campaign(world: &mut World) {
     world.insert_resource(References::default());
     world.insert_resource(RecentList::default());
     world.insert_resource(CampaignClose::default());
+    world.insert_resource(SyncJob::default());
+    world.insert_resource(SyncFields::default());
 
     if let Some(mut active) = world.get_resource_mut::<ActiveTool>() {
         active.leave_a_grid_if(true);
@@ -336,6 +339,7 @@ mod tests {
         selection.features.push(FeatureId(1));
         app.insert_resource(selection);
         app.insert_resource(CampaignClose::Confirmed);
+        app.insert_resource(SyncJob::assume_read_origin());
         let chrome = app.world_mut().spawn(CampaignChrome).id();
         let chunk = app.world_mut().spawn(ChunkCoord { x: 0, y: 0 }).id();
 
@@ -349,5 +353,6 @@ mod tests {
         assert!(app.world().get_entity(chunk).is_err());
         assert!(app.world().resource::<Selection>().features.is_empty());
         assert_eq!(*app.world().resource::<CampaignClose>(), CampaignClose::Nothing);
+        assert!(!app.world().resource::<SyncJob>().read_origin, "the next campaign must ask again");
     }
 }

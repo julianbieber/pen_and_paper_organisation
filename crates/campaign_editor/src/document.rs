@@ -174,6 +174,83 @@ impl WorldDoc {
         }
         Ok(())
     }
+
+    /// Write the document on screen, when it is dirty, and every parked one that is.
+    ///
+    /// Shared by the unsaved-close prompt and a sync, both of which write everything
+    /// open rather than only what is on screen. Written only where dirty, matching
+    /// [`WorldDoc::save_parked`] — a sync that wrote a clean document anyway would
+    /// materialize a `world.ron` that was legitimately absent and commit it as though
+    /// something had changed.
+    pub fn save_everything(&mut self) -> Result<(), WorldError> {
+        if self.document.is_dirty() {
+            self.save()?;
+        }
+        self.save_parked()
+    }
+
+    /// Replace every document `touched` names with what is now on disk, clearing its undo
+    /// history — an `Edit`'s inverse against a document a pull just replaced means
+    /// nothing.
+    ///
+    /// A document whose file cannot be read, or whose reload would change whether it
+    /// carries a grid — a dungeon must still carry one, the world map must not grow one —
+    /// is refused: what is on screen stays, and the refusal is named on
+    /// [`Reloaded::refused`] rather than silently discarded. A parked document that is
+    /// reloaded keeps its camera bookmark.
+    pub fn reload_from_disk(&mut self, touched: impl Fn(&std::path::Path) -> bool) -> Reloaded {
+        let mut reloaded = Reloaded::default();
+
+        if touched(&self.path) {
+            match Self::reload_one(&self.path, &self.document) {
+                Ok(fresh) => {
+                    self.areas = Areas::of(fresh.world());
+                    self.document = fresh;
+                    reloaded.on_screen = true;
+                    reloaded.paths.push(self.path.clone());
+                }
+                Err(reason) => reloaded.refused.push(reason),
+            }
+        }
+
+        for (path, parked) in self.parked.iter_mut() {
+            if !touched(path) {
+                continue;
+            }
+            match Self::reload_one(path, &parked.document) {
+                Ok(fresh) => {
+                    parked.areas = Areas::of(fresh.world());
+                    parked.document = fresh;
+                    reloaded.paths.push(path.clone());
+                }
+                Err(reason) => reloaded.refused.push(reason),
+            }
+        }
+
+        reloaded
+    }
+
+    fn reload_one(path: &std::path::Path, current: &Document) -> Result<Document, String> {
+        let fresh = Document::load(path).map_err(|error| error.to_string())?;
+        if fresh.world().grid().is_some() != current.world().grid().is_some() {
+            return Err(format!(
+                "`{}` changed whether it carries a grid, so the reload was refused",
+                path.display()
+            ));
+        }
+        Ok(fresh)
+    }
+}
+
+/// What [`WorldDoc::reload_from_disk`] did.
+#[derive(Debug, Default, Clone)]
+pub struct Reloaded {
+    /// Whether the document on screen was replaced.
+    pub on_screen: bool,
+    /// Every path — on screen or parked — that was replaced.
+    pub paths: Vec<PathBuf>,
+    /// Why a touched document was left as it was, one line per refusal.
+    pub refused: Vec<String>,
 }
 
 /// Apply `edit` to the document on screen, reporting a refusal rather than swallowing it.
@@ -226,5 +303,175 @@ fn moves_geometry(edit: &Edit) -> bool {
         | Edit::PlaceImage { .. }
         | Edit::SetImageOpacity { .. } => false,
         Edit::Batch(edits) => edits.iter().any(moves_geometry),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use campaign::edit::Edit;
+    use campaign::feature::{CellPoint, Feature, FeatureKind, Geometry};
+    use campaign::grid::{DEFAULT_GRID_CELLS, DEFAULT_METRES_PER_CELL, TileGrid};
+    use campaign::world::World;
+
+    use super::*;
+
+    fn point_feature(label: &str) -> Feature {
+        Feature {
+            label: label.to_owned(),
+            ..Feature::plain(FeatureKind::Poi, Geometry::Point(CellPoint::new(1.0, 1.0)))
+        }
+    }
+
+    fn world_with_one_feature(label: &str) -> World {
+        let mut document = Document::new(World::default());
+        let id = document.fresh_id();
+        document
+            .apply(Edit::Add {
+                id,
+                feature: point_feature(label),
+            })
+            .expect("apply");
+        document.world().clone()
+    }
+
+    fn default_grid() -> TileGrid {
+        TileGrid::new(DEFAULT_GRID_CELLS, DEFAULT_GRID_CELLS, DEFAULT_METRES_PER_CELL)
+            .expect("the default extent and scale are legal by construction")
+    }
+
+    // A sync must not materialize a `world.ron` that was legitimately absent just
+    // because it saved everything open — an absent document is an empty world, and
+    // saving a clean one anyway would turn that into a spurious commit.
+    #[test]
+    fn save_everything_writes_nothing_for_a_clean_on_screen_document() {
+        let tmp = tempfile::tempdir().expect("temp dir");
+        let path = tmp.path().join("world.ron");
+        assert!(!path.exists());
+
+        let mut doc = WorldDoc::world_map(Document::new(World::default()), path.clone());
+        assert!(!doc.document.is_dirty());
+
+        doc.save_everything().expect("save everything");
+
+        assert!(!path.exists(), "a clean document must not be written");
+    }
+
+    // The whole point of a reload: a document a pull replaced comes back with the new
+    // features, and its undo history is gone — an inverse against a document that is no
+    // longer there means nothing.
+    #[test]
+    fn a_reloaded_document_carries_the_new_features_with_no_history() {
+        let tmp = tempfile::tempdir().expect("temp dir");
+        let path = tmp.path().join("world.ron");
+        World::default().save(&path).expect("write");
+
+        let mut doc = WorldDoc::world_map(Document::load(&path).expect("load"), path.clone());
+        let id = doc.document.fresh_id();
+        doc.document
+            .apply(Edit::Add {
+                id,
+                feature: point_feature("before"),
+            })
+            .expect("apply");
+        assert!(doc.document.is_dirty());
+        assert_eq!(doc.document.undo_depth(), 1);
+
+        world_with_one_feature("after").save(&path).expect("write");
+
+        let reloaded = doc.reload_from_disk(|_| true);
+        assert!(reloaded.on_screen);
+        assert!(reloaded.refused.is_empty());
+        assert!(!doc.document.is_dirty());
+        assert_eq!(doc.document.undo_depth(), 0);
+        let labels: Vec<&str> = doc
+            .document
+            .world()
+            .features()
+            .map(|(_, feature)| feature.label.as_str())
+            .collect();
+        assert_eq!(labels, vec!["after"]);
+    }
+
+    // A parked document is reloaded too, and keeps its camera bookmark.
+    #[test]
+    fn a_parked_document_touched_by_the_reload_is_replaced() {
+        let tmp = tempfile::tempdir().expect("temp dir");
+        let world_path = tmp.path().join("world.ron");
+        let dungeon_path = tmp.path().join("crypt.ron");
+        World::default().save(&world_path).expect("write world");
+        Document::new(World::on_a_grid(default_grid()))
+            .save(&dungeon_path)
+            .expect("write dungeon");
+
+        let mut doc = WorldDoc::world_map(Document::load(&world_path).expect("load"), world_path.clone());
+        let bookmark = CameraBookmark {
+            translation: Vec2::new(1.0, 2.0),
+            scale: 3.0,
+        };
+        doc.switch_to(dungeon_path.clone(), None, Some(bookmark), || {
+            Document::load(&dungeon_path).expect("load dungeon")
+        });
+
+        world_with_one_feature("arrived").save(&world_path).expect("write");
+
+        let reloaded = doc.reload_from_disk(|path| path == world_path);
+        assert!(!reloaded.on_screen, "the world map is parked, not on screen");
+        assert_eq!(reloaded.paths, vec![world_path.clone()]);
+        assert!(reloaded.refused.is_empty());
+
+        let restore = doc.switch_to(world_path.clone(), None, None, || {
+            unreachable!("the world map is parked")
+        });
+        assert_eq!(restore, Some(bookmark));
+        let labels: Vec<&str> = doc
+            .document
+            .world()
+            .features()
+            .map(|(_, feature)| feature.label.as_str())
+            .collect();
+        assert_eq!(labels, vec!["arrived"]);
+        assert_eq!(doc.document.undo_depth(), 0);
+    }
+
+    // A document `touched` says nothing about keeps its history — a reload is not asked
+    // for by name alone.
+    #[test]
+    fn an_untouched_document_keeps_its_history() {
+        let tmp = tempfile::tempdir().expect("temp dir");
+        let path = tmp.path().join("world.ron");
+        World::default().save(&path).expect("write");
+
+        let mut doc = WorldDoc::world_map(Document::load(&path).expect("load"), path.clone());
+        let id = doc.document.fresh_id();
+        doc.document
+            .apply(Edit::Add {
+                id,
+                feature: point_feature("mine"),
+            })
+            .expect("apply");
+
+        let reloaded = doc.reload_from_disk(|_| false);
+        assert!(!reloaded.on_screen);
+        assert!(reloaded.paths.is_empty());
+        assert_eq!(doc.document.undo_depth(), 1);
+    }
+
+    // A dungeon whose file lost its grid is refused rather than swapped in — the world
+    // map must not grow one and a dungeon must not lose it.
+    #[test]
+    fn a_dungeon_whose_file_loses_its_grid_is_refused() {
+        let tmp = tempfile::tempdir().expect("temp dir");
+        let path = tmp.path().join("crypt.ron");
+        Document::new(World::on_a_grid(default_grid()))
+            .save(&path)
+            .expect("write dungeon");
+
+        let mut doc = WorldDoc::world_map(Document::load(&path).expect("load"), path.clone());
+        World::default().save(&path).expect("overwrite without a grid");
+
+        let reloaded = doc.reload_from_disk(|_| true);
+        assert!(!reloaded.on_screen);
+        assert_eq!(reloaded.refused.len(), 1);
+        assert!(doc.document.world().grid().is_some(), "the in-memory document was kept");
     }
 }

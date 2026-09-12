@@ -46,6 +46,7 @@ use crate::notes::references::{Answer, References};
 use crate::notes::watch::NotesWatch;
 use crate::notes::{self, NoteJob, ZkState};
 use crate::session::CampaignClose;
+use crate::sync;
 use crate::{OpenCampaign, StatusMessage};
 
 /// How far a command has got.
@@ -186,6 +187,21 @@ pub(super) enum Command {
         /// frame later, so the reply never races the teardown.
         started: bool,
     },
+    /// Saves everything open and syncs the campaign with its remote, exactly as the Sync
+    /// button does, and waits for it to land.
+    Sync {
+        /// Whether [`crate::sync::start_sync`] has been asked. Consumed a frame later, so
+        /// the reply never races the git process.
+        started: bool,
+    },
+    /// Sets the campaign's remote, exactly as the Set remote button does, and waits for
+    /// it to land.
+    Remote {
+        url: String,
+        /// Whether [`crate::sync::start_set_remote`] has been asked. Consumed a frame
+        /// later, so the reply never races the git process.
+        started: bool,
+    },
     /// Asks the editor to exit.
     Quit,
 }
@@ -257,6 +273,8 @@ impl Command {
             Self::FixedDelta(_) => "fixed-delta",
             Self::OpenCampaign { .. } => "open",
             Self::CloseCampaign { .. } => "close",
+            Self::Sync { .. } => "sync",
+            Self::Remote { .. } => "remote",
             Self::Quit => "quit",
         }
     }
@@ -436,6 +454,14 @@ impl Command {
                 started: false,
             }),
             "close" => Ok(Self::CloseCampaign { started: false }),
+            "sync" => Ok(Self::Sync { started: false }),
+            "remote" => {
+                let url = rest.join(" ");
+                if url.trim().is_empty() {
+                    return Err("remote needs a URL".to_owned());
+                }
+                Ok(Self::Remote { url, started: false })
+            }
             "quit" => Ok(Self::Quit),
             other => Err(format!("there is no command called {other}")),
         }
@@ -848,6 +874,81 @@ impl Command {
                     return Poll::Done(json!({ "closed": false, "asked": false }));
                 }
                 Poll::Running
+            }
+
+            Self::Sync { started } => {
+                if !*started {
+                    if world.get_resource::<OpenCampaign>().is_none() {
+                        return Poll::Failed("no campaign is open".into());
+                    }
+                    if world.get_resource::<WorldDoc>().is_none() {
+                        return Poll::Failed("no document is open".into());
+                    }
+                    *started = true;
+                    world.resource_scope(|world, mut job: Mut<sync::SyncJob>| {
+                        world.resource_scope(|world, mut doc: Mut<WorldDoc>| {
+                            world.resource_scope(|world, mut status: Mut<StatusMessage>| {
+                                let campaign = world.resource::<OpenCampaign>();
+                                let notes = world.resource::<NoteJob>();
+                                let asking = world.resource::<Asking>();
+                                sync::start_sync(&mut job, &mut doc, campaign, notes, asking, &mut status);
+                            });
+                        });
+                    });
+                    if !world.resource::<sync::SyncJob>().busy() {
+                        return Poll::Failed(world.resource::<StatusMessage>().0.clone());
+                    }
+                    return Poll::Running;
+                }
+
+                if world.resource::<sync::SyncJob>().busy() {
+                    return Poll::Running;
+                }
+                let Some(report) = world.resource::<sync::SyncJob>().last.clone() else {
+                    return Poll::Failed("the sync landed with nothing to report".into());
+                };
+                if report.remote == "failed" {
+                    return Poll::Failed(report.message);
+                }
+                Poll::Done(json!({
+                    "committed": report.committed,
+                    "remote": report.remote,
+                    "changed": report.changed,
+                    "reloaded": report.reloaded,
+                    "status": report.message,
+                }))
+            }
+
+            Self::Remote { url, started } => {
+                if !*started {
+                    if world.get_resource::<OpenCampaign>().is_none() {
+                        return Poll::Failed("no campaign is open".into());
+                    }
+                    *started = true;
+                    let typed = url.clone();
+                    world.resource_scope(|world, mut job: Mut<sync::SyncJob>| {
+                        world.resource_scope(|world, mut fields: Mut<sync::SyncFields>| {
+                            world.resource_scope(|world, mut status: Mut<StatusMessage>| {
+                                fields.remote = typed;
+                                let campaign = world.resource::<OpenCampaign>();
+                                sync::start_set_remote(&mut job, campaign, &fields, &mut status);
+                            });
+                        });
+                    });
+                    if !world.resource::<sync::SyncJob>().busy() {
+                        return Poll::Failed(world.resource::<StatusMessage>().0.clone());
+                    }
+                    return Poll::Running;
+                }
+
+                if world.resource::<sync::SyncJob>().busy() {
+                    return Poll::Running;
+                }
+                if world.resource::<sync::SyncJob>().origin.as_deref() == Some(url.as_str()) {
+                    Poll::Done(json!({ "origin": url.clone() }))
+                } else {
+                    Poll::Failed(world.resource::<StatusMessage>().0.clone())
+                }
             }
 
             Self::Quit => {
@@ -1295,6 +1396,8 @@ mod tests {
             ("fixed-delta 0.016", "fixed-delta"),
             ("open /tmp/a", "open"),
             ("close", "close"),
+            ("sync", "sync"),
+            ("remote git@example.invalid:campaign.git", "remote"),
             ("quit", "quit"),
         ] {
             let command = Command::parse(line).unwrap_or_else(|error| panic!("{line}: {error}"));
@@ -1309,7 +1412,7 @@ mod tests {
     fn a_line_that_is_not_a_command_is_refused_by_name() {
         for line in [
             "", "fly", "tool wobble", "kind wobble", "at 1", "at x y", "key wobble", "note",
-            "note wobble", "note place Riverford", "label",
+            "note wobble", "note place Riverford", "label", "remote",
         ] {
             assert!(Command::parse(line).is_err(), "{line:?} should be refused");
         }

@@ -197,7 +197,9 @@ fn default_grid() -> TileGrid {
     .expect("the default extent and scale are legal by construction")
 }
 
-fn bookmark_of(transform: &Transform, projection: &Projection) -> Option<CameraBookmark> {
+/// Where the camera is looking right now, as a bookmark to restore later — `None` when
+/// the projection is not orthographic, which the map camera's never is in practice.
+pub(crate) fn bookmark_of(transform: &Transform, projection: &Projection) -> Option<CameraBookmark> {
     let Projection::Orthographic(orthographic) = projection else {
         return None;
     };

@@ -100,7 +100,14 @@ impl Plugin for FeaturesPlugin {
                         .run_if(resource_exists::<WorldDoc>.and_then(
                             crate::notes::a_note_job_is_running,
                         )),
-                    crate::notes::note_job_settled,
+                    (
+                        crate::notes::note_job_settled,
+                        crate::sync::land_git_job.run_if(
+                            resource_exists::<WorldDoc>
+                                .and_then(resource_exists::<Backdrop>)
+                                .and_then(crate::sync::a_git_job_is_running),
+                        ),
+                    ),
                     tool::sync_tool_strip.run_if(resource_exists_and_changed::<tool::ActiveTool>),
                     (
                         draw::draw_features.run_if(a_drawing_tool_is_active),
@@ -202,11 +209,13 @@ fn authoring_is_live(
     asking: Option<Res<prompt::Asking>>,
     focus: Res<InputFocus>,
     fields: Query<(), With<EditableText>>,
+    sync: Option<Res<crate::sync::SyncJob>>,
 ) -> bool {
     doc.is_some()
         && terrain.is_some()
         && asking.is_none_or(|asking| asking.question.is_none())
         && focus.get().is_none_or(|entity| !fields.contains(entity))
+        && sync.is_none_or(|job| !job.busy())
 }
 
 fn a_drawing_tool_is_active(active: Res<tool::ActiveTool>) -> bool {
