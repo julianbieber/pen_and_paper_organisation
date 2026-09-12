@@ -58,8 +58,11 @@ another opened without quitting `pnp` (#29): *Close campaign* and `pnp-ctl open`
 both go through the unsaved guard in `features/prompt.rs`, `crates/campaign_editor/src/session.rs`
 holds the one teardown list every resource and root a campaign brings is named on, and the
 window title comes from `campaign::title`.
-Remaining:
-sync from the editor (#30) and clone from the dialog (#31). Order is
+A campaign syncs with its remote in one action (#30): `campaign::repo::Repo::sync` is the
+whole git sequence, `crates/campaign_editor/src/sync.rs` is the one job slot, the panel
+and the reload, and `WorldDoc::reload_from_disk` in `crates/campaign_editor/src/document.rs`
+replaces a document a pull touched.
+Remaining: clone from the dialog (#31). Order is
 dependency order; the plan, with the two decisions it makes, is at
 `~/fun_repos/hobby-mimisbrunnr/notes/pen_and_paper_organisation/planning/campaign_management/plan-2026-09-12-campaign-directory-and-sync.md`.
 
@@ -321,6 +324,34 @@ are pure functions tested against a recorded `Runner`/`GitRunner`; the handful o
 wanting the real programs live in `tests/notebook_zk.rs` and `tests/repo_git.rs` and skip
 themselves, with `PNP_REQUIRE_ZK=1` and `PNP_REQUIRE_GIT=1` turning the skip into a failure
 so CI cannot pass having checked none of it.
+
+## Syncing a campaign
+
+**`Repo::sync` (#30) is the whole sequence, and it is the only place that decides it:**
+save everything open, `add`, commit only when something is staged, `pull --rebase` and
+`push` only when `origin` is set, and a conflicting pull is aborted rather than resolved —
+the local commit stays and nothing is pushed. Only a missing `git`, a detached `HEAD`, or a
+refusal of `add`, `diff`, `var` or `commit` is an `Err`; everything after the commit is an
+`Ok` `Synced` outcome, so the status line can always say a commit was made even when the
+remote half went wrong.
+
+**The commit's timestamp comes from `git var GIT_COMMITTER_IDENT`**, not a clock of this
+process's own — neither `jiff` nor `chrono` is in the dependency tree, and `time`'s local
+offset is unavailable in a multithreaded process on Linux. `stamp_of_ident` and
+`sync_subject` turn that line into a `Sync YYYY-MM-DD HH:MM` subject entirely inside
+`campaign::repo`, tested without git or a clock.
+
+**One git job slot.** `crates/campaign_editor/src/sync.rs` runs a sync, a read of
+`origin` or setting it through the same `SyncJob`, so no two git processes ever touch the
+campaign directory at once. Authoring is paused while one runs — the save has to land
+before a pull could replace what it saved — but the map keeps drawing, since only
+`authoring_is_live` is gated on it, not the camera or the chunk stream.
+
+**A document a pull touched is replaced, not edited.** `WorldDoc::reload_from_disk` in
+`crates/campaign_editor/src/document.rs` loads it fresh and clears its undo history — an
+`Edit`'s inverse against a document that is no longer there means nothing — and refuses a
+reload that would change whether a document carries a grid, keeping what is on screen
+instead.
 
 ## Conventions
 

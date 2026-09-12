@@ -28,6 +28,7 @@ mod map;
 mod notes;
 mod picker;
 mod session;
+mod sync;
 
 /// The order the editor's two halves run in.
 ///
@@ -122,6 +123,7 @@ fn main() {
     .add_plugins(notes::NotesPlugin)
     .add_plugins(picker::PickerPlugin)
     .add_plugins(session::SessionPlugin)
+    .add_plugins(sync::SyncPlugin)
     .add_systems(Startup, status_bar.spawn())
     .add_systems(
         Update,

@@ -175,7 +175,7 @@ pub fn answer(
     asking.settle();
 
     match (question, answer) {
-        (Question::UnsavedOnClose, Answer::Save) => match save_everything(doc) {
+        (Question::UnsavedOnClose, Answer::Save) => match doc.save_everything() {
             Ok(()) => {
                 exit.write(AppExit::Success);
             }
@@ -187,7 +187,7 @@ pub fn answer(
         (Question::UnsavedOnClose, Answer::Discard) => {
             exit.write(AppExit::Success);
         }
-        (Question::UnsavedOnCampaignClose, Answer::Save) => match save_everything(doc) {
+        (Question::UnsavedOnCampaignClose, Answer::Save) => match doc.save_everything() {
             Ok(()) => {
                 *closing = CampaignClose::Confirmed;
             }
@@ -215,10 +215,6 @@ pub fn answer(
         }
         _ => {}
     }
-}
-
-fn save_everything(doc: &mut WorldDoc) -> Result<(), campaign::world::WorldError> {
-    doc.save().and_then(|()| doc.save_parked())
 }
 
 fn sheet() -> impl Scene {

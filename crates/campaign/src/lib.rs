@@ -46,7 +46,7 @@ pub mod pick;
 /// still there.
 pub mod recent;
 /// What makes a campaign directory a git repository, and the one place this workspace
-/// runs git.
+/// runs git — including syncing one with its remote.
 pub mod repo;
 /// Turning a label the GM typed into the name of a file this tool creates.
 pub mod slug;
@@ -75,7 +75,7 @@ pub use pick::{Hit, Landing, Snap};
 pub use recent::{Listed, MAX_RECENT, Recent, RecentError, Recents};
 pub use slug::dungeon_name;
 pub use notebook::{NewNote, NoteError, NoteKind, Notebook, Runner, SystemRunner};
-pub use repo::{GitError, GitRunner, Repo, SystemGit};
+pub use repo::{GitError, GitRunner, RemoteOutcome, Repo, SystemGit, Synced};
 pub use manifest::{
     CAMPAIGN_VERSION, CampaignManifest, DEFAULT_UNIT, DEFAULT_UNITS_PER_CELL, MAX_MANIFEST_BYTES,
     MAX_UNITS_PER_CELL, MIN_UNITS_PER_CELL,

@@ -1,0 +1,63 @@
+# Draws a point, syncs with no remote set, and syncs again with nothing dirty. Proves
+# the no-remote half of issue #30's acceptance: a commit is made and reported, and a
+# second sync with nothing staged makes none.
+#
+#   rm -rf /tmp/sync-a
+#   cargo run -p campaign --example make_demo -- /tmp/sync-a
+#   PNP_CONTROL=/tmp/pnp-sync.sock cargo run -p campaign_editor &
+#   PNP_CONTROL=/tmp/pnp-sync.sock cargo run -p campaign_editor --bin pnp-ctl -- run \
+#       crates/campaign_editor/scenarios/sync.scenario
+#   git -C /tmp/sync-a log --oneline   # a `Sync <date> <time>` commit on top of
+#                                       # `Create the campaign`
+
+ping
+fixed-delta 0.016
+
+open /tmp/sync-a
+step 60
+
+tool point
+click 20 20
+observe world                          # dirty: true
+
+sync
+observe world                          # dirty: false — the sync saved it
+
+sync                                   # nothing staged: no second commit
+
+close
+
+# The two-clone half of the acceptance is not scriptable from one process — it needs two
+# editors, each on its own socket, sharing one remote. By hand:
+#
+#   git init --bare --quiet /tmp/sync-origin.git
+#   rm -rf /tmp/sync-a && cargo run -p campaign --example make_demo -- /tmp/sync-a
+#   PNP_CONTROL=/tmp/pnp-a.sock cargo run -p campaign_editor -- /tmp/sync-a &
+#   PNP_CONTROL=/tmp/pnp-a.sock cargo run -p campaign_editor --bin pnp-ctl -- \
+#       remote /tmp/sync-origin.git
+#   PNP_CONTROL=/tmp/pnp-a.sock cargo run -p campaign_editor --bin pnp-ctl -- sync
+#
+#   git clone --quiet /tmp/sync-origin.git /tmp/sync-b
+#   PNP_CONTROL=/tmp/pnp-b.sock cargo run -p campaign_editor -- /tmp/sync-b &
+#
+#   PNP_CONTROL=/tmp/pnp-a.sock cargo run -p campaign_editor --bin pnp-ctl -- tool point
+#   PNP_CONTROL=/tmp/pnp-a.sock cargo run -p campaign_editor --bin pnp-ctl -- click 30 30
+#   PNP_CONTROL=/tmp/pnp-a.sock cargo run -p campaign_editor --bin pnp-ctl -- sync
+#
+#   PNP_CONTROL=/tmp/pnp-b.sock cargo run -p campaign_editor --bin pnp-ctl -- sync
+#   PNP_CONTROL=/tmp/pnp-b.sock cargo run -p campaign_editor --bin pnp-ctl -- observe world
+#       # A's point is there, without restarting B.
+#
+# The conflict run continues from there: both sides draw over the same feature, A syncs
+# first —
+#
+#   PNP_CONTROL=/tmp/pnp-a.sock cargo run -p campaign_editor --bin pnp-ctl -- drag 30 30 35 35
+#   PNP_CONTROL=/tmp/pnp-a.sock cargo run -p campaign_editor --bin pnp-ctl -- sync
+#
+# — then B, over the same point, before syncing:
+#
+#   PNP_CONTROL=/tmp/pnp-b.sock cargo run -p campaign_editor --bin pnp-ctl -- drag 30 30 40 40
+#   PNP_CONTROL=/tmp/pnp-b.sock cargo run -p campaign_editor --bin pnp-ctl -- sync
+#       # remote: "conflict" in the reply.
+#   git -C /tmp/sync-b status --porcelain=v1   # empty: no rebase in progress
+#   git -C /tmp/sync-b log -1 --format=%s      # starts with `Sync `

@@ -1,7 +1,9 @@
 //! The handful of things only the real `git` can answer: that a created campaign is a
 //! repository with nothing to commit and one commit in its log, that adoption inside an
-//! outer repository does not disturb what the outer repository already had staged, and
-//! that a clone of a created campaign can save into a directory it never held.
+//! outer repository does not disturb what the outer repository already had staged, that
+//! a clone of a created campaign can save into a directory it never held, and the four
+//! acceptance shapes a *Sync* must produce — a plain commit, a first push, a pull that
+//! brings a change in, and a conflict that leaves the working tree at the wip commit.
 //!
 //! Every test here skips itself when `git` is not installed, so `cargo test -p campaign`
 //! still passes with nothing on `PATH`. Set `PNP_REQUIRE_GIT=1` to turn the skip into a
@@ -12,7 +14,7 @@ use std::ffi::OsString;
 use std::path::Path;
 use std::process::Output;
 
-use campaign::repo::{GitError, GitRunner, Repo, SystemGit, git_is_installed};
+use campaign::repo::{GitError, GitRunner, RemoteOutcome, Repo, SystemGit, git_is_installed};
 
 fn git_or_skip(test: &str) -> bool {
     if git_is_installed() {
@@ -153,4 +155,176 @@ fn a_clone_saves_into_a_directory_it_never_held() {
     world.save(&dungeon_path).expect("save into the absent directory");
 
     assert!(dungeon_path.is_file());
+}
+
+// The first acceptance shape: with no remote, `sync` commits and says so, and syncing
+// again with nothing dirty commits nothing more.
+#[test]
+fn sync_with_no_remote_commits_once_then_nothing_more() {
+    if !git_or_skip("sync_with_no_remote_commits_once_then_nothing_more") {
+        return;
+    }
+    let tmp = tempfile::tempdir().expect("temp dir");
+    std::fs::write(tmp.path().join("world.ron"), "()").expect("a file to commit");
+    Repo::at(tmp.path()).begin(&WithIdentity).expect("begin");
+
+    std::fs::write(tmp.path().join("world.ron"), "(features: {})").expect("dirty the file");
+    let synced = Repo::at(tmp.path()).sync(&WithIdentity).expect("sync");
+    assert!(synced.commit.is_some());
+    assert_eq!(synced.remote, RemoteOutcome::NoRemote);
+    assert_eq!(oneline_log(tmp.path()).len(), 2);
+
+    let synced_again = Repo::at(tmp.path()).sync(&WithIdentity).expect("sync again");
+    assert_eq!(synced_again.commit, None);
+    assert_eq!(oneline_log(tmp.path()).len(), 2);
+}
+
+// The second acceptance shape: a remote that exists but has no branch yet takes the
+// exit-2 path straight to a push.
+#[test]
+fn sync_pushes_to_a_freshly_set_empty_remote() {
+    if !git_or_skip("sync_pushes_to_a_freshly_set_empty_remote") {
+        return;
+    }
+    let tmp = tempfile::tempdir().expect("temp dir");
+    let campaign_root = tmp.path().join("campaign");
+    std::fs::create_dir_all(&campaign_root).expect("campaign dir");
+    std::fs::write(campaign_root.join("world.ron"), "()").expect("a file to commit");
+    Repo::at(&campaign_root).begin(&WithIdentity).expect("begin");
+
+    let origin = tmp.path().join("origin.git");
+    git(tmp.path(), &["init", "--bare", "--quiet", origin.to_str().unwrap()]);
+    Repo::at(&campaign_root)
+        .set_origin(&WithIdentity, origin.to_str().unwrap())
+        .expect("set origin");
+
+    let synced = Repo::at(&campaign_root).sync(&WithIdentity).expect("sync");
+    assert_eq!(synced.commit, None, "nothing was dirty after begin");
+    assert_eq!(synced.remote, RemoteOutcome::Pushed);
+
+    let branch = current_branch(&campaign_root);
+    let remote_branches = git(&campaign_root, &["ls-remote", "--heads", "origin"]);
+    let listed = String::from_utf8_lossy(&remote_branches.stdout);
+    assert!(
+        listed.contains(&format!("refs/heads/{branch}")),
+        "{listed}"
+    );
+}
+
+// The third acceptance shape: A pushes a change, B syncs and gets it without restarting —
+// `changed` names the file the pull brought in.
+#[test]
+fn syncing_b_after_a_pulls_in_as_own_change() {
+    if !git_or_skip("syncing_b_after_a_pulls_in_as_own_change") {
+        return;
+    }
+    let (_tmp, a, b) = two_clones_of_a_pushed_origin("syncing_b_after_a_pulls_in_as_own_change");
+
+    std::fs::write(a.join("world.ron"), "(from: \"a\")").expect("a's change");
+    let a_synced = Repo::at(&a).sync(&WithIdentity).expect("a syncs");
+    assert_eq!(a_synced.remote, RemoteOutcome::Pushed);
+
+    let b_synced = Repo::at(&b).sync(&WithIdentity).expect("b syncs");
+    assert_eq!(b_synced.remote, RemoteOutcome::Pushed);
+    assert_eq!(b_synced.changed, vec![std::path::PathBuf::from("world.ron")]);
+    assert_eq!(
+        std::fs::read_to_string(b.join("world.ron")).expect("read"),
+        "(from: \"a\")"
+    );
+}
+
+// The fourth acceptance shape: both sides edit the same line and sync. B's rebase
+// conflicts, is aborted, and B's working tree is left exactly at the wip commit it made —
+// no rebase left in progress, B's own bytes on disk.
+#[test]
+fn a_conflicting_sync_aborts_and_leaves_the_wip_commit() {
+    if !git_or_skip("a_conflicting_sync_aborts_and_leaves_the_wip_commit") {
+        return;
+    }
+    let (_tmp, a, b) = two_clones_of_a_pushed_origin("a_conflicting_sync_aborts_and_leaves_the_wip_commit");
+
+    std::fs::write(a.join("world.ron"), "(from: \"a\")").expect("a's change");
+    std::fs::write(b.join("world.ron"), "(from: \"b\")").expect("b's change");
+
+    let a_synced = Repo::at(&a).sync(&WithIdentity).expect("a syncs");
+    assert_eq!(a_synced.remote, RemoteOutcome::Pushed);
+
+    let b_synced = Repo::at(&b).sync(&WithIdentity).expect("b syncs");
+    assert!(
+        matches!(b_synced.remote, RemoteOutcome::Conflict { .. }),
+        "{:?}",
+        b_synced.remote
+    );
+
+    let subject = git(&b, &["log", "-1", "--format=%s"]);
+    assert!(
+        String::from_utf8_lossy(&subject.stdout).starts_with("Sync "),
+        "{}",
+        String::from_utf8_lossy(&subject.stdout)
+    );
+    assert_eq!(
+        std::fs::read_to_string(b.join("world.ron")).expect("read"),
+        "(from: \"b\")"
+    );
+
+    let status = git(&b, &["status", "--porcelain=v1"]);
+    assert!(
+        !String::from_utf8_lossy(&status.stdout).contains("rebase in progress"),
+        "{}",
+        String::from_utf8_lossy(&status.stdout)
+    );
+    let rebase_merge = git(&b, &["rev-parse", "--git-path", "rebase-merge"]);
+    let path = String::from_utf8_lossy(&rebase_merge.stdout).trim().to_owned();
+    assert!(!b.join(&path).exists(), "a rebase is still in progress at {path}");
+}
+
+fn two_clones_of_a_pushed_origin(name: &str) -> (tempfile::TempDir, std::path::PathBuf, std::path::PathBuf) {
+    let tmp = tempfile::tempdir().expect("temp dir");
+    let campaign_root = tmp.path().join("campaign");
+    std::fs::create_dir_all(&campaign_root).expect("campaign dir");
+    std::fs::write(campaign_root.join("world.ron"), "()").expect("a file to commit");
+    Repo::at(&campaign_root).begin(&WithIdentity).expect("begin");
+
+    let origin = tmp.path().join("origin.git");
+    git(tmp.path(), &["init", "--bare", "--quiet", origin.to_str().unwrap()]);
+    Repo::at(&campaign_root)
+        .set_origin(&WithIdentity, origin.to_str().unwrap())
+        .expect("set origin");
+    let first_push = Repo::at(&campaign_root).sync(&WithIdentity).expect(name);
+    assert_eq!(first_push.remote, RemoteOutcome::Pushed);
+
+    let branch = current_branch(&campaign_root);
+    let a = tmp.path().join("a");
+    let b = tmp.path().join("b");
+    let clone = |dest: &std::path::Path| {
+        let result = git(
+            tmp.path(),
+            &[
+                "clone",
+                "--quiet",
+                "--branch",
+                &branch,
+                origin.to_str().unwrap(),
+                dest.to_str().unwrap(),
+            ],
+        );
+        assert!(result.status.success(), "{}", String::from_utf8_lossy(&result.stderr));
+    };
+    clone(&a);
+    clone(&b);
+
+    (tmp, a, b)
+}
+
+fn current_branch(dir: &Path) -> String {
+    let output = git(dir, &["symbolic-ref", "--quiet", "--short", "HEAD"]);
+    String::from_utf8_lossy(&output.stdout).trim().to_owned()
+}
+
+fn oneline_log(dir: &Path) -> Vec<String> {
+    let log = git(dir, &["log", "--oneline"]);
+    String::from_utf8_lossy(&log.stdout)
+        .lines()
+        .map(str::to_owned)
+        .collect()
 }
