@@ -17,6 +17,7 @@ use bevy::feathers::controls::{
 };
 use bevy::feathers::theme::{ThemeBackgroundColor, ThemedText};
 use bevy::feathers::tokens;
+use bevy::input_focus::InputFocus;
 use bevy::input_focus::tab_navigation::TabIndex;
 use bevy::prelude::*;
 use bevy::tasks::{AsyncComputeTaskPool, IoTaskPool, Task, block_on, futures_lite::future};
@@ -26,6 +27,7 @@ use bevy::ui_widgets::Activate;
 use campaign::recent::{self, Listed, MAX_RECENT, RecentError};
 use campaign::{Campaign, CampaignError, CampaignManifest, Created, SystemGit};
 
+use crate::picker::Picker;
 use crate::{OpenCampaign, StatusMessage};
 
 /// The dialog and everything behind it: the typed paths, the load in flight, the
@@ -54,6 +56,25 @@ impl Plugin for DialogPlugin {
     }
 }
 
+/// One of the dialog's three path fields, for anything that must address one — a
+/// `Browse…` button, or the input it fills.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum PathField {
+    #[default]
+    Root,
+    Parent,
+    Terrain,
+}
+
+/// Marks a text input as holding one of the dialog's path fields, so a picker can
+/// find it and replace its text.
+#[derive(Component, Debug, Default, Clone, Copy)]
+pub struct PathInput(pub PathField);
+
+/// A `Browse…` button beside a path field, naming the field it fills.
+#[derive(Component, Debug, Default, Clone, Copy)]
+pub struct BrowseButton(pub PathField);
+
 /// The fields typed into the dialog.
 #[derive(Resource, Default)]
 pub struct DialogFields {
@@ -66,6 +87,26 @@ pub struct DialogFields {
     pub name: String,
     /// The directory a created campaign goes in.
     pub parent: String,
+}
+
+impl DialogFields {
+    /// The text currently held by `field`.
+    pub fn path(&self, field: PathField) -> &str {
+        match field {
+            PathField::Root => &self.root,
+            PathField::Parent => &self.parent,
+            PathField::Terrain => &self.terrain,
+        }
+    }
+
+    /// Replaces the text held by `field`.
+    pub fn set_path(&mut self, field: PathField, text: String) {
+        match field {
+            PathField::Root => self.root = text,
+            PathField::Parent => self.parent = text,
+            PathField::Terrain => self.terrain = text,
+        }
+    }
 }
 
 /// The campaign load in flight, if there is one.
@@ -170,6 +211,7 @@ pub fn dialog() -> impl Scene {
                             (
                                 @FeathersTextInput
                                 RootInput
+                                PathInput(PathField::Root)
                                 on(|change: On<TextEditChange>,
                                     texts: Query<&EditableText>,
                                     mut fields: ResMut<DialogFields>| {
@@ -179,7 +221,8 @@ pub fn dialog() -> impl Scene {
                                 })
                             )
                         ]
-                    )
+                    ),
+                    browse_button(PathField::Root)
                 ]
             ),
             (
@@ -248,6 +291,7 @@ pub fn dialog() -> impl Scene {
                             (
                                 @FeathersTextInput
                                 ParentInput
+                                PathInput(PathField::Parent)
                                 on(|change: On<TextEditChange>,
                                     texts: Query<&EditableText>,
                                     mut fields: ResMut<DialogFields>| {
@@ -257,7 +301,8 @@ pub fn dialog() -> impl Scene {
                                 })
                             )
                         ]
-                    )
+                    ),
+                    browse_button(PathField::Parent)
                 ]
             ),
             (
@@ -276,6 +321,7 @@ pub fn dialog() -> impl Scene {
                             (
                                 @FeathersTextInput
                                 TerrainInput
+                                PathInput(PathField::Terrain)
                                 on(|change: On<TextEditChange>,
                                     texts: Query<&EditableText>,
                                     mut fields: ResMut<DialogFields>| {
@@ -285,7 +331,8 @@ pub fn dialog() -> impl Scene {
                                 })
                             )
                         ]
-                    )
+                    ),
+                    browse_button(PathField::Terrain)
                 ]
             ),
             (
@@ -309,6 +356,26 @@ pub fn dialog() -> impl Scene {
                 ]
             )
         ]
+    }
+}
+
+fn browse_button(field: PathField) -> impl Scene {
+    bsn! {
+        @FeathersButton {
+            @caption: bsn! { Text("Browse…") ThemedText },
+        }
+        BrowseButton({field})
+        on(|activate: On<Activate>,
+            buttons: Query<&BrowseButton>,
+            fields: Res<DialogFields>,
+            mut picker: ResMut<Picker>,
+            mut focus: ResMut<InputFocus>| {
+            let Ok(button) = buttons.get(activate.event_target()) else {
+                return;
+            };
+            picker.open(button.0, fields.path(button.0));
+            focus.clear();
+        })
     }
 }
 
@@ -473,7 +540,21 @@ fn recent_caption(listed: &Listed) -> String {
     }
 }
 
-fn set_pressable(
+/// Replaces the whole content of a text input: select all, delete, insert `text`.
+///
+/// Shared by [`seed_parent`] and [`crate::picker`]'s Choose button — both fill an
+/// input's text from outside a keystroke, and both need the edit queued the same way.
+pub(crate) fn replace_text(field: &mut EditableText, text: &str) {
+    field.queue_edit(TextEdit::SelectAll);
+    field.queue_edit(TextEdit::Backspace);
+    field.queue_edit(TextEdit::Insert(text.into()));
+}
+
+/// Enables `entity` for input when `pressable`, disables it otherwise: toggles
+/// [`InteractionDisabled`] and sets its [`TabIndex`] to `0` or `-1` to match. Writes
+/// only where the current state differs from `pressable`; an entity with no
+/// `TabIndex` still gets its `InteractionDisabled` state toggled.
+pub(crate) fn set_pressable(
     commands: &mut Commands,
     indices: &mut Query<&mut TabIndex>,
     entity: Entity,
@@ -533,9 +614,7 @@ fn seed_parent(
     let text = parent.display().to_string();
     fields.parent = text.clone();
     for mut field in inputs.iter_mut() {
-        field.queue_edit(TextEdit::SelectAll);
-        field.queue_edit(TextEdit::Backspace);
-        field.queue_edit(TextEdit::Insert(text.as_str().into()));
+        replace_text(&mut field, &text);
     }
 }
 
