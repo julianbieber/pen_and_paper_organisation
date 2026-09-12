@@ -57,7 +57,11 @@ pub struct CampaignManifest {
     /// What the GM calls this campaign. Display only.
     pub name: String,
     /// Where the terrain is, exactly as it was given: resolved against the campaign
-    /// root when relative, taken as written when absolute. Never empty.
+    /// root when relative, taken as written when absolute. Never empty. A campaign
+    /// [`Campaign::create`](crate::campaign::Campaign::create) builds always writes
+    /// [`layout::TERRAIN_DIR`]; [`Campaign::open`](crate::campaign::Campaign::open)
+    /// still accepts any other value, since a manifest may have been hand-edited or
+    /// written by an earlier build to name a terrain elsewhere.
     pub terrain: String,
     /// How many `unit`s one terrain cell spans. Finite and above zero.
     pub units_per_cell: f64,
@@ -140,10 +144,30 @@ impl CampaignManifest {
     ///
     /// A relative `terrain` resolves under `root`; an absolute one is taken as
     /// written. That is [`Path::join`]'s own rule, and it is relied on here rather
-    /// than reimplemented — a terrain is allowed to live outside the campaign
-    /// directory, because the manifest records where one is rather than owning it.
+    /// than reimplemented — a terrain outside the campaign directory is still read;
+    /// [`terrain_travels`](CampaignManifest::terrain_travels) is what says it will not
+    /// move with the directory.
     pub fn terrain_dir(&self, root: &Path) -> PathBuf {
         root.join(&self.terrain)
+    }
+
+    /// Whether `terrain` names a path that stays under the campaign root when the
+    /// root moves — the only thing that makes `mv`, `cp -r` or a `git clone` of the
+    /// directory keep drawing its map.
+    ///
+    /// True exactly when `terrain` is a relative path none of whose components is
+    /// `..` or a prefix (a drive letter, a UNC root). This reads no disk: a relative
+    /// path with no `..` could in principle still leave the root through a symlink,
+    /// and that is not worth a `canonicalize` on every open — the answer here is
+    /// advisory, not a guarantee.
+    pub fn terrain_travels(&self) -> bool {
+        use std::path::Component;
+
+        let path = Path::new(&self.terrain);
+        path.is_relative()
+            && path
+                .components()
+                .all(|c| matches!(c, Component::Normal(_) | Component::CurDir))
     }
 
     /// Write `units_per_cell` and `unit` back into the `campaign.ron` at `root`.

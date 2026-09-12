@@ -1,10 +1,11 @@
 //! The names this campaign format fixes, and the joins onto a campaign root, so that
 //! no consumer of the format ever spells one of them.
 //!
-//! The terrain directory is deliberately not among them: a campaign's manifest names
-//! where its terrain is, which is what lets a terrain live outside the campaign
-//! directory. A constant here would shadow that field and quietly make the layout
-//! authoritative over the manifest.
+//! `TERRAIN_DIR` fixes where a campaign [`Campaign::create`](crate::campaign::Campaign::create)
+//! builds puts its terrain; it is not where every campaign's terrain is, because the
+//! manifest's own `terrain` field stays authoritative for [`Campaign::open`](crate::campaign::Campaign::open)
+//! — a terrain is still allowed to live outside the campaign directory, just not one
+//! this build creates.
 
 use std::path::{Path, PathBuf};
 
@@ -31,7 +32,13 @@ pub const IMAGES_DIR: &str = "images";
 /// note is asked for.
 pub const NOTES_DIR: &str = "notes";
 
+/// Where a campaign this build creates copies its terrain into.
+pub const TERRAIN_DIR: &str = "terrain";
+
 /// Every subdirectory a campaign directory holds, in the order they are created.
+///
+/// `TERRAIN_DIR` is not among them: it is made by the copy or adopted from the source
+/// [`Campaign::create`](crate::campaign::Campaign::create) is given, never created empty.
 pub const SUBDIRS: [&str; 3] = [DUNGEONS_DIR, IMAGES_DIR, NOTES_DIR];
 
 /// Where the manifest sits under `root`.
@@ -79,4 +86,9 @@ pub fn image(root: &Path, name: &str) -> PathBuf {
 /// Where the notebook sits under `root`.
 pub fn notes(root: &Path) -> PathBuf {
     root.join(NOTES_DIR)
+}
+
+/// Where a campaign this build creates copies its terrain into.
+pub fn terrain(root: &Path) -> PathBuf {
+    root.join(TERRAIN_DIR)
 }

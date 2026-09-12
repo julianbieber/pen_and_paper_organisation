@@ -74,7 +74,7 @@ fn main() {
     .save_to_dir(root.join("terrain"))
     .unwrap();
 
-    let campaign = campaign::Campaign::create(&root, "terrain").unwrap();
+    let campaign = campaign::Campaign::create(&root, root.join("terrain")).unwrap();
     println!("created {}", campaign.root().display());
     println!("  name           {}", campaign.manifest().name);
     println!("  terrain        {}", campaign.terrain_dir().display());

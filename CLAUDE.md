@@ -35,7 +35,11 @@ behind them is in the plan at
 `~/fun_repos/hobby-mimisbrunnr/notes/pen_and_paper_organisation/init/pen_and_paper_plan/plan-2026-08-30-campaign-map-and-notes.md`.
 
 **Campaign management is the next milestone, filed as #24–#31** (2026-09-12): the campaign
-becomes one self-contained, git-backed directory — the terrain copied in (#24), `git init` and
+becomes one self-contained, git-backed directory. The terrain is copied in on create (#24):
+`Campaign::create` in `crates/campaign/src/campaign.rs` takes the terrain as a source and
+copies it into `<root>/terrain`, `crates/campaign/src/layout.rs` fixes that path and
+`crates/campaign/src/manifest.rs` says whether an opened campaign's terrain travels with it;
+`crates/campaign_editor`'s dialog and status line report it. Remaining: `git init` and
 a `.gitignore` on create (#25), a recent list (#26), create-by-name (#27), a folder picker (#28),
 close-and-switch (#29), sync from the editor (#30) and clone from the dialog (#31). Order is
 dependency order; the plan, with the two decisions it makes, is at
@@ -59,7 +63,9 @@ on top of it.
 
 `watershed` also cannot re-bake from a loaded `Terrain` by design, so `terrain/` is
 immutable here and the authored content lives in separate files beside it. Nothing in this
-repo writes a terrain, bakes one, or reaches for `watershed_editor`. Two files, two
+repo bakes a terrain or reaches for `watershed_editor`. `Campaign::create` (#24) copies a
+terrain export in byte for byte so the campaign directory can travel, but nothing writes
+into it afterwards — the copy and the immutability are separate rules. Two files, two
 lifetimes, nothing to merge.
 
 **One feature type, in every document.** A feature is a `Point`, `Polyline` or `Polygon`
@@ -216,7 +222,7 @@ crates/campaign_editor   the bevy app, binary `pnp`
 
 my-campaign/
 ├── campaign.ron         version, name, terrain dir, units_per_cell, unit
-├── terrain/             watershed output, read-only
+├── terrain/             watershed output, copied in on create (#24), read-only after
 ├── world.ron            features
 ├── dungeons/*.ron       child documents
 ├── images/              imported backdrops, copied in so the directory stays portable
@@ -227,11 +233,15 @@ The crate split is the one `watershed` uses and exists for the same reason: the 
 testable without a window. **Anything that can live in `campaign` does.** A rule that
 needs a GPU to test is a rule that will not be tested.
 
-`terrain/` and `world.ron` sitting inside the campaign directory is the **convention the
-dialog pre-fills, not a guarantee the layout enforces**: `Campaign::create` writes neither.
-It records where a terrain is — which may be an absolute path anywhere on the machine —
-and the world document belongs to #3. **One terrain per campaign**: `campaign.ron` has a
-single `terrain` field, and `open` loads it eagerly, so a second would be a second load.
+**A campaign `Campaign::create` builds always has its terrain inside it** (#24): `create`
+takes the terrain as a source and copies the whole export into `<root>/terrain/`, then
+writes `terrain: "terrain"`, so the directory it returns can be moved, copied or cloned
+and still open. `open` still honours a manifest naming a terrain elsewhere — a hand
+edit, or one written by an earlier build — and `terrain_travels()` says whether it will
+move with the directory; the status line warns when it will not. `world.ron` sitting
+inside the campaign directory stays a convention `Campaign::create` does not write —
+that belongs to #3. **One terrain per campaign**: `campaign.ron` has a single `terrain`
+field, and `open` loads it eagerly, so a second would be a second load.
 
 **A `Campaign`'s root and terrain are fixed at `open`; its scale is the one thing that
 changes.** It holds what is on disk — root, manifest, terrain — and the undo stack, the

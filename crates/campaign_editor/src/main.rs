@@ -69,6 +69,18 @@ impl StatusMessage {
     pub fn say(&mut self, message: impl Into<String>) {
         self.0 = message.into();
     }
+
+    /// Say what opening `campaign` left worth saying, or clear the line.
+    pub fn opened(&mut self, campaign: &Campaign) {
+        self.0 = if campaign.terrain_travels() {
+            String::new()
+        } else {
+            format!(
+                "terrain at {} is outside the campaign and will not travel with it",
+                campaign.terrain_dir().display()
+            )
+        };
+    }
 }
 
 fn main() {
@@ -99,6 +111,9 @@ fn main() {
     if let Some(path) = std::env::args().nth(1) {
         match Campaign::open(&path) {
             Ok(campaign) => {
+                let mut status = StatusMessage::default();
+                status.opened(&campaign);
+                app.insert_resource(status);
                 app.insert_resource(OpenCampaign(campaign));
             }
             Err(error) => {
