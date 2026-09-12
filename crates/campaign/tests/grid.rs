@@ -6,8 +6,8 @@ use campaign::grid::{GridProblem, MAX_GRID_CELLS, TileGrid};
 use campaign::tiles::{DungeonTile, GRID_COARSE_CELLS, grid_chunk_tiles, grid_lines};
 use campaign::world::World;
 
-fn grid(width: u32, height: u32) -> TileGrid {
-    TileGrid::new(width, height, 1.5).expect("the fixture must be a legal grid")
+fn grid(width: u32, height: u32) -> TileGrid<DungeonTile> {
+    TileGrid::<DungeonTile>::new(width, height, 1.5).expect("the fixture must be a legal grid")
 }
 
 // A grid nothing could be painted on is refused where it is built, because there is no
@@ -16,7 +16,7 @@ fn grid(width: u32, height: u32) -> TileGrid {
 fn a_grid_with_no_extent_is_refused() {
     for (width, height) in [(0, 8), (8, 0), (0, 0)] {
         assert!(matches!(
-            TileGrid::new(width, height, 1.5),
+            TileGrid::<DungeonTile>::new(width, height, 1.5),
             Err(GridProblem::NoExtent { .. })
         ));
     }
@@ -29,7 +29,7 @@ fn a_scale_that_is_not_a_finite_positive_number_is_refused() {
     for scale in [f32::NAN, f32::INFINITY, 0.0, -1.5] {
         assert!(
             matches!(
-                TileGrid::new(8, 8, scale),
+                TileGrid::<DungeonTile>::new(8, 8, scale),
                 Err(GridProblem::BadScale { .. })
             ),
             "a scale of {scale} was accepted"
@@ -43,12 +43,12 @@ fn a_scale_that_is_not_a_finite_positive_number_is_refused() {
 #[test]
 fn a_grid_over_the_cell_limit_is_refused_without_overflowing() {
     assert!(matches!(
-        TileGrid::new(4_000_000_000, 4_000_000_000, 1.5),
+        TileGrid::<DungeonTile>::new(4_000_000_000, 4_000_000_000, 1.5),
         Err(GridProblem::TooManyCells { .. })
     ));
     let side = (MAX_GRID_CELLS as f64).sqrt() as u32 + 1;
     assert!(matches!(
-        TileGrid::new(side, side, 1.5),
+        TileGrid::<DungeonTile>::new(side, side, 1.5),
         Err(GridProblem::TooManyCells { .. })
     ));
 }
@@ -268,4 +268,61 @@ fn both_grid_levels_fade_rather_than_stepping() {
 #[test]
 fn the_coarse_level_steps_by_the_conventional_major_line() {
     assert_eq!(GRID_COARSE_CELLS, 5);
+}
+
+fn painted_dungeon() -> World {
+    use campaign::brush::{Brush, cells};
+    use campaign::edit::Edit;
+
+    let grid = TileGrid::new(8, 8, campaign::grid::DEFAULT_METRES_PER_CELL)
+        .expect("the fixture must be a legal grid");
+    let mut world = World::on_a_grid(grid);
+    let mut paint = |brush: Brush, path: &[(i64, i64)], tile: DungeonTile| {
+        let changes = cells(world.grid().expect("a dungeon"), brush, path, tile);
+        Edit::PaintTiles { changes }
+            .apply(&mut world)
+            .expect("every stroke in the fixture changes something");
+    };
+    paint(Brush::Room, &[(1, 1), (5, 5)], DungeonTile::Floor);
+    for (column, tile) in [
+        DungeonTile::Door,
+        DungeonTile::SecretDoor,
+        DungeonTile::StairsUp,
+        DungeonTile::StairsDown,
+        DungeonTile::Water,
+        DungeonTile::Rubble,
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        paint(Brush::Freehand, &[(column as i64, 7)], tile);
+    }
+    world
+}
+
+// A dungeon saved before the tile vocabulary went generic saves to the same bytes after it.
+#[test]
+fn a_painted_dungeon_saves_byte_identically_to_the_pinned_fixture() {
+    let dir = tempfile::tempdir().expect("a temporary directory");
+    let fresh = dir.path().join("fresh.ron");
+    painted_dungeon().save(&fresh).expect("the fixture saves");
+    let pinned: &[u8] = include_bytes!("fixtures/painted_dungeon.ron");
+    assert_eq!(
+        std::fs::read(&fresh).expect("the save landed"),
+        pinned,
+        "a freshly painted dungeon no longer saves as the pinned fixture"
+    );
+
+    let earlier = dir.path().join("earlier.ron");
+    std::fs::write(&earlier, pinned).expect("the fixture copies");
+    let again = dir.path().join("again.ron");
+    World::load(&earlier)
+        .expect("the pinned fixture reads")
+        .save(&again)
+        .expect("the pinned fixture saves");
+    assert_eq!(
+        std::fs::read(&again).expect("the save landed"),
+        pinned,
+        "the pinned fixture no longer saves back to itself"
+    );
 }

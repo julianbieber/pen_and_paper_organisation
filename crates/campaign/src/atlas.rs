@@ -11,8 +11,6 @@ use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
 
-use crate::tiles::TILE_COUNT;
-
 /// The suffix `bevy_sprite_editor` gives a sidecar, appended to the whole file name
 /// rather than replacing an extension.
 pub const SIDECAR_SUFFIX: &str = "atlas.json";
@@ -61,9 +59,9 @@ pub enum AtlasError {
     )]
     NotAStrip { path: PathBuf, rows: u32 },
 
-    /// The strip is shorter than the map has tiles to draw.
-    #[error("`{}` holds {found} tiles; the map draws {TILE_COUNT}", .path.display())]
-    TooFewTiles { path: PathBuf, found: u32 },
+    /// The strip is shorter than the tile count it was read against.
+    #[error("`{}` holds {found} tiles; the map draws {want}", .path.display())]
+    TooFewTiles { path: PathBuf, found: u32, want: u16 },
 
     /// The decoded image does not have the shape the sidecar promised.
     #[error(
@@ -127,9 +125,11 @@ impl AtlasMeta {
     /// [`AtlasError::SidecarMalformed`] when it is not JSON for this type,
     /// [`AtlasError::NoTiles`] / [`AtlasError::ZeroTileSize`] on an atlas with no
     /// tiles or no tile size, [`AtlasError::NotAStrip`] on more than one row, and
-    /// [`AtlasError::TooFewTiles`] when the strip is shorter than [`TILE_COUNT`].
+    /// [`AtlasError::TooFewTiles`] when the strip holds fewer than `tiles` tiles — the
+    /// length of the vocabulary it will be indexed by, such as
+    /// [`TILE_COUNT`](crate::tiles::TILE_COUNT) for the terrain strip.
     /// Reads nothing but the sidecar; the image is somebody else's to load.
-    pub fn read(base: &Path) -> Result<Self, AtlasError> {
+    pub fn read(base: &Path, tiles: u16) -> Result<Self, AtlasError> {
         let path = sidecar_path(base);
         let text = std::fs::read_to_string(&path).map_err(|source| {
             AtlasError::SidecarUnreadable {
@@ -143,7 +143,7 @@ impl AtlasMeta {
                 message: error.to_string(),
             }
         })?;
-        meta.check(&path)?;
+        meta.check(&path, tiles)?;
         Ok(meta)
     }
 
@@ -174,7 +174,7 @@ impl AtlasMeta {
         })
     }
 
-    fn check(&self, path: &Path) -> Result<(), AtlasError> {
+    fn check(&self, path: &Path, tiles: u16) -> Result<(), AtlasError> {
         if self.width_in_tiles == 0 || self.height_in_tiles == 0 {
             return Err(AtlasError::NoTiles(path.to_path_buf()));
         }
@@ -187,10 +187,11 @@ impl AtlasMeta {
                 rows: self.height_in_tiles,
             });
         }
-        if self.width_in_tiles < u32::from(TILE_COUNT) {
+        if self.width_in_tiles < u32::from(tiles) {
             return Err(AtlasError::TooFewTiles {
                 path: path.to_path_buf(),
                 found: self.width_in_tiles,
+                want: tiles,
             });
         }
         Ok(())

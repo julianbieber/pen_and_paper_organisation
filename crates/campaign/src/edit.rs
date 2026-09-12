@@ -14,7 +14,9 @@ use crate::feature::{
     CellPoint, Feature, FeatureId, FeatureKind, Rank, dungeon_name_refusal, note_path_refusal,
     reveal_refusal,
 };
+use crate::grid::{TileGrid, TileVocabulary};
 use crate::image::{ImageBackdrop, ImageProblem};
+use crate::tiles::DungeonTile;
 use crate::world::{ParentProblem, World};
 
 /// Why an edit was refused.
@@ -145,6 +147,60 @@ pub enum EditError {
     EmptyPaint,
 }
 
+/// Put `changes` into `grid` and hand back the changes that undo them.
+///
+/// A cell named more than once takes the last tile it was given, and a cell already
+/// carrying its tile is left out, so the inverse holds each changed cell exactly once.
+///
+/// Fails [`EditError::CellOutOfGrid`] when a change names a cell the grid does not hold,
+/// and [`EditError::EmptyPaint`] when no change would alter its cell. A refusal leaves the
+/// grid untouched.
+pub(crate) fn paint<T: TileVocabulary>(
+    grid: &mut TileGrid<T>,
+    changes: Vec<TileChange<T>>,
+) -> Result<Vec<TileChange<T>>, EditError> {
+    for change in &changes {
+        if !grid.holds(i64::from(change.x), i64::from(change.y)) {
+            return Err(EditError::CellOutOfGrid {
+                x: change.x,
+                y: change.y,
+                width: grid.width(),
+                height: grid.height(),
+            });
+        }
+    }
+
+    let mut wanted: Vec<TileChange<T>> = Vec::with_capacity(changes.len());
+    for change in changes {
+        if let Some(seen) = wanted
+            .iter_mut()
+            .find(|held| held.x == change.x && held.y == change.y)
+        {
+            seen.tile = change.tile;
+        } else {
+            wanted.push(change);
+        }
+    }
+    wanted.retain(|change| grid.get(i64::from(change.x), i64::from(change.y)) != Some(change.tile));
+    if wanted.is_empty() {
+        return Err(EditError::EmptyPaint);
+    }
+
+    Ok(wanted
+        .iter()
+        .map(|change| {
+            let tile = grid
+                .set(i64::from(change.x), i64::from(change.y), change.tile)
+                .expect("the cell was in bounds a moment ago");
+            TileChange {
+                x: change.x,
+                y: change.y,
+                tile,
+            }
+        })
+        .collect())
+}
+
 fn children_list(children: &[FeatureId]) -> String {
     children
         .iter()
@@ -211,7 +267,7 @@ pub enum Edit {
     ///
     /// One edit however many cells the stroke covered, which is what makes a brush
     /// stroke a single press of undo without a [`Edit::Batch`] holding a change per cell.
-    PaintTiles { changes: Vec<TileChange> },
+    PaintTiles { changes: Vec<TileChange<DungeonTile>> },
     /// Declare the picture this document is drawn over, or clear it.
     ///
     /// What an import lands. Refused when it would clear an image the document does not
@@ -438,52 +494,8 @@ impl Edit {
             }
 
             Self::PaintTiles { changes } => {
-                let grid = world.grid().ok_or(EditError::NoGrid)?;
-
-                for change in &changes {
-                    if !grid.holds(i64::from(change.x), i64::from(change.y)) {
-                        return Err(EditError::CellOutOfGrid {
-                            x: change.x,
-                            y: change.y,
-                            width: grid.width(),
-                            height: grid.height(),
-                        });
-                    }
-                }
-
-                let mut wanted: Vec<TileChange> = Vec::with_capacity(changes.len());
-                for change in changes {
-                    if let Some(seen) = wanted
-                        .iter_mut()
-                        .find(|held| held.x == change.x && held.y == change.y)
-                    {
-                        seen.tile = change.tile;
-                    } else {
-                        wanted.push(change);
-                    }
-                }
-                wanted.retain(|change| {
-                    grid.get(i64::from(change.x), i64::from(change.y)) != Some(change.tile)
-                });
-                if wanted.is_empty() {
-                    return Err(EditError::EmptyPaint);
-                }
-
-                let grid = world.grid_mut().expect("the grid was there a moment ago");
-                let was: Vec<TileChange> = wanted
-                    .iter()
-                    .map(|change| {
-                        let tile = grid
-                            .set(i64::from(change.x), i64::from(change.y), change.tile)
-                            .expect("the cell was in bounds a moment ago");
-                        TileChange {
-                            x: change.x,
-                            y: change.y,
-                            tile,
-                        }
-                    })
-                    .collect();
-                Ok(Self::PaintTiles { changes: was })
+                let grid = world.grid_mut().ok_or(EditError::NoGrid)?;
+                paint(grid, changes).map(|was| Self::PaintTiles { changes: was })
             }
 
             Self::Batch(edits) => {

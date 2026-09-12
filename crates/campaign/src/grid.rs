@@ -12,8 +12,6 @@
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
-use crate::tiles::DungeonTile;
-
 /// Cells along one side of a grid a dungeon is created with.
 pub const DEFAULT_GRID_CELLS: u32 = 64;
 
@@ -69,6 +67,26 @@ pub enum GridProblem {
     TooManyCells { cells: u64, limit: u64 },
 }
 
+/// What a grid needs of the tiles it holds.
+///
+/// A vocabulary's [`Default`] is the tile every cell of a new grid starts as, its serde
+/// name is what a saved grid writes for it, and [`TileVocabulary::index`] is its column in
+/// the strip it is drawn from. Renaming a variant therefore changes every file saved with
+/// it, and reordering the strip draws every grid wrongly.
+pub trait TileVocabulary:
+    Copy + Eq + Default + std::fmt::Debug + Serialize + serde::de::DeserializeOwned + 'static
+{
+    /// The tile [`Brush::Room`](crate::brush::Brush::Room) lays on a room's border.
+    const WALL: Self;
+
+    /// The tile [`Brush::Room`](crate::brush::Brush::Room) lays inside a room.
+    const FLOOR: Self;
+
+    /// The tile's column in this vocabulary's strip, which is also its layer in the array
+    /// texture.
+    fn index(self) -> u16;
+}
+
 /// A square tile grid: how far it goes, what one cell is worth, and the tile under every
 /// cell.
 ///
@@ -83,16 +101,16 @@ pub enum GridProblem {
 /// [`World::load`](crate::world::World::load) refuses a document carrying one that is
 /// not, so nothing downstream has to check.
 #[derive(Debug, Clone, PartialEq)]
-pub struct TileGrid {
+pub struct TileGrid<T> {
     width: u32,
     height: u32,
     metres_per_cell: f32,
-    tiles: Vec<DungeonTile>,
+    tiles: Vec<T>,
 }
 
-impl TileGrid {
-    /// A grid of `width` by `height` cells, every one of them
-    /// [`DungeonTile::Empty`], at `metres_per_cell`.
+impl<T: TileVocabulary> TileGrid<T> {
+    /// A grid of `width` by `height` cells, every one of them the vocabulary's
+    /// [`Default`] tile, at `metres_per_cell`.
     ///
     /// Fails [`GridProblem::NoExtent`] on a zero dimension,
     /// [`GridProblem::TooManyCells`] over [`MAX_GRID_CELLS`], and
@@ -103,7 +121,7 @@ impl TileGrid {
             width,
             height,
             metres_per_cell,
-            tiles: vec![DungeonTile::Empty; cells as usize],
+            tiles: vec![T::default(); cells as usize],
         })
     }
 
@@ -115,7 +133,7 @@ impl TileGrid {
         width: u32,
         height: u32,
         metres_per_cell: f32,
-        tiles: Vec<DungeonTile>,
+        tiles: Vec<T>,
     ) -> Result<Self, GridProblem> {
         let cells = Self::check_extent(width, height, metres_per_cell)?;
         if tiles.len() as u64 != cells {
@@ -155,7 +173,7 @@ impl TileGrid {
     }
 
     /// Every tile, row-major from the top-left.
-    pub fn tiles(&self) -> &[DungeonTile] {
+    pub fn tiles(&self) -> &[T] {
         &self.tiles
     }
 
@@ -165,7 +183,7 @@ impl TileGrid {
     /// coordinates are signed because the camera pans past the origin, and flattening
     /// `y * width + x` before bounding each axis turns `x = -1, y = 1` into an in-bounds
     /// cell on the row above — so the grid's edge would wrap instead of ending.
-    pub fn get(&self, x: i64, y: i64) -> Option<DungeonTile> {
+    pub fn get(&self, x: i64, y: i64) -> Option<T> {
         self.tiles.get(self.flatten(x, y)?).copied()
     }
 
@@ -178,7 +196,7 @@ impl TileGrid {
     ///
     /// `None` for a cell outside the grid, having changed nothing. Crate-visible: this
     /// exists for [`crate::edit`] and for nothing else.
-    pub(crate) fn set(&mut self, x: i64, y: i64, tile: DungeonTile) -> Option<DungeonTile> {
+    pub(crate) fn set(&mut self, x: i64, y: i64, tile: T) -> Option<T> {
         let index = self.flatten(x, y)?;
         Some(std::mem::replace(&mut self.tiles[index], tile))
     }
@@ -241,17 +259,16 @@ pub fn scale_refusal(metres_per_cell: f32) -> Option<&'static str> {
 
 #[derive(Serialize, Deserialize)]
 #[serde(rename = "TileGrid")]
-struct GridOnDisk {
+struct GridOnDisk<T> {
     width: u32,
     height: u32,
     metres_per_cell: f32,
-    /// `(how many, which tile)`, in the order the flat tiles run.
-    runs: Vec<(u32, DungeonTile)>,
+    runs: Vec<(u32, T)>,
 }
 
-impl Serialize for TileGrid {
+impl<T: TileVocabulary> Serialize for TileGrid<T> {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        let mut runs: Vec<(u32, DungeonTile)> = Vec::new();
+        let mut runs: Vec<(u32, T)> = Vec::new();
         for tile in &self.tiles {
             match runs.last_mut() {
                 Some((count, last)) if last == tile && *count < u32::MAX => *count += 1,
@@ -268,11 +285,11 @@ impl Serialize for TileGrid {
     }
 }
 
-impl<'de> Deserialize<'de> for TileGrid {
+impl<'de, T: TileVocabulary> Deserialize<'de> for TileGrid<T> {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let disk = GridOnDisk::deserialize(deserializer)?;
+        let disk = GridOnDisk::<T>::deserialize(deserializer)?;
 
-        let mut tiles: Vec<DungeonTile> = Vec::new();
+        let mut tiles: Vec<T> = Vec::new();
         for (count, tile) in disk.runs {
             let room = MAX_GRID_CELLS.saturating_sub(tiles.len() as u64);
             let take = u64::from(count).min(room);

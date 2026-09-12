@@ -6,11 +6,11 @@ use campaign::brush::{self, Brush, TileChange};
 use campaign::grid::TileGrid;
 use campaign::tiles::DungeonTile;
 
-fn grid() -> TileGrid {
+fn grid() -> TileGrid<DungeonTile> {
     TileGrid::new(8, 8, 1.5).expect("the fixture must be a legal grid")
 }
 
-fn painted(grid: &TileGrid, changes: &[TileChange]) -> TileGrid {
+fn painted(grid: &TileGrid<DungeonTile>, changes: &[TileChange<DungeonTile>]) -> TileGrid<DungeonTile> {
     let mut tiles = grid.tiles().to_vec();
     for change in changes {
         tiles[(change.y * grid.width() + change.x) as usize] = change.tile;
@@ -19,7 +19,7 @@ fn painted(grid: &TileGrid, changes: &[TileChange]) -> TileGrid {
         .expect("painting cells cannot change the extent")
 }
 
-fn cells_of(changes: &[TileChange]) -> Vec<(u32, u32)> {
+fn cells_of(changes: &[TileChange<DungeonTile>]) -> Vec<(u32, u32)> {
     changes.iter().map(|change| (change.x, change.y)).collect()
 }
 

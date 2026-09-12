@@ -480,10 +480,10 @@ fn touches(points: &[Vec2], visible: Rect, slack: f32) -> bool {
         && bounds.max.y >= visible.min.y
 }
 
-fn draw_grid(
+fn draw_grid<T: campaign::grid::TileVocabulary>(
     pens: &mut Pens,
     view: MapView,
-    grid: &campaign::grid::TileGrid,
+    grid: &campaign::grid::TileGrid<T>,
     visible: Rect,
     cells_per_pixel: f32,
 ) {

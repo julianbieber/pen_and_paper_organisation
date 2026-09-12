@@ -1,0 +1,37 @@
+# pnp-ctl still paints a dungeon tile after the grid went generic over its vocabulary (#42),
+# and the `tile` verb reads the same words it did.
+#
+#   cargo run -p campaign --example make_demo -- /tmp/pnp-42
+#   PNP_CONTROL=/tmp/pnp-42.sock cargo run -p campaign_editor -- /tmp/pnp-42 &
+#   PNP_CONTROL=/tmp/pnp-42.sock cargo run -p campaign_editor --bin pnp-ctl -- run \
+#       crates/campaign_editor/scenarios/paint.scenario
+
+ping
+fixed-delta 0.016
+step 60                       # the terrain loads and the chrome appears
+
+# A dungeon entry, and into it.
+tool point
+kind dungeon
+click 30 30
+tool select
+click 30 30
+enter-dungeon
+step 10
+
+# One wall with the freehand brush.
+brush paint
+tile wall
+click 2 2
+step 5
+observe grid 0 0 4 4          # (2, 2) reads "wall"
+
+# A rectangle of secret doors, then undone as one stroke.
+tile secret-door
+brush rect
+drag 0 0 1 1
+step 5
+observe grid 0 0 4 4          # (0, 0)-(1, 1) read "secret door"
+undo
+step 5
+observe grid 0 0 4 4          # the rectangle is gone, the wall stays

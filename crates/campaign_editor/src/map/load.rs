@@ -101,7 +101,7 @@ pub fn open_map(
     retired: Option<Res<RetiredBackdrop>>,
 ) {
     let base = tileset_root.0.join(TILESET_BASE);
-    let meta = match AtlasMeta::read(&base) {
+    let meta = match terrain_meta(&tileset_root.0) {
         Ok(meta) => meta,
         Err(error) => {
             commands.insert_resource(MapState::unavailable(error.to_string()));
@@ -200,6 +200,10 @@ fn channel(value: f32) -> u8 {
     (value.clamp(0.0, 1.0) * 255.0).round() as u8
 }
 
+fn terrain_meta(root: &std::path::Path) -> Result<AtlasMeta, atlas::AtlasError> {
+    AtlasMeta::read(&root.join(TILESET_BASE), tiles::TILE_COUNT)
+}
+
 /// Where the tileset's files sit on disk, so the sidecar can be read beside the image
 /// the asset server loads.
 #[derive(Resource, Debug, Clone)]
@@ -235,4 +239,17 @@ pub fn tileset_is_ready(assets: Option<Res<AssetServer>>, map: Option<Res<MapAss
         return false;
     };
     assets.is_loaded_with_dependencies(&map.tileset)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // The terrain strip is still checked against TILE_COUNT now the reader is handed a count.
+    #[test]
+    fn the_committed_terrain_strip_is_read_against_the_terrain_tile_count() {
+        let meta = terrain_meta(std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/assets")))
+            .expect("the committed terrain strip reads");
+        assert!(meta.width_in_tiles >= u32::from(tiles::TILE_COUNT));
+    }
 }

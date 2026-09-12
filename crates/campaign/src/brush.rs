@@ -12,8 +12,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::grid::TileGrid;
-use crate::tiles::DungeonTile;
+use crate::grid::{TileGrid, TileVocabulary};
 
 /// What a stroke does to the cells it covers.
 ///
@@ -63,10 +62,10 @@ impl Brush {
 
 /// One cell becoming one tile.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub struct TileChange {
+pub struct TileChange<T> {
     pub x: u32,
     pub y: u32,
-    pub tile: DungeonTile,
+    pub tile: T,
 }
 
 /// The cells `brush` would change, given the path the gesture traced and the tile in
@@ -74,8 +73,9 @@ pub struct TileChange {
 ///
 /// `path` is every cell the gesture covered, in order. [`Brush::Freehand`] uses all of
 /// it; the others use only its first and last cell. [`Brush::Room`] ignores `tile`
-/// entirely — a room is floor inside a wall border, which is the whole point of it being
-/// its own brush rather than two rectangles.
+/// entirely — a room is the vocabulary's [`TileVocabulary::FLOOR`] inside a
+/// [`TileVocabulary::WALL`] border, which is the whole point of it being its own brush
+/// rather than two rectangles.
 ///
 /// Empty for a path that changes nothing, which is not a failure: a click on a cell that
 /// already carries the tile, a flood fill whose region is already that tile, and an empty
@@ -83,17 +83,17 @@ pub struct TileChange {
 ///
 /// Every cell in the result is inside `grid`, carries a tile it does not already have, and
 /// appears exactly once.
-pub fn cells(
-    grid: &TileGrid,
+pub fn cells<T: TileVocabulary>(
+    grid: &TileGrid<T>,
     brush: Brush,
     path: &[(i64, i64)],
-    tile: DungeonTile,
-) -> Vec<TileChange> {
+    tile: T,
+) -> Vec<TileChange<T>> {
     let (Some(&first), Some(&last)) = (path.first(), path.last()) else {
         return Vec::new();
     };
 
-    let painted: Vec<((i64, i64), DungeonTile)> = match brush {
+    let painted: Vec<((i64, i64), T)> = match brush {
         Brush::Freehand => path.iter().map(|cell| (*cell, tile)).collect(),
         Brush::Rectangle => rectangle(first, last).map(|cell| (cell, tile)).collect(),
         Brush::Flood => flood(grid, first, tile).into_iter().map(|cell| (cell, tile)).collect(),
@@ -140,21 +140,20 @@ fn rectangle(from: (i64, i64), to: (i64, i64)) -> impl Iterator<Item = (i64, i64
     (low_y..=high_y).flat_map(move |y| (low_x..=high_x).map(move |x| (x, y)))
 }
 
-fn room(from: (i64, i64), to: (i64, i64)) -> impl Iterator<Item = ((i64, i64), DungeonTile)> {
+fn room<T: TileVocabulary>(
+    from: (i64, i64),
+    to: (i64, i64),
+) -> impl Iterator<Item = ((i64, i64), T)> {
     let (low_x, high_x) = (from.0.min(to.0), from.0.max(to.0));
     let (low_y, high_y) = (from.1.min(to.1), from.1.max(to.1));
     rectangle(from, to).map(move |(x, y)| {
         let border = x == low_x || x == high_x || y == low_y || y == high_y;
-        let tile = if border {
-            DungeonTile::Wall
-        } else {
-            DungeonTile::Floor
-        };
+        let tile = if border { T::WALL } else { T::FLOOR };
         ((x, y), tile)
     })
 }
 
-fn flood(grid: &TileGrid, start: (i64, i64), tile: DungeonTile) -> Vec<(i64, i64)> {
+fn flood<T: TileVocabulary>(grid: &TileGrid<T>, start: (i64, i64), tile: T) -> Vec<(i64, i64)> {
     let Some(want) = grid.get(start.0, start.1) else {
         return Vec::new();
     };
@@ -186,12 +185,12 @@ fn flood(grid: &TileGrid, start: (i64, i64), tile: DungeonTile) -> Vec<(i64, i64
     found
 }
 
-fn keep_the_changes(
-    grid: &TileGrid,
-    painted: Vec<((i64, i64), DungeonTile)>,
-) -> Vec<TileChange> {
+fn keep_the_changes<T: TileVocabulary>(
+    grid: &TileGrid<T>,
+    painted: Vec<((i64, i64), T)>,
+) -> Vec<TileChange<T>> {
     let width = i64::from(grid.width());
-    let mut wanted: Vec<Option<DungeonTile>> = vec![None; grid.tiles().len()];
+    let mut wanted: Vec<Option<T>> = vec![None; grid.tiles().len()];
     let mut order: Vec<usize> = Vec::new();
 
     for ((x, y), tile) in painted {
