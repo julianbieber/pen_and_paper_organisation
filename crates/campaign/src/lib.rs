@@ -9,6 +9,8 @@
 pub mod atlas;
 /// The ways a stroke turns a grid and a gesture into the cells it would change.
 pub mod brush;
+/// Choosing a directory by walking the tree, and why one could not be read.
+pub mod browse;
 /// Opening and creating a campaign directory, and why either failed.
 pub mod campaign;
 /// A world under authorship: its undo and redo stacks, and whether it is unsaved.
@@ -56,6 +58,7 @@ pub mod tiles;
 pub mod world;
 
 pub use atlas::{AtlasError, AtlasMeta};
+pub use browse::{BrowseError, Listing, Subdirectory};
 pub use brush::{Brush, TileChange};
 pub use campaign::{Campaign, CampaignError, Created};
 pub use document::{Document, UNDO_LIMIT};

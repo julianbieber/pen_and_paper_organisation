@@ -49,8 +49,12 @@ holds a manifest, and `crates/campaign_editor/src/dialog.rs` lists them and reme
 whenever a campaign opens. The *Create* form takes a name, a parent and a terrain rather
 than a full path (#27): `Campaign::create_named` in `crates/campaign/src/campaign.rs` roots
 the campaign at `<parent>/<slug>` through `campaign::slug` and refuses, never uniques, a
-root that already exists; `recent::default_parent` decides where it goes by default.
-Remaining: a folder picker (#28),
+root that already exists; `recent::default_parent` decides where it goes by default. Every
+path field in the dialog has a *Browse…* beside it (#28): `crates/campaign/src/browse.rs`
+decides where a walk starts, what one directory lists (hidden directories dropped, capped
+at `MAX_LISTED`) and what "up" is, and `crates/campaign_editor/src/picker.rs` is the
+feathers sheet, reading every directory on the IO pool.
+Remaining:
 close-and-switch (#29), sync from the editor (#30) and clone from the dialog (#31). Order is
 dependency order; the plan, with the two decisions it makes, is at
 `~/fun_repos/hobby-mimisbrunnr/notes/pen_and_paper_organisation/planning/campaign_management/plan-2026-09-12-campaign-directory-and-sync.md`.

@@ -26,6 +26,7 @@ mod document;
 mod features;
 mod map;
 mod notes;
+mod picker;
 
 /// The order the editor's two halves run in.
 ///
@@ -108,6 +109,7 @@ fn main() {
     .add_plugins(map::MapPlugin)
     .add_plugins(features::FeaturesPlugin)
     .add_plugins(notes::NotesPlugin)
+    .add_plugins(picker::PickerPlugin)
     .add_systems(Startup, (status_bar.spawn(), shell.spawn().run_if(no_campaign)))
     .add_systems(
         Update,
@@ -198,6 +200,6 @@ fn shell() -> impl Scene {
         }
         TabGroup
         DialogRoot
-        Children [ dialog::dialog() ]
+        Children [ dialog::dialog(), picker::sheet() ]
     }
 }
