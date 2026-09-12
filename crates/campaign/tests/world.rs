@@ -327,6 +327,20 @@ fn next_id_is_raised_past_the_features_a_document_holds() {
     assert_eq!(world.fresh_id(), FeatureId(8));
 }
 
+// git does not carry an empty directory, so a clone that never held a dungeon must
+// still be able to save one into a `dungeons/` that is not there yet.
+#[test]
+fn a_save_creates_the_directory_it_is_saved_into() {
+    let (world, _) = populated();
+    let tmp = tempfile::tempdir().expect("temp dir");
+    let path = tmp.path().join("dungeons").join("crypt.ron");
+
+    world.save(&path).expect("save into an absent directory");
+
+    assert!(path.is_file());
+    assert_eq!(World::load(&path).expect("load"), world);
+}
+
 // A save must not be able to destroy the document that is already there, which is the
 // one unrecoverable failure in this crate.
 #[test]

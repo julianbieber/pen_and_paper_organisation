@@ -18,7 +18,7 @@ use bevy::input_focus::InputFocus;
 use bevy::input_focus::tab_navigation::TabGroup;
 use bevy::prelude::*;
 use bevy::window::{ExitCondition, WindowCloseRequested};
-use campaign::Campaign;
+use campaign::{Campaign, Created};
 
 mod control;
 mod dialog;
@@ -80,6 +80,16 @@ impl StatusMessage {
                 campaign.terrain_dir().display()
             )
         };
+    }
+
+    /// Say what `created` left worth saying: the repository first, since a GM with no
+    /// `git` needs to know the campaign it opened is not versioned, then whatever
+    /// opening it left worth saying.
+    pub fn created(&mut self, created: &Created) {
+        match &created.repository {
+            Err(error) => self.0 = format!("campaign created, but {error}"),
+            Ok(()) => self.opened(&created.campaign),
+        }
     }
 }
 

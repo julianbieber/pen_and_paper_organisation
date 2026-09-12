@@ -2,11 +2,25 @@
 //! directories on disk — including a real `watershed` terrain, because that is what
 //! `Campaign::open` demands.
 
+use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
-use campaign::{CAMPAIGN_VERSION, Campaign, CampaignError, CampaignManifest};
+use campaign::repo::GitError;
+use campaign::{CAMPAIGN_VERSION, Campaign, CampaignError, CampaignManifest, GitRunner};
 use glam::UVec2;
 use watershed::{ChannelMeta, FieldInfo, FieldRole, IoError, LayerTexels, Terrain, TerrainLayer};
+
+struct NoGit;
+
+impl GitRunner for NoGit {
+    fn run(&self, _dir: &Path, _args: &[OsString]) -> Result<std::process::Output, GitError> {
+        Err(GitError::GitMissing)
+    }
+}
+
+fn create(root: &Path, terrain: impl AsRef<Path>) -> Result<Campaign, CampaignError> {
+    Campaign::create(root, terrain, &NoGit).map(|created| created.campaign)
+}
 
 fn write_loadable_terrain(dir: &Path) {
     let size = UVec2::new(8, 8);
@@ -63,7 +77,7 @@ fn tree(dir: &Path) -> Vec<(String, Vec<u8>)> {
 fn create_then_open_round_trips_the_manifest() {
     let (_tmp, root) = root_with_terrain();
 
-    let created = Campaign::create(&root, root.join("terrain")).expect("create");
+    let created = create(&root, root.join("terrain")).expect("create");
     let opened = Campaign::open(&root).expect("open");
 
     assert_eq!(created.manifest(), opened.manifest());
@@ -76,7 +90,7 @@ fn create_then_open_round_trips_the_manifest() {
 #[test]
 fn create_writes_the_layout_and_the_terrain() {
     let (_tmp, root) = root_with_terrain();
-    Campaign::create(&root, root.join("terrain")).expect("create");
+    create(&root, root.join("terrain")).expect("create");
 
     for subdir in ["dungeons", "images", "notes"] {
         assert!(root.join(subdir).is_dir(), "{subdir} was not created");
@@ -101,7 +115,7 @@ fn create_adopts_the_terrain_directory_in_place() {
     let terrain = root.join("terrain");
 
     let before = tree(&terrain);
-    Campaign::create(&root, &terrain).expect("create");
+    create(&root, &terrain).expect("create");
     let after = tree(&terrain);
 
     assert_eq!(before, after);
@@ -210,7 +224,7 @@ fn an_empty_terrain_field_is_malformed() {
 #[test]
 fn a_rejected_terrain_reports_what_watershed_said() {
     let (_tmp, root) = root_with_terrain();
-    Campaign::create(&root, root.join("terrain")).expect("create");
+    create(&root, root.join("terrain")).expect("create");
 
     let cases: Vec<(&str, Box<dyn Fn(&Path)>)> = vec![
         ("missing", Box::new(|dir: &Path| std::fs::remove_dir_all(dir).unwrap())),
@@ -230,7 +244,7 @@ fn a_rejected_terrain_reports_what_watershed_said() {
     let mut seen = Vec::new();
     for (label, break_it) in cases {
         let (_tmp, root) = root_with_terrain();
-        Campaign::create(&root, root.join("terrain")).expect("create");
+        create(&root, root.join("terrain")).expect("create");
         break_it(&root.join("terrain"));
 
         match Campaign::open(&root) {
@@ -257,11 +271,11 @@ fn a_rejected_terrain_reports_what_watershed_said() {
 #[test]
 fn create_refuses_an_existing_campaign_without_touching_it() {
     let (_tmp, root) = root_with_terrain();
-    Campaign::create(&root, root.join("terrain")).expect("create");
+    create(&root, root.join("terrain")).expect("create");
     let before = std::fs::read(root.join("campaign.ron")).unwrap();
 
     assert!(matches!(
-        Campaign::create(&root, root.join("terrain")),
+        create(&root, root.join("terrain")),
         Err(CampaignError::AlreadyACampaign(_))
     ));
     assert_eq!(before, std::fs::read(root.join("campaign.ron")).unwrap());
@@ -276,7 +290,7 @@ fn create_writes_nothing_when_the_terrain_is_refused() {
     let missing_source = tmp.path().join("does-not-exist");
 
     assert!(matches!(
-        Campaign::create(&root, &missing_source),
+        create(&root, &missing_source),
         Err(CampaignError::TerrainUnreadable { .. })
     ));
     assert!(!root.exists(), "create left a directory behind");
@@ -334,7 +348,7 @@ fn create_adopts_an_existing_directory_but_not_a_file() {
     std::fs::create_dir_all(root.join("notes")).unwrap();
     std::fs::write(root.join("notes/already-here.md"), "keep me").unwrap();
 
-    Campaign::create(&root, root.join("terrain")).expect("create into a populated directory");
+    create(&root, root.join("terrain")).expect("create into a populated directory");
     assert_eq!(
         std::fs::read_to_string(root.join("notes/already-here.md")).unwrap(),
         "keep me"
@@ -347,7 +361,7 @@ fn create_adopts_an_existing_directory_but_not_a_file() {
     std::fs::write(&file_root, "not a directory").unwrap();
 
     assert!(matches!(
-        Campaign::create(&file_root, &terrain),
+        create(&file_root, &terrain),
         Err(CampaignError::LayoutUnwritable { .. })
     ));
 }
@@ -361,7 +375,7 @@ fn create_copies_the_terrain_so_the_directory_travels() {
     write_loadable_terrain(&source);
 
     let root = tmp.path().join("a");
-    Campaign::create(&root, &source).expect("create");
+    create(&root, &source).expect("create");
 
     assert_eq!(tree(&root.join("terrain")), tree(&source));
     assert_eq!(CampaignManifest::read(&root).unwrap().terrain, "terrain");
@@ -389,7 +403,7 @@ fn create_refuses_a_terrain_directory_already_in_the_way() {
     std::fs::write(root.join("terrain/unrelated.txt"), "not the source").unwrap();
 
     assert!(matches!(
-        Campaign::create(&root, &source),
+        create(&root, &source),
         Err(CampaignError::TerrainInTheWay(_))
     ));
     assert!(!root.join("campaign.ron").exists());
@@ -405,7 +419,7 @@ fn create_refuses_a_root_nested_inside_the_source() {
     let root = source.join("nested-campaign");
 
     assert!(matches!(
-        Campaign::create(&root, &source),
+        create(&root, &source),
         Err(CampaignError::TerrainNotCopyable { .. })
     ));
 }
@@ -415,7 +429,7 @@ fn create_refuses_a_root_nested_inside_the_source() {
 #[test]
 fn create_over_an_existing_campaign_copies_nothing() {
     let (_tmp, root) = root_with_terrain();
-    Campaign::create(&root, root.join("terrain")).expect("create");
+    create(&root, root.join("terrain")).expect("create");
     let before = tree(&root.join("terrain"));
 
     let tmp2 = tempfile::tempdir().unwrap();
@@ -423,7 +437,7 @@ fn create_over_an_existing_campaign_copies_nothing() {
     write_loadable_terrain(&other_source);
 
     assert!(matches!(
-        Campaign::create(&root, &other_source),
+        create(&root, &other_source),
         Err(CampaignError::AlreadyACampaign(_))
     ));
     assert_eq!(before, tree(&root.join("terrain")));
@@ -439,7 +453,7 @@ fn create_leaves_no_terrain_directory_when_the_copy_is_refused() {
     std::os::unix::fs::symlink(source.join("terrain.ron"), source.join("a-symlink")).unwrap();
 
     let root = tmp.path().join("a");
-    match Campaign::create(&root, &source) {
+    match create(&root, &source) {
         Err(CampaignError::TerrainNotCopyable { .. }) => {}
         other => panic!("expected TerrainNotCopyable, got {other:?}"),
     }
@@ -516,7 +530,7 @@ fn the_terrain_error_carries_watersheds_own_error() {
     let tmp = tempfile::tempdir().unwrap();
     let root = tmp.path().join("c");
     let missing_source = tmp.path().join("nowhere");
-    match Campaign::create(&root, &missing_source) {
+    match create(&root, &missing_source) {
         Err(CampaignError::TerrainUnreadable { source, .. }) => {
             assert!(matches!(source, IoError::Io(_)));
         }
@@ -524,12 +538,38 @@ fn the_terrain_error_carries_watersheds_own_error() {
     }
 }
 
+// The fourth acceptance criterion, at the level this crate can check it without a
+// window: a campaign created with no `git` is still openable, and `create` reports the
+// repository as refused rather than silently succeeding or refusing the campaign.
+#[test]
+fn create_with_no_git_is_still_an_openable_campaign() {
+    let (_tmp, root) = root_with_terrain();
+
+    let created = Campaign::create(&root, root.join("terrain"), &NoGit).expect("create");
+    assert!(matches!(created.repository, Err(GitError::GitMissing)));
+
+    let opened = Campaign::open(&root).expect("a campaign with no repository still opens");
+    assert_eq!(opened.manifest(), created.campaign.manifest());
+}
+
+// The ignore file is what stops a committed campaign churning on its own queries and
+// saves, so it must not depend on `git` being there to write it.
+#[test]
+fn the_ignore_file_is_written_even_when_git_is_missing() {
+    let (_tmp, root) = root_with_terrain();
+    Campaign::create(&root, root.join("terrain"), &NoGit).expect("create");
+
+    let ignore = std::fs::read_to_string(root.join(".gitignore")).expect("read .gitignore");
+    assert!(ignore.contains("notes/.zk/notebook.db*"), "{ignore}");
+    assert!(ignore.contains("*.tmp"), "{ignore}");
+}
+
 // The GM's scale is what every figure on screen is derived from, so it has to survive the
 // round trip through campaign.ron rather than being held only in memory.
 #[test]
 fn a_rescale_reaches_the_manifest_on_disk() {
     let (_tmp, root) = root_with_terrain();
-    let mut campaign = Campaign::create(&root, root.join("terrain")).expect("create");
+    let mut campaign = create(&root, root.join("terrain")).expect("create");
 
     campaign.rescale(12.5, "miles").expect("a legal scale");
     assert_eq!(campaign.manifest().units_per_cell, 12.5);
@@ -545,7 +585,7 @@ fn a_rescale_reaches_the_manifest_on_disk() {
 #[test]
 fn a_rescale_keeps_a_field_this_build_does_not_know() {
     let (_tmp, root) = root_with_terrain();
-    Campaign::create(&root, root.join("terrain")).expect("create");
+    create(&root, root.join("terrain")).expect("create");
 
     let path = root.join("campaign.ron");
     let text = std::fs::read_to_string(&path).expect("read");
@@ -563,7 +603,7 @@ fn a_rescale_keeps_a_field_this_build_does_not_know() {
 #[test]
 fn a_refused_rescale_changes_nothing() {
     let (_tmp, root) = root_with_terrain();
-    let mut campaign = Campaign::create(&root, root.join("terrain")).expect("create");
+    let mut campaign = create(&root, root.join("terrain")).expect("create");
     let before = std::fs::read_to_string(root.join("campaign.ron")).expect("read");
 
     let refusal = campaign.rescale(0.0, "km").expect_err("zero is not a scale");
@@ -578,7 +618,7 @@ fn a_refused_rescale_changes_nothing() {
 #[test]
 fn a_rescale_leaves_no_temporary_file() {
     let (_tmp, root) = root_with_terrain();
-    let mut campaign = Campaign::create(&root, root.join("terrain")).expect("create");
+    let mut campaign = create(&root, root.join("terrain")).expect("create");
     campaign.rescale(2.0, "km").expect("a legal scale");
 
     let names: Vec<String> = std::fs::read_dir(&root)

@@ -40,6 +40,9 @@ pub mod measure;
 pub mod notebook;
 /// What a position in cells lands on, what a rectangle encloses, and where a vertex snaps.
 pub mod pick;
+/// What makes a campaign directory a git repository, and the one place this workspace
+/// runs git.
+pub mod repo;
 /// Turning a label the GM typed into the name of a file this tool creates.
 pub mod slug;
 /// The one table saying what a feature and a dungeon tile look like.
@@ -51,7 +54,7 @@ pub mod world;
 
 pub use atlas::{AtlasError, AtlasMeta};
 pub use brush::{Brush, TileChange};
-pub use campaign::{Campaign, CampaignError};
+pub use campaign::{Campaign, CampaignError, Created};
 pub use document::{Document, UNDO_LIMIT};
 pub use draft::{Draft, DraftShape};
 pub use edit::{Edit, EditError};
@@ -63,6 +66,7 @@ pub use tiles::DungeonTile;
 pub use pick::{Hit, Landing, Snap};
 pub use slug::dungeon_name;
 pub use notebook::{NewNote, NoteError, NoteKind, Notebook, Runner, SystemRunner};
+pub use repo::{GitError, GitRunner, Repo, SystemGit};
 pub use manifest::{
     CAMPAIGN_VERSION, CampaignManifest, DEFAULT_UNIT, DEFAULT_UNITS_PER_CELL, MAX_MANIFEST_BYTES,
     MAX_UNITS_PER_CELL, MIN_UNITS_PER_CELL,

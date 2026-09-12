@@ -185,7 +185,8 @@ impl CampaignManifest {
     /// text is parsed back before anything is written, so a manifest this build cannot edit
     /// in place is refused rather than mangled. The new text goes to a temporary file beside
     /// the original and is renamed over it, so a write that fails part way leaves the old
-    /// manifest intact rather than a file nothing can parse.
+    /// manifest intact rather than a file nothing can parse. The temporary's name ends
+    /// `.tmp`, the pattern the campaign's `.gitignore` carries.
     pub fn write_scale(root: &Path, units_per_cell: f64, unit: &str) -> Result<(), CampaignError> {
         use std::io::Write as _;
 
@@ -209,7 +210,7 @@ impl CampaignManifest {
             ));
         }
 
-        let temporary = path.with_extension("ron.writing");
+        let temporary = path.with_extension("ron.tmp");
         let mut file =
             std::fs::File::create(&temporary).map_err(|source| CampaignError::LayoutUnwritable {
                 path: temporary.clone(),
