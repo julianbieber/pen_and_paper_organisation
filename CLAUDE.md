@@ -34,6 +34,13 @@ refusals and the import, `campaign_editor/src/map/image.rs` reads and draws it, 
 behind them is in the plan at
 `~/fun_repos/hobby-mimisbrunnr/notes/pen_and_paper_organisation/init/pen_and_paper_plan/plan-2026-08-30-campaign-map-and-notes.md`.
 
+**Campaign management is the next milestone, filed as #24–#31** (2026-09-12): the campaign
+becomes one self-contained, git-backed directory — the terrain copied in (#24), `git init` and
+a `.gitignore` on create (#25), a recent list (#26), create-by-name (#27), a folder picker (#28),
+close-and-switch (#29), sync from the editor (#30) and clone from the dialog (#31). Order is
+dependency order; the plan, with the two decisions it makes, is at
+`~/fun_repos/hobby-mimisbrunnr/notes/pen_and_paper_organisation/planning/campaign_management/plan-2026-09-12-campaign-directory-and-sync.md`.
+
 `gh issue view <n>` carries the scope and acceptance criteria for a session's work. Each
 issue names what it depends on. After #1 there are three tracks that do not block each
 other: terrain (#2, #10), model and editor (#3, #4, #5, #8, #9), notes (#6, #7).
