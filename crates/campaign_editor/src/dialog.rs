@@ -16,7 +16,7 @@ use bevy::prelude::*;
 use bevy::tasks::{AsyncComputeTaskPool, Task, block_on, futures_lite::future};
 use bevy::text::{EditableText, TextEditChange};
 use bevy::ui_widgets::Activate;
-use campaign::{Campaign, CampaignError, CampaignManifest};
+use campaign::{Campaign, CampaignError, CampaignManifest, Created, SystemGit};
 
 use crate::{OpenCampaign, StatusMessage};
 
@@ -50,7 +50,7 @@ pub struct DialogFields {
 /// One slot, deliberately: a second load started over the first would be a second
 /// multi-hundred-megabyte read for a result nothing would use.
 #[derive(Resource, Default)]
-pub struct OpenJob(Option<Task<Result<Campaign, CampaignError>>>);
+pub struct OpenJob(Option<Task<Result<Created, CampaignError>>>);
 
 impl OpenJob {
     /// Whether a load is running. While one is, the buttons are disabled.
@@ -189,7 +189,12 @@ fn start_open(fields: &DialogFields, job: &mut OpenJob, status: &mut StatusMessa
     }
 
     status.0 = format!("opening {}…", root.display());
-    let task = AsyncComputeTaskPool::get().spawn(async move { Campaign::open(root) });
+    let task = AsyncComputeTaskPool::get().spawn(async move {
+        Campaign::open(root).map(|campaign| Created {
+            campaign,
+            repository: Ok(()),
+        })
+    });
     job.0 = Some(task);
 }
 
@@ -201,7 +206,8 @@ fn start_create(fields: &DialogFields, job: &mut OpenJob, status: &mut StatusMes
     let terrain = std::path::PathBuf::from(fields.terrain.trim());
 
     status.0 = format!("creating {}…", root.display());
-    let task = AsyncComputeTaskPool::get().spawn(async move { Campaign::create(root, terrain) });
+    let task = AsyncComputeTaskPool::get()
+        .spawn(async move { Campaign::create(root, terrain, &SystemGit) });
     job.0 = Some(task);
 }
 
@@ -219,10 +225,10 @@ fn finish_open(
     job.0 = None;
 
     match result {
-        Ok(campaign) => {
-            info!("opened campaign at {}", campaign.root().display());
-            status.opened(&campaign);
-            commands.insert_resource(OpenCampaign(campaign));
+        Ok(created) => {
+            info!("opened campaign at {}", created.campaign.root().display());
+            status.created(&created);
+            commands.insert_resource(OpenCampaign(created.campaign));
         }
         Err(error) => {
             error!("{error}");

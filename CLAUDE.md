@@ -39,8 +39,11 @@ becomes one self-contained, git-backed directory. The terrain is copied in on cr
 `Campaign::create` in `crates/campaign/src/campaign.rs` takes the terrain as a source and
 copies it into `<root>/terrain`, `crates/campaign/src/layout.rs` fixes that path and
 `crates/campaign/src/manifest.rs` says whether an opened campaign's terrain travels with it;
-`crates/campaign_editor`'s dialog and status line report it. Remaining: `git init` and
-a `.gitignore` on create (#25), a recent list (#26), create-by-name (#27), a folder picker (#28),
+`crates/campaign_editor`'s dialog and status line report it. A created campaign is a git
+repository from birth (#25): `crates/campaign/src/repo.rs` is the one place this workspace
+runs `git`, `Campaign::create` runs it after the manifest is written, and a missing or
+refusing `git` is reported through `Created::repository` rather than refusing the campaign.
+Remaining: a recent list (#26), create-by-name (#27), a folder picker (#28),
 close-and-switch (#29), sync from the editor (#30) and clone from the dialog (#31). Order is
 dependency order; the plan, with the two decisions it makes, is at
 `~/fun_repos/hobby-mimisbrunnr/notes/pen_and_paper_organisation/planning/campaign_management/plan-2026-09-12-campaign-directory-and-sync.md`.
@@ -222,6 +225,7 @@ crates/campaign_editor   the bevy app, binary `pnp`
 
 my-campaign/
 ├── campaign.ron         version, name, terrain dir, units_per_cell, unit
+├── .gitignore           notes/.zk/notebook.db* and *.tmp, written on create (#25)
 ├── terrain/             watershed output, copied in on create (#24), read-only after
 ├── world.ron            features
 ├── dungeons/*.ron       child documents
@@ -259,16 +263,29 @@ reads "missing" as "default" rather than inventing a migration.
 **Nothing in this repo ever calls `Terrain::save_to_dir`.** It deletes `layer_<n>.png`
 files it does not name, and terrain here is read-only.
 
-`create` still makes a plain `notes/` directory and runs no subprocess. `campaign::notebook`
-makes it a notebook the first time a note is asked for (#6): `zk init` only when there is no
-`.zk`, then the four templates ensured on every create, each written only where no file of
-that name is there — so a notebook the GM made themselves gains them, one whose templates
-were half-written repairs itself, and a template the GM has edited is never overwritten.
+`create` still makes a plain `notes/` directory. `campaign::notebook` makes it a notebook
+the first time a note is asked for (#6): `zk init` only when there is no `.zk`, then the
+four templates ensured on every create, each written only where no file of that name is
+there — so a notebook the GM made themselves gains them, one whose templates were
+half-written repairs itself, and a template the GM has edited is never overwritten. The
+subprocess `create` itself runs is git's, not `zk`'s — see below.
+
+**A created campaign is a git repository from birth** (#25): `campaign::repo` is the one
+place this workspace runs `git`, mirroring `campaign::notebook`'s shape for `zk`. After the
+manifest is written, `Campaign::create` runs `Repo::at(root).begin(git)` — write
+`.gitignore` (`create_new`, so a GM's own is never overwritten), `init` unless the root is
+already inside a work tree, `add`, `commit` — and keeps the outcome in `Created::repository`
+rather than propagating it: a missing or refusing `git` costs the GM the repository, never
+the campaign. The status line reports it through `StatusMessage::created`. A writer creates
+the directory it writes into — `World::save` does, before opening its temporary — because
+git does not carry an empty one, and a clone that never held a dungeon must still be able to
+save one.
 
 **`crates/campaign` still passes its tests with nothing on `PATH`.** The argument vectors
-are pure functions tested against a recorded `Runner`; the handful of tests wanting the real
-program live in `tests/notebook_zk.rs` and skip themselves, with `PNP_REQUIRE_ZK=1` turning
-the skip into a failure so CI cannot pass having checked none of it.
+are pure functions tested against a recorded `Runner`/`GitRunner`; the handful of tests
+wanting the real programs live in `tests/notebook_zk.rs` and `tests/repo_git.rs` and skip
+themselves, with `PNP_REQUIRE_ZK=1` and `PNP_REQUIRE_GIT=1` turning the skip into a failure
+so CI cannot pass having checked none of it.
 
 ## Conventions
 

@@ -13,6 +13,7 @@ use crate::layout;
 use crate::manifest::{
     CAMPAIGN_VERSION, CampaignManifest, DEFAULT_UNIT, DEFAULT_UNITS_PER_CELL,
 };
+use crate::repo::{GitError, GitRunner, Repo};
 
 /// Why a campaign could not be opened or created.
 ///
@@ -79,6 +80,19 @@ pub enum CampaignError {
     /// From `create`: the source cannot be copied as it stands.
     #[error("`{}` cannot be copied: {reason}", .path.display())]
     TerrainNotCopyable { path: PathBuf, reason: &'static str },
+}
+
+/// What [`Campaign::create`] built: the campaign, and whether the directory it lives in
+/// became a git repository.
+///
+/// Two fields rather than one: a [`Campaign`] says what is on disk and opens the same
+/// way whether or not it is versioned, so whether the directory is a repository is
+/// neither a field of it nor a reason to refuse the campaign — a GM who has no `git`
+/// still gets a working campaign, just not a history.
+#[derive(Debug)]
+pub struct Created {
+    pub campaign: Campaign,
+    pub repository: Result<(), GitError>,
 }
 
 /// An opened campaign directory: the root, the manifest read from it, and the
@@ -164,7 +178,17 @@ impl Campaign {
     /// is left under `root/terrain` for a retry to clean up. Subdirectories that
     /// already exist are adopted, so creating a campaign in a directory that already
     /// has content succeeds.
-    pub fn create(root: impl AsRef<Path>, terrain_source: impl AsRef<Path>) -> Result<Self, CampaignError> {
+    ///
+    /// Once the layout and the manifest are written, `git` runs through `Repo::at(root)`:
+    /// a root already inside a work tree is adopted rather than re-initialised, and
+    /// either way one commit is made so the campaign has a history from birth. That
+    /// outcome is [`Created::repository`], never this function's `Err` — a GM with no
+    /// `git` on `PATH` still gets a working, openable campaign, just not a repository.
+    pub fn create(
+        root: impl AsRef<Path>,
+        terrain_source: impl AsRef<Path>,
+        git: &impl GitRunner,
+    ) -> Result<Created, CampaignError> {
         let root = root.as_ref();
         let terrain_source = terrain_source.as_ref();
 
@@ -200,10 +224,15 @@ impl Campaign {
         };
         write_manifest(root, &manifest)?;
 
-        Ok(Self {
-            root: root.to_owned(),
-            manifest,
-            terrain,
+        let repository = Repo::at(root).begin(git);
+
+        Ok(Created {
+            campaign: Self {
+                root: root.to_owned(),
+                manifest,
+                terrain,
+            },
+            repository,
         })
     }
 

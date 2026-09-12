@@ -273,6 +273,10 @@ impl World {
     /// follow it. A leftover temporary from a previous crash is removed first, so the
     /// stricter open cannot make saving fail for ever.
     ///
+    /// Creates `path`'s parent directory first, if it is not there: git does not carry
+    /// an empty directory, so a clone that never held a dungeon must still be able to
+    /// save one into `dungeons/`.
+    ///
     /// Refuses [`WorldError::WorldTooLarge`] for a world that would serialize to more than
     /// [`MAX_WORLD_BYTES`], so that a world this build writes is always one it reads back.
     /// Nothing is written in that case — the document already on disk is left alone.
@@ -297,6 +301,10 @@ impl World {
                 bytes: text.len() as u64,
                 limit: MAX_WORLD_BYTES,
             });
+        }
+
+        if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
+            std::fs::create_dir_all(parent).map_err(unwritable)?;
         }
 
         let temporary = temporary_beside(path);
