@@ -21,7 +21,9 @@ and linked to features (#6): `campaign::notebook` owns the whole `zk` dependency
 `campaign_editor/src/notes` runs it off the frame. Selecting a place shows what references
 it (#7): the same module builds the tag and the `zk list`, `notes/references.rs` caches an
 answer per tag behind one query at a time, and `notes/watch.rs` drops the cache when the
-notebook changes underneath us. Distances are measured at campaign scale (#10):
+notebook changes underneath us. A row shows the words around the tag in the note's own
+text, through a second, matching `zk list` (#19), rather than the note's opening line.
+Distances are measured at campaign scale (#10):
 `campaign::measure` says what one cell is worth and rounds every figure, `map/scalebar.rs`
 draws the bar, `map/scale.rs` is where the GM sets the scale and the party's pace, and
 `features/ruler.rs` owns the measure tool. Dungeons are authored on a square tile grid (#8):
@@ -523,6 +525,7 @@ is a second answer to what the notebook contains.
 ```
 zk --no-input new --template=place.md --title=Riverford --extra=feature=7 --print-path
 zk --no-input list --tag=place/riverford-a1b2 --format=json --quiet --sort=modified
+zk --no-input list --tag=place/riverford-a1b2 --match="place/riverford-a1b2" --match-strategy=fts --format=json --quiet
 zk tag list
 zk edit <path>
 ```
@@ -534,6 +537,15 @@ so those strings do not compare bytewise and nothing here re-sorts them. The `Fo
 notes` footer goes to stderr, so `--quiet` is tidiness rather than what makes the output
 parse. A place note carries its own tag and so comes back in its own result set; it is
 dropped by filename stem.
+
+**A reference row's excerpt is a second, matching query, not the first's `lead`** (#19).
+The tag query above decides which notes are listed; the match query only supplies each
+row's excerpt — the words around where the note's own text carries the tag — and a note
+it misses (one tagged only in frontmatter) falls back to its `lead` rather than being
+dropped. The match value is quoted, because `zk`'s FTS conversion reads a leading `-` as
+`NOT`. `snippets` comes from a 20-token FTS5 window, so it is the words around the tag
+and not an exact sentence, and the window can still end mid-word when the tag sits close
+to the edge of it.
 
 **A query runs only where there is already a `.zk`.** `zk` finds a notebook by walking up
 from its working directory, so a campaign sitting inside the GM's own notes tree would

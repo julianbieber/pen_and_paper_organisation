@@ -391,15 +391,15 @@ fn caption(note: &Reference) -> String {
     } else {
         note.title.as_str()
     };
-    let lead: String = note.lead.chars().take(LEAD_CHARS).collect();
-    if lead.is_empty() {
+    let excerpt: String = note.excerpt.chars().take(EXCERPT_CHARS).collect();
+    if excerpt.is_empty() {
         title.to_owned()
     } else {
-        format!("{title} — {lead}")
+        format!("{title} — {excerpt}")
     }
 }
 
-const LEAD_CHARS: usize = 80;
+const EXCERPT_CHARS: usize = 120;
 
 fn set_pressable(
     commands: &mut Commands,

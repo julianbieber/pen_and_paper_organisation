@@ -1122,6 +1122,7 @@ fn observe_references(world: &mut World) -> Poll {
                         "path": note.path,
                         "title": note.title,
                         "lead": note.lead,
+                        "excerpt": note.excerpt,
                         "modified": note.modified,
                     })
                 })

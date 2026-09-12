@@ -13,6 +13,7 @@
 //! against a recorded runner, and the handful of tests that want the real program ask
 //! [`zk_is_installed`] first and return early when it is not.
 
+use std::collections::HashMap;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
@@ -434,6 +435,14 @@ impl Notebook {
     /// comes back in its own result set and is dropped here rather than by the caller.
     /// A note whose path a feature could not carry is dropped too, by the same rule that
     /// admits a created one — what `zk` prints is data, and it is checked like data.
+    ///
+    /// Runs a second query to fill each row's `excerpt` with the words around the tag in
+    /// the note's own text, rather than its opening line. Found by the tag alone — the
+    /// second query only supplies an excerpt, never adds or removes a note, so a tag
+    /// given only in frontmatter is still found and keeps its `lead`. Skipped when the
+    /// first query found nothing, and when `tag` carries a `"`, which cannot be quoted
+    /// for the match query; either way every row keeps `lead` as its excerpt. A refusal
+    /// of the second query fails the whole answer, the same rule as the first.
     pub fn references(
         &self,
         runner: &impl Runner,
@@ -447,7 +456,20 @@ impl Notebook {
         let output = runner.run(&self.root, &list_args(tag))?;
         refused(&output, "list")?;
 
-        parse_references(&output.stdout, subject_slug)
+        let mut found = parse_references(&output.stdout, subject_slug)?;
+        if found.is_empty() || tag.contains('"') {
+            return Ok(found);
+        }
+
+        let output = runner.run(&self.root, &excerpt_args(tag))?;
+        refused(&output, "list")?;
+        let mut excerpts = parse_excerpts(&output.stdout)?;
+        for note in &mut found {
+            if let Some(excerpt) = excerpts.remove(&note.path) {
+                note.excerpt = excerpt;
+            }
+        }
+        Ok(found)
     }
 
     fn contained(&self, path: &str) -> Result<PathBuf, NoteError> {
@@ -543,13 +565,15 @@ pub struct Reference {
     /// The note's title, as `zk` resolved it.
     #[serde(default)]
     pub title: String,
-    /// The note's opening line, which is what a row shows under its title.
-    ///
-    /// `lead` rather than the first of `snippets`: `zk` fills `snippets` from a `--match`
-    /// query, which this one is not, so the array is only incidentally populated and
-    /// would silently become "the first matching fragment" if a match were ever added.
+    /// The note's opening line: `zk`'s `lead`, kept as the fallback when the note's text
+    /// carries no match for the subject's tag (a tag given only in frontmatter).
     #[serde(default)]
     pub lead: String,
+    /// What a row shows under the title: the words around where the note's text carries
+    /// the subject's tag, or `lead` when the text does not. Never empty when `lead` is
+    /// not. Filled in after parsing, never by `zk`'s own JSON.
+    #[serde(skip)]
+    pub excerpt: String,
     /// When the note last changed, as `zk` printed it. For display only — the ordering
     /// is `zk`'s, because this string's fractional seconds are variable width and do not
     /// compare bytewise.
@@ -581,6 +605,27 @@ pub fn list_args(tag: &str) -> Vec<OsString> {
         OsString::from("--format=json"),
         OsString::from("--quiet"),
         OsString::from("--sort=modified"),
+    ]
+}
+
+/// The arguments that list, for every note carrying `tag`, the words around where its
+/// text matches `tag`.
+///
+/// Values are joined to their flags for the reason [`new_args`] gives. The match value is
+/// the tag inside literal double quotes: `zk`'s FTS5 conversion reads a bare leading `-`
+/// as `NOT`, and passes `:`, `|`, `^` and `*` through as operators, none of which apply
+/// inside an explicit quote. `--match-strategy=fts` is written out so a GM's own
+/// configuration cannot change it. No `--sort`: which notes are found, and their order,
+/// come from [`list_args`]; this call only supplies an excerpt for each.
+pub fn excerpt_args(tag: &str) -> Vec<OsString> {
+    vec![
+        OsString::from("--no-input"),
+        OsString::from("list"),
+        OsString::from(format!("--tag={tag}")),
+        OsString::from(format!("--match=\"{tag}\"")),
+        OsString::from("--match-strategy=fts"),
+        OsString::from("--format=json"),
+        OsString::from("--quiet"),
     ]
 }
 
@@ -648,6 +693,48 @@ pub fn parse_references(stdout: &[u8], subject_slug: &str) -> Result<Vec<Referen
         .into_iter()
         .filter(|note| slug_of(&note.path) != subject_slug)
         .filter(|note| note_path_refusal(&note.path).is_none())
+        .map(|mut note| {
+            note.excerpt = note.lead.clone();
+            note
+        })
+        .collect())
+}
+
+/// Each note's excerpt from what [`excerpt_args`] printed: `path` mapped to its first
+/// `snippets` entry, with every whitespace run collapsed to one space so a row stays one
+/// line. A note with no `snippets` gets no entry — [`Notebook::references`] falls back to
+/// `lead` for it.
+///
+/// Empty or blank output is an empty map, decided before JSON, the same rule
+/// [`parse_references`] follows.
+pub fn parse_excerpts(stdout: &[u8]) -> Result<HashMap<String, String>, NoteError> {
+    #[derive(serde::Deserialize)]
+    struct Matched {
+        path: String,
+        #[serde(default)]
+        snippets: Vec<String>,
+    }
+
+    let text = std::str::from_utf8(stdout).map_err(|_| NoteError::ZkRefused {
+        verb: "list",
+        message: "it printed something that is not UTF-8".to_owned(),
+    })?;
+    if text.trim().is_empty() {
+        return Ok(HashMap::new());
+    }
+
+    let found: Vec<Matched> = serde_json::from_str(text).map_err(|error| NoteError::ZkRefused {
+        verb: "list",
+        message: format!("its output could not be read: {error}"),
+    })?;
+
+    Ok(found
+        .into_iter()
+        .filter_map(|matched| {
+            let snippet = matched.snippets.into_iter().next()?;
+            let collapsed = snippet.split_whitespace().collect::<Vec<_>>().join(" ");
+            Some((matched.path, collapsed))
+        })
         .collect())
 }
 

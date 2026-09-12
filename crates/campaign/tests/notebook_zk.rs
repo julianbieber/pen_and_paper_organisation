@@ -194,9 +194,10 @@ fn a_places_tag_finds_the_note_that_references_it() {
 
     let paths: Vec<&str> = found.iter().map(|note| note.path.as_str()).collect();
     assert_eq!(paths, vec![session.path.as_str()], "found {found:#?}");
+    assert_ne!(found[0].excerpt, found[0].lead, "a row shows more than the heading: {found:#?}");
     assert!(
-        found[0].lead.contains("Session 3") || !found[0].title.is_empty(),
-        "a row has something to show: {found:#?}"
+        found[0].excerpt.contains("arrived"),
+        "a row's excerpt carries the sentence that references it: {found:#?}"
     );
 }
 
@@ -249,4 +250,112 @@ fn a_dash_leading_titles_tag_still_finds_its_own_reference() {
 
     let paths: Vec<&str> = found.iter().map(|note| note.path.as_str()).collect();
     assert_eq!(paths, vec![session.path.as_str()], "tag {tag}, found {found:#?}");
+}
+
+// Issue #19's acceptance case against the real program: the row shows the sentence the
+// tag is in, not the note's heading, and not an earlier paragraph that only shares a
+// word with the place.
+#[test]
+fn a_reference_shows_the_sentence_carrying_the_tag_not_the_heading() {
+    if !zk_or_skip("a_reference_shows_the_sentence_carrying_the_tag_not_the_heading") {
+        return;
+    }
+    let (_tmp, root) = campaign_root();
+    let book = Notebook::of(&root);
+
+    let place = book
+        .create(&SystemRunner, NoteKind::Place, "Riverford", Some(FeatureId(7)))
+        .expect("create a place note");
+    let session = book
+        .create(&SystemRunner, NoteKind::Session, "Session 3", None)
+        .expect("create a session note");
+
+    let path = book.root().join(&session.path);
+    let text = std::fs::read_to_string(&path).expect("read the session note");
+    std::fs::write(
+        &path,
+        format!(
+            "{text}\n\
+             They set out for Riverford at dawn, arguing about the map the whole way.\n\n\
+             The road was long, and nobody wanted to talk about the bridge that had washed out.\n\n\
+             Late on the fourth day they reached #place/{} and took rooms at the Drowned Rat.\n",
+            place.slug
+        ),
+    )
+    .expect("write the session note");
+
+    let tag = notebook::tag_of(NoteKind::Place, &place.path);
+    let found = book
+        .references(&SystemRunner, &tag, &place.slug)
+        .expect("the references");
+
+    assert_eq!(found.len(), 1, "found {found:#?}");
+    let excerpt = &found[0].excerpt;
+    assert!(excerpt.contains(&tag), "carries the tag: {excerpt}");
+    assert!(excerpt.contains("Drowned Rat"), "carries the tag's sentence: {excerpt}");
+    assert!(!excerpt.contains("# Session 3"), "not the heading: {excerpt}");
+    assert!(!excerpt.contains("washed out"), "not the earlier paragraph: {excerpt}");
+}
+
+// The place template itself writes a bare tag with no surrounding prose; that note must
+// still show something rather than an empty row.
+#[test]
+fn a_bare_tag_still_shows_something() {
+    if !zk_or_skip("a_bare_tag_still_shows_something") {
+        return;
+    }
+    let (_tmp, root) = campaign_root();
+    let book = Notebook::of(&root);
+
+    let place = book
+        .create(&SystemRunner, NoteKind::Place, "Riverford", Some(FeatureId(7)))
+        .expect("create a place note");
+    let person = book
+        .create(&SystemRunner, NoteKind::Person, "Sir Bedivere", None)
+        .expect("create a person note");
+
+    let path = book.root().join(&person.path);
+    let text = std::fs::read_to_string(&path).expect("read the person note");
+    std::fs::write(&path, format!("{text}\n#place/{}\n", place.slug)).expect("write");
+
+    let tag = notebook::tag_of(NoteKind::Place, &place.path);
+    let found = book
+        .references(&SystemRunner, &tag, &place.slug)
+        .expect("the references");
+
+    assert_eq!(found.len(), 1, "found {found:#?}");
+    assert!(!found[0].excerpt.is_empty(), "a bare tag still shows something");
+    assert!(found[0].excerpt.contains(&tag), "{}", found[0].excerpt);
+}
+
+// A tag given only in frontmatter is found by the tag query alone; the match query
+// cannot see it in the text, so the row falls back to the note's lead rather than
+// deciding which notes are listed.
+#[test]
+fn a_frontmatter_tag_is_still_found_and_shows_its_lead() {
+    if !zk_or_skip("a_frontmatter_tag_is_still_found_and_shows_its_lead") {
+        return;
+    }
+    let (_tmp, root) = campaign_root();
+    let book = Notebook::of(&root);
+
+    let place = book
+        .create(&SystemRunner, NoteKind::Place, "Riverford", Some(FeatureId(7)))
+        .expect("create a place note");
+    let tag = notebook::tag_of(NoteKind::Place, &place.path);
+
+    let note_path = book.root().join("written-by-hand-c3d4.md");
+    std::fs::write(
+        &note_path,
+        format!("---\ntitle: Written By Hand\ntags: [{tag}]\n---\n\nNo mention of it here.\n"),
+    )
+    .expect("write the note directly");
+
+    let found = book
+        .references(&SystemRunner, &tag, &place.slug)
+        .expect("the references");
+
+    assert_eq!(found.len(), 1, "found {found:#?}");
+    assert_eq!(found[0].excerpt, found[0].lead, "falls back to lead: {found:#?}");
+    assert!(!found[0].excerpt.is_empty(), "still shows something");
 }
