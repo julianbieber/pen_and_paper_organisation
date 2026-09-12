@@ -37,7 +37,7 @@ use crate::features::ruler::TravelSpeed;
 use crate::features::tool::{kind_label, rank_label};
 use crate::map::pointer::MapPointer;
 use crate::notes::{NoteJob, ZkState};
-use crate::{OpenCampaign, StatusMessage};
+use crate::{CampaignChrome, OpenCampaign, StatusMessage};
 
 /// Which property a line of the panel shows.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -277,6 +277,7 @@ fn panel() -> impl Scene {
         }
         ThemeBackgroundColor(tokens::WINDOW_BG)
         PropertyPanelRoot
+        CampaignChrome
         Children [
             (Text("Selection") ThemedText),
             (

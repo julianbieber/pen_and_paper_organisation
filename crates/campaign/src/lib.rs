@@ -54,6 +54,8 @@ pub mod slug;
 pub mod style;
 /// Which tile a cell is drawn as, and how brightly it is lit.
 pub mod tiles;
+/// The window title, and the one thing it is allowed to say.
+pub mod title;
 /// What a map document holds, and every rule such a document must satisfy.
 pub mod world;
 

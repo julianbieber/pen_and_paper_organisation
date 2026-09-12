@@ -14,7 +14,7 @@ use campaign::tiles::{self, DUNGEON_TILE_COUNT, DungeonTile, HeightRamp};
 
 use crate::OpenCampaign;
 use crate::StatusMessage;
-use crate::map::backdrop::Backdrop;
+use crate::map::backdrop::{Backdrop, RetiredBackdrop};
 
 /// The tileset shipped with the tool, relative to the assets directory.
 ///
@@ -98,6 +98,7 @@ pub fn open_map(
     assets: Res<AssetServer>,
     tileset_root: Res<TilesetRoot>,
     mut images: ResMut<Assets<Image>>,
+    retired: Option<Res<RetiredBackdrop>>,
 ) {
     let base = tileset_root.0.join(TILESET_BASE);
     let meta = match AtlasMeta::read(&base) {
@@ -148,10 +149,11 @@ pub fn open_map(
         ramp,
         accumulation_high: tiles::accumulation_ceiling(terrain).unwrap_or(0.0),
     });
-    commands.insert_resource(Backdrop::terrain(
+    commands.insert_resource(Backdrop::terrain_after(
         terrain.width(),
         terrain.height(),
         meta.tile_size as f32,
+        retired.map(|retired| retired.0),
     ));
     commands.insert_resource(MapState {
         outcome: MapOutcome::Ready,

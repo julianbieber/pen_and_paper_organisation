@@ -21,7 +21,7 @@ use crate::features::tool::ActiveTool;
 use crate::features::PointerOverUi;
 use crate::map::backdrop::Backdrop;
 use crate::map::view::FEATURE_Z;
-use crate::{OpenCampaign, StatusMessage};
+use crate::{CampaignChrome, OpenCampaign, StatusMessage};
 
 const MEASURE_Z: f32 = FEATURE_Z + 0.3;
 
@@ -213,6 +213,7 @@ fn readout() -> impl Scene {
             padding: px(8),
         }
         ThemeBackgroundColor(tokens::WINDOW_BG)
+        CampaignChrome
         Children [
             (Text("") ThemedText RulerReadout)
         ]

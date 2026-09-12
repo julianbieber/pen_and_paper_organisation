@@ -18,6 +18,7 @@ use campaign::tiles::DungeonTile;
 
 use crate::document::WorldDoc;
 use crate::features::draw::Drafting;
+use crate::CampaignChrome;
 
 /// What the left button does on the map.
 ///
@@ -288,6 +289,7 @@ fn strip() -> impl Scene {
             padding: px(8),
         }
         ThemeBackgroundColor(tokens::WINDOW_BG)
+        CampaignChrome
         Children [
             (
                 Node {

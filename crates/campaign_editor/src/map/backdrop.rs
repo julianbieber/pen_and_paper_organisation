@@ -37,6 +37,17 @@ pub struct CameraBookmark {
     pub scale: f32,
 }
 
+/// The generation a closed campaign's backdrop reached.
+///
+/// [`place_camera`](crate::map::camera::place_camera),
+/// [`stream_chunks`](crate::map::chunks::stream_chunks) and
+/// [`refill_chunks`](crate::map::chunks::refill_chunks) each key a `Local` on
+/// [`Backdrop::generation`] to run their one-time work once per backdrop. Without this,
+/// a campaign opened after a close would build its terrain backdrop back at generation 0
+/// and be mistaken for one already handled, so the camera would never frame it.
+#[derive(Resource, Debug, Clone, Copy)]
+pub struct RetiredBackdrop(pub u32);
+
 /// What the open document is drawn on, how big it is, and where to look at it.
 ///
 /// `generation` rises on every switch and is what tells the framing system that this is a
@@ -64,6 +75,18 @@ impl Backdrop {
             source: BackdropSource::Terrain,
             generation: 0,
             restore: None,
+        }
+    }
+
+    /// The backdrop `terrain(width, height, cell_size)` makes, generationed to come one
+    /// past `retired` rather than restarting at 0.
+    ///
+    /// `retired` is the generation [`RetiredBackdrop`] carried forward from the campaign
+    /// that was closed, or `None` for the first campaign a process opens.
+    pub fn terrain_after(width: u32, height: u32, cell_size: f32, retired: Option<u32>) -> Self {
+        Self {
+            generation: retired.map_or(0, |generation| generation.wrapping_add(1)),
+            ..Self::terrain(width, height, cell_size)
         }
     }
 

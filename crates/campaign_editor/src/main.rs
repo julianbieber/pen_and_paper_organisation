@@ -27,6 +27,7 @@ mod features;
 mod map;
 mod notes;
 mod picker;
+mod session;
 
 /// The order the editor's two halves run in.
 ///
@@ -50,9 +51,15 @@ pub struct StatusLine;
 #[derive(Component, Default, Clone)]
 pub struct DialogRoot;
 
-/// The campaign on screen. Present only once one has been opened, so everything that
-/// needs a campaign runs under `resource_exists::<OpenCampaign>` and nothing has to
-/// ask whether there is one.
+/// The root of a scene a campaign brings onto the screen — a panel, a toolbar, the
+/// close bar — so [`session::close_campaign`] can take it all off again without knowing
+/// what any of it is.
+#[derive(Component, Default, Clone)]
+pub struct CampaignChrome;
+
+/// The campaign on screen, present while a campaign is open. Everything that needs a
+/// campaign runs under `resource_exists::<OpenCampaign>` and nothing has to ask whether
+/// there is one; [`session::close_campaign`] is what removes it.
 #[derive(Resource)]
 pub struct OpenCampaign(pub Campaign);
 
@@ -97,6 +104,10 @@ impl StatusMessage {
 fn main() {
     let mut app = App::new();
     app.add_plugins(DefaultPlugins.set(WindowPlugin {
+        primary_window: Some(Window {
+            title: campaign::title::PROGRAM_NAME.into(),
+            ..default()
+        }),
         close_when_requested: false,
         exit_condition: ExitCondition::DontExit,
         ..default()
@@ -110,10 +121,15 @@ fn main() {
     .add_plugins(features::FeaturesPlugin)
     .add_plugins(notes::NotesPlugin)
     .add_plugins(picker::PickerPlugin)
-    .add_systems(Startup, (status_bar.spawn(), shell.spawn().run_if(no_campaign)))
+    .add_plugins(session::SessionPlugin)
+    .add_systems(Startup, status_bar.spawn())
     .add_systems(
         Update,
         (
+            shell
+                .spawn()
+                .run_if(no_campaign)
+                .run_if(not(any_with_component::<DialogRoot>)),
             close_dialog.run_if(resource_added::<OpenCampaign>),
             sync_status.run_if(resource_changed::<StatusMessage>),
             close_without_a_document.run_if(not(resource_exists::<document::WorldDoc>)),

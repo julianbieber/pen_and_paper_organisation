@@ -14,6 +14,7 @@ use crate::document::{self as doc, WorldDoc};
 use crate::features::draw::Drafting;
 use crate::features::prompt::{Answer, Asking, Question};
 use crate::features::select::{Dragging, Selection};
+use crate::session::CampaignClose;
 use crate::StatusMessage;
 
 /// Undo, redo, save, delete and escape.
@@ -109,6 +110,7 @@ pub fn escape_answers_a_question(
     mut doc: ResMut<WorldDoc>,
     mut selection: ResMut<Selection>,
     mut status: ResMut<StatusMessage>,
+    mut closing: ResMut<CampaignClose>,
     mut exit: MessageWriter<AppExit>,
 ) {
     if !keys.just_pressed(KeyCode::Escape) {
@@ -120,6 +122,7 @@ pub fn escape_answers_a_question(
         &mut doc,
         &mut selection,
         &mut status,
+        &mut closing,
         &mut exit,
     );
 }

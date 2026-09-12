@@ -9,6 +9,7 @@ use bevy::ui_widgets::{SliderValue, slider_self_update};
 
 use crate::map::backdrop::Backdrop;
 use crate::map::load::MapTerrain;
+use crate::CampaignChrome;
 
 /// Where the threshold starts, as a fraction of the accumulation the terrain reaches.
 ///
@@ -96,6 +97,7 @@ fn panel(value: f32, ceiling: f32) -> impl Scene {
         }
         ThemeBackgroundColor(tokens::WINDOW_BG)
         MapPanel
+        CampaignChrome
         Children [
             (Text("Rivers above") ThemedText),
             (

@@ -21,13 +21,16 @@ use campaign::gesture::{self, Orphans};
 
 use crate::document::{self as doc, WorldDoc};
 use crate::features::select::Selection;
-use crate::StatusMessage;
+use crate::session::CampaignClose;
+use crate::{CampaignChrome, StatusMessage};
 
 /// What is being asked.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Question {
     /// The window was asked to close while the document is unsaved.
     UnsavedOnClose,
+    /// The campaign was asked to close while the document is unsaved.
+    UnsavedOnCampaignClose,
     /// A feature is being deleted and something outside the selection hangs off it.
     OrphansOnDelete,
 }
@@ -162,6 +165,7 @@ pub fn answer(
     doc: &mut WorldDoc,
     selection: &mut Selection,
     status: &mut StatusMessage,
+    closing: &mut CampaignClose,
     exit: &mut MessageWriter<AppExit>,
 ) {
     let Some(question) = asking.question else {
@@ -171,7 +175,7 @@ pub fn answer(
     asking.settle();
 
     match (question, answer) {
-        (Question::UnsavedOnClose, Answer::Save) => match doc.save().and_then(|()| doc.save_parked()) {
+        (Question::UnsavedOnClose, Answer::Save) => match save_everything(doc) {
             Ok(()) => {
                 exit.write(AppExit::Success);
             }
@@ -182,6 +186,18 @@ pub fn answer(
         },
         (Question::UnsavedOnClose, Answer::Discard) => {
             exit.write(AppExit::Success);
+        }
+        (Question::UnsavedOnCampaignClose, Answer::Save) => match save_everything(doc) {
+            Ok(()) => {
+                *closing = CampaignClose::Confirmed;
+            }
+            Err(error) => {
+                error!("{error}");
+                status.say(error.to_string());
+            }
+        },
+        (Question::UnsavedOnCampaignClose, Answer::Discard) => {
+            *closing = CampaignClose::Confirmed;
         }
         (Question::OrphansOnDelete, Answer::Cascade | Answer::Promote) => {
             let Some(id) = subject else {
@@ -201,6 +217,10 @@ pub fn answer(
     }
 }
 
+fn save_everything(doc: &mut WorldDoc) -> Result<(), campaign::world::WorldError> {
+    doc.save().and_then(|()| doc.save_parked())
+}
+
 fn sheet() -> impl Scene {
     bsn! {
         Node {
@@ -217,11 +237,19 @@ fn sheet() -> impl Scene {
         GlobalZIndex(50)
         ThemeBackgroundColor(tokens::WINDOW_BG)
         PromptRoot
+        CampaignChrome
         Children [
             row(
                 Question::UnsavedOnClose,
                 "This campaign has unsaved changes.",
                 [("Save and close", Answer::Save),
+                 ("Close without saving", Answer::Discard),
+                 ("Cancel", Answer::Cancel)]
+            ),
+            row(
+                Question::UnsavedOnCampaignClose,
+                "This campaign has unsaved changes.",
+                [("Save and close campaign", Answer::Save),
                  ("Close without saving", Answer::Discard),
                  ("Cancel", Answer::Cancel)]
             ),
@@ -275,6 +303,7 @@ fn answer_button(caption: &'static str, answer: Answer) -> impl Scene {
             mut doc: ResMut<WorldDoc>,
             mut selection: ResMut<Selection>,
             mut status: ResMut<StatusMessage>,
+            mut closing: ResMut<CampaignClose>,
             mut exit: MessageWriter<AppExit>| {
             let Ok(button) = buttons.get(activate.event_target()) else {
                 return;
@@ -285,6 +314,7 @@ fn answer_button(caption: &'static str, answer: Answer) -> impl Scene {
                 &mut doc,
                 &mut selection,
                 &mut status,
+                &mut closing,
                 &mut exit,
             );
         })
