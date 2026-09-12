@@ -103,6 +103,21 @@ pub fn holds_a_campaign(root: &Path) -> bool {
     std::fs::symlink_metadata(layout::manifest(root)).is_ok_and(|meta| meta.is_file())
 }
 
+/// Where a new campaign goes by default: the directory holding `newest`, the most
+/// recently opened campaign, or `home` when `newest` has no usable parent.
+///
+/// `newest` counts whether or not it is still present on disk — the rule is "the most
+/// recently opened campaign", not "the most recently opened campaign that still
+/// exists". Pure over its inputs, like [`config_dir_from`], so this is checkable
+/// without touching the environment or the recent-campaigns file.
+pub fn default_parent(newest: Option<&Path>, home: Option<&OsStr>) -> Option<PathBuf> {
+    newest
+        .and_then(Path::parent)
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .map(Path::to_owned)
+        .or_else(|| home.filter(|home| !home.is_empty()).map(PathBuf::from))
+}
+
 impl Recents {
     /// The recent-campaigns file at `path`.
     ///

@@ -80,6 +80,26 @@ pub enum CampaignError {
     /// From `create`: the source cannot be copied as it stands.
     #[error("`{}` cannot be copied: {reason}", .path.display())]
     TerrainNotCopyable { path: PathBuf, reason: &'static str },
+
+    /// From `root_for` and `create_named`: the name was empty once trimmed. Nothing
+    /// was written.
+    #[error("a campaign needs a name")]
+    NameEmpty,
+
+    /// From `root_for` and `create_named`: the name has no letters or digits for
+    /// [`crate::slug::slug_of`] to derive a directory name from. Nothing was written.
+    #[error("`{0}` has no letters or digits to name a directory after")]
+    NameUnsluggable(String),
+
+    /// From `root_for` and `create_named`: `parent` was empty. Nothing was written.
+    #[error("a campaign needs a directory to be created in")]
+    NoParent,
+
+    /// From `root_for` and `create_named`: the derived root already exists and does
+    /// not hold a campaign. Nothing was written; the name is refused rather than
+    /// uniqued.
+    #[error("`{}` already exists; choose another name or another place", .0.display())]
+    RootInTheWay(PathBuf),
 }
 
 /// What [`Campaign::create`] built: the campaign, and whether the directory it lives in
@@ -191,14 +211,72 @@ impl Campaign {
     ) -> Result<Created, CampaignError> {
         let root = root.as_ref();
         let terrain_source = terrain_source.as_ref();
+        let terrain = load_source(terrain_source)?;
+        Self::lay_out(root, campaign_name(root), terrain, terrain_source, git)
+    }
 
-        let terrain = Terrain::load_from_dir(terrain_source).map_err(|err| {
-            CampaignError::TerrainUnreadable {
-                path: terrain_source.to_owned(),
-                source: err,
-            }
+    /// Create a campaign named `name` inside `parent`, at the root
+    /// [`root_for`] derives from the two, copying `terrain_source` into it as
+    /// [`Campaign::create`] does.
+    ///
+    /// The root is `<parent>/<slug_of(name)>`; the manifest's `name` is `name`
+    /// trimmed. Fails [`CampaignError::NameEmpty`] or
+    /// [`CampaignError::NameUnsluggable`] when no directory name can be derived from
+    /// `name`, and [`CampaignError::NoParent`] when `parent` is empty — all three
+    /// before anything is read or written. Then fails
+    /// [`CampaignError::TerrainUnreadable`] as `create` does. Once a root is decided,
+    /// it is claimed outright: an existing directory there fails
+    /// [`CampaignError::AlreadyACampaign`] (it already holds a manifest) or
+    /// [`CampaignError::RootInTheWay`] (it does not) — unlike `create`, an existing
+    /// root is never adopted. `parent` is created first if it does not exist.
+    ///
+    /// Everything [`Campaign::create`] says about the terrain copy and the git
+    /// repository applies here too.
+    pub fn create_named(
+        parent: impl AsRef<Path>,
+        name: &str,
+        terrain_source: impl AsRef<Path>,
+        git: &impl GitRunner,
+    ) -> Result<Created, CampaignError> {
+        let parent = parent.as_ref();
+        let terrain_source = terrain_source.as_ref();
+
+        let root = root_for(parent, name)?;
+        let terrain = load_source(terrain_source)?;
+
+        std::fs::create_dir_all(parent).map_err(|source| CampaignError::LayoutUnwritable {
+            path: parent.to_owned(),
+            source,
         })?;
 
+        match std::fs::create_dir(&root) {
+            Ok(()) => {}
+            Err(source) if source.kind() == std::io::ErrorKind::AlreadyExists => {
+                return Err(if layout::manifest(&root).exists() {
+                    CampaignError::AlreadyACampaign(root)
+                } else {
+                    CampaignError::RootInTheWay(root)
+                });
+            }
+            Err(source) => {
+                return Err(CampaignError::LayoutUnwritable { path: root, source });
+            }
+        }
+
+        Self::lay_out(&root, name.trim().to_owned(), terrain, terrain_source, git).inspect_err(
+            |_| {
+                let _ = std::fs::remove_dir_all(&root);
+            },
+        )
+    }
+
+    fn lay_out(
+        root: &Path,
+        name: String,
+        terrain: Terrain,
+        terrain_source: &Path,
+        git: &impl GitRunner,
+    ) -> Result<Created, CampaignError> {
         if layout::manifest(root).exists() {
             return Err(CampaignError::AlreadyACampaign(root.to_owned()));
         }
@@ -217,7 +295,7 @@ impl Campaign {
 
         let manifest = CampaignManifest {
             version: CAMPAIGN_VERSION,
-            name: campaign_name(root),
+            name,
             terrain: layout::TERRAIN_DIR.to_owned(),
             units_per_cell: DEFAULT_UNITS_PER_CELL,
             unit: DEFAULT_UNIT.to_owned(),
@@ -263,9 +341,46 @@ impl Campaign {
     }
 }
 
+/// Where [`Campaign::create_named`] would create a campaign named `name` inside
+/// `parent`, or why it could not.
+///
+/// `<parent>/<slug_of(name)>`. Fails [`CampaignError::NameEmpty`] or
+/// [`CampaignError::NameUnsluggable`] when `name` yields no slug, and
+/// [`CampaignError::NoParent`] when `parent` is empty. Otherwise fails
+/// [`CampaignError::AlreadyACampaign`] when the derived root already holds a
+/// campaign, or [`CampaignError::RootInTheWay`] when it exists but does not — a name
+/// is refused, never uniqued. Only stats; writes nothing, so a caller can call this
+/// on the spot to validate a form before committing to `create_named`.
+pub fn root_for(parent: &Path, name: &str) -> Result<PathBuf, CampaignError> {
+    let trimmed = name.trim();
+    if trimmed.is_empty() {
+        return Err(CampaignError::NameEmpty);
+    }
+    let slug =
+        crate::slug::slug_of(name).ok_or_else(|| CampaignError::NameUnsluggable(trimmed.to_owned()))?;
+    if parent.as_os_str().is_empty() {
+        return Err(CampaignError::NoParent);
+    }
+    let root = parent.join(slug);
+    if crate::recent::holds_a_campaign(&root) {
+        return Err(CampaignError::AlreadyACampaign(root));
+    }
+    if std::fs::symlink_metadata(&root).is_ok() {
+        return Err(CampaignError::RootInTheWay(root));
+    }
+    Ok(root)
+}
+
 fn load_terrain(root: &Path, manifest: &CampaignManifest) -> Result<Terrain, CampaignError> {
     let path = manifest.terrain_dir(root);
     Terrain::load_from_dir(&path).map_err(|source| CampaignError::TerrainUnreadable { path, source })
+}
+
+fn load_source(terrain_source: &Path) -> Result<Terrain, CampaignError> {
+    Terrain::load_from_dir(terrain_source).map_err(|source| CampaignError::TerrainUnreadable {
+        path: terrain_source.to_owned(),
+        source,
+    })
 }
 
 fn write_manifest(root: &Path, manifest: &CampaignManifest) -> Result<(), CampaignError> {
