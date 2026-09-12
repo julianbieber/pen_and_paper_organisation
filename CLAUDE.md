@@ -72,6 +72,19 @@ complete. Order was
 dependency order; the plan, with the two decisions it makes, is at
 `~/fun_repos/hobby-mimisbrunnr/notes/pen_and_paper_organisation/planning/campaign_management/plan-2026-09-12-campaign-directory-and-sync.md`.
 
+**The combat map is the milestone after that, filed as #42–#45** (2026-09-13): a combat map
+is its own kind of document — a grid of combat tiles and nothing else, no features, no
+notes, no picture — opened blank in one press from a *Combat maps* panel, painted with the
+four brushes through a second hand-drawn strip, `assets/combat_tiles.png`, whose order
+`CombatTile` fixes, and either discarded or saved to `combat/<slug>.ron` and opened again
+from the list. Tokens are named, sized 1–4 cells and otherwise alike, and are **session
+state** on the ruler's model: no `Edit`, no undo, never saved, kept while the map is parked,
+dropped on campaign close. #42 is the one enabling task — the grid, the brushes and the
+paint edit become generic over their tile vocabulary — and #43 consumes it. Nothing about
+dungeons changes for the GM, and the dungeon's generated strip stays generated. The plan,
+with its settled decisions and the assumptions it makes on its own, is at
+`~/fun_repos/hobby-mimisbrunnr/notes/pen_and_paper_organisation/planning/combat_map/plan-2026-09-13-combat-map.md`.
+
 `gh issue view <n>` carries the scope and acceptance criteria for a session's work. Each
 issue names what it depends on. After #1 there are three tracks that do not block each
 other: terrain (#2, #10), model and editor (#3, #4, #5, #8, #9), notes (#6, #7).
