@@ -22,7 +22,7 @@ use campaign::measure::DistanceUnit;
 use crate::features::ruler::{
     DEFAULT_UNITS_PER_DAY, MAX_UNITS_PER_DAY, MIN_UNITS_PER_DAY, TravelSpeed,
 };
-use crate::{OpenCampaign, StatusMessage};
+use crate::{CampaignChrome, OpenCampaign, StatusMessage};
 
 /// The field the campaign's scale is typed into.
 #[derive(Component, Default, Clone)]
@@ -158,6 +158,7 @@ fn panel(pace: f32) -> impl Scene {
         }
         ThemeBackgroundColor(tokens::WINDOW_BG)
         ScalePanel
+        CampaignChrome
         Children [
             (
                 Node {

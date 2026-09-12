@@ -43,7 +43,7 @@ use crate::features::tool::ActiveTool;
 use crate::map::backdrop::Backdrop;
 use crate::map::image::ImageAsset;
 use crate::map::pointer::MapPointer;
-use crate::{OpenCampaign, StatusMessage};
+use crate::{CampaignChrome, OpenCampaign, StatusMessage};
 
 const HANDLE_PIXELS: f32 = 8.0;
 
@@ -650,6 +650,7 @@ fn panel(opacity: f32) -> impl Scene {
         }
         ThemeBackgroundColor(tokens::WINDOW_BG)
         ImagePanel
+        CampaignChrome
         Children [
             (Text("Import") ThemedText),
             (

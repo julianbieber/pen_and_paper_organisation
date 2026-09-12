@@ -29,7 +29,7 @@ use bevy::ui_widgets::Activate;
 use campaign::notebook::NoteKind;
 
 use crate::notes::{NoteJob, NoteTitle, ZkState};
-use crate::{OpenCampaign, StatusMessage};
+use crate::{CampaignChrome, OpenCampaign, StatusMessage};
 
 /// The notes panel's root.
 #[derive(Component, Default, Clone)]
@@ -108,6 +108,7 @@ fn panel() -> impl Scene {
         }
         ThemeBackgroundColor(tokens::WINDOW_BG)
         NotesPanelRoot
+        CampaignChrome
         Children [
             (Text("Notes") ThemedText),
             (

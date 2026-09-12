@@ -51,6 +51,7 @@ impl Plugin for DialogPlugin {
                     seed_parent
                         .run_if(resource_changed::<RecentList>)
                         .run_if(not(resource_exists::<OpenCampaign>)),
+                    fill_new_inputs.run_if(not(resource_exists::<OpenCampaign>)),
                 ),
             );
     }
@@ -379,7 +380,10 @@ fn browse_button(field: PathField) -> impl Scene {
     }
 }
 
-fn start_open(root: PathBuf, job: &mut OpenJob, status: &mut StatusMessage) {
+/// Starts opening the campaign at `root`, off the render thread. Does nothing if `job`
+/// is already busy. Reads the manifest on the spot first, so a mistyped path is answered
+/// on `status` in the same frame rather than after the async load fails.
+pub(crate) fn start_open(root: PathBuf, job: &mut OpenJob, status: &mut StatusMessage) {
     if job.busy() {
         return;
     }
@@ -615,6 +619,24 @@ fn seed_parent(
     fields.parent = text.clone();
     for mut field in inputs.iter_mut() {
         replace_text(&mut field, &text);
+    }
+}
+
+fn fill_new_inputs(
+    fields: Res<DialogFields>,
+    mut paths: Query<(&PathInput, &mut EditableText), (Added<PathInput>, Without<NameInput>)>,
+    mut names: Query<&mut EditableText, (Added<NameInput>, Without<PathInput>)>,
+) {
+    for (path, mut field) in paths.iter_mut() {
+        let text = fields.path(path.0);
+        if !text.is_empty() {
+            replace_text(&mut field, text);
+        }
+    }
+    for mut field in names.iter_mut() {
+        if !fields.name.is_empty() {
+            replace_text(&mut field, &fields.name);
+        }
     }
 }
 

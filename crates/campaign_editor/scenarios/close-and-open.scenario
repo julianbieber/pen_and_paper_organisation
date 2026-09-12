@@ -1,0 +1,38 @@
+# Opens A, draws a feature, asks to close while it is unsaved, cancels, saves, closes
+# cleanly, opens B, closes it with nothing unsaved, then reopens A and checks the saved
+# point is still there. Proves issue #29's acceptance end to end. The editor is started
+# with no campaign on the command line:
+#
+#   cargo run -p campaign --example make_demo -- /tmp/a
+#   cargo run -p campaign --example make_demo -- /tmp/b
+#   PNP_CONTROL=/tmp/pnp.sock cargo run -p campaign_editor &
+#   PNP_CONTROL=/tmp/pnp.sock cargo run -p campaign_editor --bin pnp-ctl -- run \
+#       crates/campaign_editor/scenarios/close-and-open.scenario
+
+ping
+fixed-delta 0.016
+
+open /tmp/a
+step 60
+observe world
+
+tool point
+click 20 20
+close
+key escape
+observe world
+
+save
+close
+observe world
+
+open /tmp/b
+step 60
+observe world
+close
+
+open /tmp/a
+step 60
+observe world
+close
+observe world

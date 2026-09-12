@@ -25,8 +25,9 @@ use bevy::input_focus::InputFocus;
 use bevy::ui_widgets::SliderValue;
 use bevy::text::EditableText;
 
+use crate::dialog;
 use crate::features::PointerOverUi;
-use crate::document::WorldDoc;
+use crate::document::{WorldDoc, WorldOutcome, WorldState};
 use crate::features::panel::PendingLabel;
 use crate::features::draw::Drafting;
 use crate::features::dungeon::DungeonIntent;
@@ -44,6 +45,7 @@ use crate::map::pointer::{MapPointer, PointerOverride};
 use crate::notes::references::{Answer, References};
 use crate::notes::watch::NotesWatch;
 use crate::notes::{self, NoteJob, ZkState};
+use crate::session::CampaignClose;
 use crate::{OpenCampaign, StatusMessage};
 
 /// How far a command has got.
@@ -169,6 +171,21 @@ pub(super) enum Command {
     },
     /// Pins the frame delta, so a scripted run is reproducible.
     FixedDelta(Duration),
+    /// Opens the campaign at `root`, exactly as typing it into the dialog's Open field
+    /// and pressing the button would, and waits for the world document to answer too.
+    OpenCampaign {
+        root: PathBuf,
+        /// Whether [`dialog::start_open`] has been asked. The load runs off the render
+        /// thread, so the reply never races the file.
+        started: bool,
+    },
+    /// Closes the open campaign, going through the same unsaved guard the Close button
+    /// does.
+    CloseCampaign {
+        /// Whether [`crate::session::CampaignClose::Asked`] has been written. Consumed a
+        /// frame later, so the reply never races the teardown.
+        started: bool,
+    },
     /// Asks the editor to exit.
     Quit,
 }
@@ -238,6 +255,8 @@ impl Command {
             Self::Opacity(_) => "opacity",
             Self::Capture { .. } => "capture",
             Self::FixedDelta(_) => "fixed-delta",
+            Self::OpenCampaign { .. } => "open",
+            Self::CloseCampaign { .. } => "close",
             Self::Quit => "quit",
         }
     }
@@ -412,6 +431,11 @@ impl Command {
                     .map_err(|_| format!("{word} is not a number of seconds"))?;
                 Ok(Self::FixedDelta(Duration::from_secs_f32(seconds)))
             }
+            "open" => Ok(Self::OpenCampaign {
+                root: PathBuf::from(rest.join(" ")),
+                started: false,
+            }),
+            "close" => Ok(Self::CloseCampaign { started: false }),
             "quit" => Ok(Self::Quit),
             other => Err(format!("there is no command called {other}")),
         }
@@ -749,6 +773,81 @@ impl Command {
             Self::FixedDelta(delta) => {
                 world.insert_resource(TimeUpdateStrategy::ManualDuration(*delta));
                 Poll::Done(json!({ "seconds": delta.as_secs_f32() }))
+            }
+
+            Self::OpenCampaign { root, started } => {
+                if !*started {
+                    if world.get_resource::<OpenCampaign>().is_some() {
+                        return Poll::Failed("a campaign is already open; close it first".into());
+                    }
+                    if world.resource::<dialog::OpenJob>().busy() {
+                        return Poll::Failed("a campaign is already being opened".into());
+                    }
+                    *started = true;
+                    let opened_root = root.clone();
+                    world.resource_scope(|world, mut job: Mut<dialog::OpenJob>| {
+                        world.resource_scope(|_world, mut status: Mut<StatusMessage>| {
+                            dialog::start_open(opened_root, &mut job, &mut status);
+                        });
+                    });
+                    if !world.resource::<dialog::OpenJob>().busy() {
+                        return Poll::Failed(world.resource::<StatusMessage>().0.clone());
+                    }
+                    return Poll::Running;
+                }
+
+                if let Some(state) = world.get_resource::<WorldState>() {
+                    let outcome = match state.outcome {
+                        WorldOutcome::Ready => "ready",
+                        WorldOutcome::Unavailable => "unavailable",
+                    };
+                    let Some(campaign) = world.get_resource::<OpenCampaign>() else {
+                        return Poll::Failed("the campaign closed before it finished opening".into());
+                    };
+                    return Poll::Done(json!({
+                        "root": campaign.0.root().display().to_string(),
+                        "name": campaign.0.manifest().name.clone(),
+                        "world": outcome,
+                    }));
+                }
+
+                if world.get_resource::<OpenCampaign>().is_none()
+                    && !world.resource::<dialog::OpenJob>().busy()
+                {
+                    return Poll::Failed(world.resource::<StatusMessage>().0.clone());
+                }
+                Poll::Running
+            }
+
+            Self::CloseCampaign { started } => {
+                if !*started {
+                    if world.get_resource::<OpenCampaign>().is_none() {
+                        return Poll::Failed("no campaign is open".into());
+                    }
+                    if let Some(mut closing) = world.get_resource_mut::<CampaignClose>() {
+                        *closing = CampaignClose::Asked;
+                    }
+                    *started = true;
+                    return Poll::Running;
+                }
+
+                if world.get_resource::<OpenCampaign>().is_none() {
+                    return Poll::Done(json!({ "closed": true }));
+                }
+                let asked = world.get_resource::<Asking>().is_some_and(|asking| {
+                    asking.question == Some(crate::features::prompt::Question::UnsavedOnCampaignClose)
+                });
+                if asked {
+                    return Poll::Done(json!({ "closed": false, "asked": true }));
+                }
+                let settled_with_no_question = world
+                    .get_resource::<CampaignClose>()
+                    .is_some_and(|closing| *closing == CampaignClose::Nothing)
+                    && world.get_resource::<Asking>().is_none_or(|asking| asking.question.is_none());
+                if settled_with_no_question {
+                    return Poll::Done(json!({ "closed": false, "asked": false }));
+                }
+                Poll::Running
             }
 
             Self::Quit => {
@@ -1194,6 +1293,8 @@ mod tests {
             ("observe references", "observe"),
             ("capture /tmp/a.png", "capture"),
             ("fixed-delta 0.016", "fixed-delta"),
+            ("open /tmp/a", "open"),
+            ("close", "close"),
             ("quit", "quit"),
         ] {
             let command = Command::parse(line).unwrap_or_else(|error| panic!("{line}: {error}"));

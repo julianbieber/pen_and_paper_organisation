@@ -13,7 +13,7 @@ use campaign::measure;
 use crate::document::WorldDoc;
 use crate::map::backdrop::Backdrop;
 use crate::map::camera::{MapCamera, viewport_of};
-use crate::OpenCampaign;
+use crate::{CampaignChrome, OpenCampaign};
 
 /// The most of the viewport's width the bar may span.
 ///
@@ -122,6 +122,7 @@ fn bar() -> impl Scene {
         }
         ThemeBackgroundColor(tokens::WINDOW_BG)
         ScaleBarRoot
+        CampaignChrome
         Children [
             (Text("") ThemedText ScaleBarLabel),
             (

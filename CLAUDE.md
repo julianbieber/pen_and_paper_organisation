@@ -53,9 +53,13 @@ root that already exists; `recent::default_parent` decides where it goes by defa
 path field in the dialog has a *Browse…* beside it (#28): `crates/campaign/src/browse.rs`
 decides where a walk starts, what one directory lists (hidden directories dropped, capped
 at `MAX_LISTED`) and what "up" is, and `crates/campaign_editor/src/picker.rs` is the
-feathers sheet, reading every directory on the IO pool.
+feathers sheet, reading every directory on the IO pool. A campaign can be closed and
+another opened without quitting `pnp` (#29): *Close campaign* and `pnp-ctl open`/`close`
+both go through the unsaved guard in `features/prompt.rs`, `crates/campaign_editor/src/session.rs`
+holds the one teardown list every resource and root a campaign brings is named on, and the
+window title comes from `campaign::title`.
 Remaining:
-close-and-switch (#29), sync from the editor (#30) and clone from the dialog (#31). Order is
+sync from the editor (#30) and clone from the dialog (#31). Order is
 dependency order; the plan, with the two decisions it makes, is at
 `~/fun_repos/hobby-mimisbrunnr/notes/pen_and_paper_organisation/planning/campaign_management/plan-2026-09-12-campaign-directory-and-sync.md`.
 
@@ -170,6 +174,15 @@ terrain's extent; a consumer now asks the resource. It also carries where the ca
 because "restore or frame" is one question and only `place_camera` may answer it — a system
 in the authoring set writing the camera would be overwritten by the map set on the next
 frame. Its `generation` is what says the camera has not been placed for this backdrop yet.
+A close carries it forward through `RetiredBackdrop` rather than restarting it at 0, which
+is what stops the next campaign's backdrop being mistaken for one the camera already
+framed.
+
+**Closing a campaign is one teardown list.** Anything a campaign brings onto the screen —
+a resource, a root marked `CampaignChrome`, a spawned entity — is dropped in
+`session::close_campaign`, or the next campaign opened in the same process inherits it: a
+duplicated panel, a stale selection, a note landing on the wrong document. Nothing
+elsewhere tears any of it down on its own.
 
 **A brush stroke is one `Edit::PaintTiles`**, applied on release, carrying only the cells
 that actually change and each of them once. That is what makes it a single press of undo
