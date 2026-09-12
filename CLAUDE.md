@@ -62,7 +62,11 @@ A campaign syncs with its remote in one action (#30): `campaign::repo::Repo::syn
 whole git sequence, `crates/campaign_editor/src/sync.rs` is the one job slot, the panel
 and the reload, and `WorldDoc::reload_from_disk` in `crates/campaign_editor/src/document.rs`
 replaces a document a pull touched.
-Remaining: clone from the dialog (#31). Order is
+A campaign arrives from a remote through the dialog's *Clone* form (#31):
+`Campaign::clone_from` in `crates/campaign/src/campaign.rs` clones into
+`<where>/<repository name>` through `Repo::clone_into`, opens the result and leaves a
+clone that turns out not to be a campaign where it landed. The milestone (#24–#31) is
+complete. Order was
 dependency order; the plan, with the two decisions it makes, is at
 `~/fun_repos/hobby-mimisbrunnr/notes/pen_and_paper_organisation/planning/campaign_management/plan-2026-09-12-campaign-directory-and-sync.md`.
 
@@ -352,6 +356,21 @@ before a pull could replace what it saved — but the map keeps drawing, since o
 `Edit`'s inverse against a document that is no longer there means nothing — and refuses a
 reload that would change whether a document carries a grid, keeping what is on screen
 instead.
+
+**Cloning (#31) shares `Repo` and its refusals with syncing.** `Repo::clone_into` runs
+`git clone` before there is a `Campaign` to attach a job slot to, so it takes its `git`
+argument directly rather than through `SyncJob`. Its destination directory is the
+repository's own name as `crate::repo::repository_name` derives it — not slugged, unlike
+a created campaign's — and checked by `feature::file_name_refusal` rather than trusted, so
+a URL naming `..` or a leading `-` is refused as `UrlUnnamed` instead of writing outside
+`<where>`. A clone is never removed once `git` succeeds, whatever fails after — the
+opposite of `create_named`'s cleanup — so a clone that is not a campaign, or whose terrain
+will not load, stays on disk for the GM to look at. A failed clone's message is git's own
+**last** stderr line, not the first every other verb reads: `git clone` announces
+`Cloning into '…'` before its `fatal:` line. Every git child now runs with
+`GIT_TERMINAL_PROMPT=0`, clone included, so a remote asking for credentials fails with a
+line of its own rather than holding the one job slot on a prompt nothing can answer — an
+SSH passphrase or host-key question is not covered by this and can still hold it.
 
 ## Conventions
 

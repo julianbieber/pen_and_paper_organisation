@@ -1,5 +1,5 @@
-//! An opened campaign directory, the two ways to obtain one, and every reason
-//! neither worked.
+//! An opened campaign directory, the three ways to obtain one, and every reason
+//! none of them worked.
 //!
 //! A campaign is what is on disk: the directory, the manifest read from it, and the
 //! terrain that manifest names. Session state — a selection, an undo stack, a
@@ -95,11 +95,35 @@ pub enum CampaignError {
     #[error("a campaign needs a directory to be created in")]
     NoParent,
 
-    /// From `root_for` and `create_named`: the derived root already exists and does
-    /// not hold a campaign. Nothing was written; the name is refused rather than
-    /// uniqued.
+    /// From `root_for`, `create_named` and `clone_root_for`: the derived root already
+    /// exists and does not hold a campaign. Nothing was written; the name is refused
+    /// rather than uniqued.
     #[error("`{}` already exists; choose another name or another place", .0.display())]
     RootInTheWay(PathBuf),
+
+    /// From `clone_root_for`: the URL may not be cloned, for the reason
+    /// [`crate::repo::remote_refusal`] gives. Nothing was written.
+    #[error("{0}")]
+    UrlRefused(&'static str),
+
+    /// From `clone_root_for`: [`crate::repo::repository_name`] found no repository name
+    /// to clone `url` into. Nothing was written.
+    #[error("`{0}` does not end in a repository name to clone into")]
+    UrlUnnamed(String),
+
+    /// From `clone_from`: `git clone` itself failed. Carries the [`GitError`] rather
+    /// than converting from one automatically — a `GitError` reaching here from
+    /// anywhere else is not a clone failure.
+    #[error("the clone failed: {0}")]
+    CloneFailed(#[source] GitError),
+
+    /// From `clone_from`: the clone landed, but holds no `campaign.ron`, so it is not a
+    /// campaign. The directory is left where it landed, for the GM to look at.
+    #[error(
+        "`{}` was cloned but holds no {}, so it is not a campaign; it is left there for you",
+        .0.display(), layout::MANIFEST_FILE
+    )]
+    ClonedNotACampaign(PathBuf),
 }
 
 /// What [`Campaign::create`] built: the campaign, and whether the directory it lives in
@@ -270,6 +294,44 @@ impl Campaign {
         )
     }
 
+    /// Clone `url` into `<parent>/<repository name>` and open the result.
+    ///
+    /// [`clone_root_for`] decides the destination and fails as it does, before anything
+    /// runs. `parent` is then created if it does not exist, failing
+    /// [`CampaignError::LayoutUnwritable`]. `git clone` runs next; a failure is
+    /// [`CampaignError::CloneFailed`]. Once the clone lands, a directory holding no
+    /// [`layout::MANIFEST_FILE`] fails [`CampaignError::ClonedNotACampaign`], and
+    /// otherwise the clone is opened as [`Campaign::open`] would, failing the same way
+    /// it can.
+    ///
+    /// **Never removes the destination**, whatever fails after the clone itself
+    /// succeeds — the opposite of [`Campaign::create_named`]'s cleanup, and what the
+    /// scope's "left where it landed" means: a clone that is not a campaign, or whose
+    /// terrain does not load, stays on disk for the GM to look at rather than vanishing.
+    ///
+    /// Blocks for as long as the clone and the terrain load take.
+    pub fn clone_from(
+        parent: impl AsRef<Path>,
+        url: &str,
+        git: &impl GitRunner,
+    ) -> Result<Self, CampaignError> {
+        let parent = parent.as_ref();
+        let root = clone_root_for(parent, url)?;
+
+        std::fs::create_dir_all(parent).map_err(|source| CampaignError::LayoutUnwritable {
+            path: parent.to_owned(),
+            source,
+        })?;
+
+        Repo::clone_into(git, url.trim(), &root).map_err(CampaignError::CloneFailed)?;
+
+        if !crate::recent::holds_a_campaign(&root) {
+            return Err(CampaignError::ClonedNotACampaign(root));
+        }
+
+        Self::open(&root)
+    }
+
     fn lay_out(
         root: &Path,
         name: String,
@@ -362,6 +424,37 @@ pub fn root_for(parent: &Path, name: &str) -> Result<PathBuf, CampaignError> {
         return Err(CampaignError::NoParent);
     }
     let root = parent.join(slug);
+    if crate::recent::holds_a_campaign(&root) {
+        return Err(CampaignError::AlreadyACampaign(root));
+    }
+    if std::fs::symlink_metadata(&root).is_ok() {
+        return Err(CampaignError::RootInTheWay(root));
+    }
+    Ok(root)
+}
+
+/// Where [`Campaign::clone_from`] would clone `url` into inside `parent`, or why it
+/// could not.
+///
+/// `<parent>/<repository name>`, the name [`crate::repo::repository_name`] derives from
+/// `url` itself — not slugged, unlike [`root_for`]. Fails [`CampaignError::UrlRefused`]
+/// when [`crate::repo::remote_refusal`] refuses `url`, and
+/// [`CampaignError::UrlUnnamed`] when no repository name can be derived from it, both
+/// before `parent` is even looked at. Then fails [`CampaignError::NoParent`] when
+/// `parent` is empty, [`CampaignError::AlreadyACampaign`] when the derived root already
+/// holds a campaign, or [`CampaignError::RootInTheWay`] when it exists but does not —
+/// a name is refused, never uniqued, exactly as [`root_for`] refuses one. Only stats;
+/// writes nothing.
+pub fn clone_root_for(parent: &Path, url: &str) -> Result<PathBuf, CampaignError> {
+    if let Some(reason) = crate::repo::remote_refusal(url) {
+        return Err(CampaignError::UrlRefused(reason));
+    }
+    let name = crate::repo::repository_name(url)
+        .ok_or_else(|| CampaignError::UrlUnnamed(url.trim().to_owned()))?;
+    if parent.as_os_str().is_empty() {
+        return Err(CampaignError::NoParent);
+    }
+    let root = parent.join(name);
     if crate::recent::holds_a_campaign(&root) {
         return Err(CampaignError::AlreadyACampaign(root));
     }

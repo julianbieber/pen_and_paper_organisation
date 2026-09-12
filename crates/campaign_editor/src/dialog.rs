@@ -1,11 +1,12 @@
-//! What the editor shows when it has no campaign: what it needs to open or create
-//! one, whatever went wrong last time, and the campaigns opened before.
+//! What the editor shows when it has no campaign: what it needs to open, create or
+//! clone one, whatever went wrong last time, and the campaigns opened before.
 //!
 //! Opening a campaign loads its terrain, which is as slow as the terrain is large, so
 //! the work happens off the render thread and lands when it is done. Opening reads the
 //! manifest on the spot first, because a mistyped path costs a few hundred bytes to
 //! reject and answering in the same frame is worth more than answering uniformly.
-//! Creating has no manifest to read yet, so it goes straight to the task pool.
+//! Creating and cloning have no manifest to read yet, so both go straight to the task
+//! pool — a clone's `git` process included.
 //!
 //! It also remembers every campaign that opens, however it was opened, so the dialog
 //! has something to list next time.
@@ -57,14 +58,15 @@ impl Plugin for DialogPlugin {
     }
 }
 
-/// One of the dialog's three path fields, for anything that must address one — a
-/// `Browse…` button, or the input it fills.
+/// One of the dialog's path fields, for anything that must address one — a `Browse…`
+/// button, or the input it fills.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum PathField {
     #[default]
     Root,
     Parent,
     Terrain,
+    CloneParent,
 }
 
 /// Marks a text input as holding one of the dialog's path fields, so a picker can
@@ -88,6 +90,10 @@ pub struct DialogFields {
     pub name: String,
     /// The directory a created campaign goes in.
     pub parent: String,
+    /// The remote URL a clone is made from.
+    pub url: String,
+    /// The directory a clone goes in.
+    pub clone_parent: String,
 }
 
 impl DialogFields {
@@ -97,6 +103,7 @@ impl DialogFields {
             PathField::Root => &self.root,
             PathField::Parent => &self.parent,
             PathField::Terrain => &self.terrain,
+            PathField::CloneParent => &self.clone_parent,
         }
     }
 
@@ -106,6 +113,7 @@ impl DialogFields {
             PathField::Root => self.root = text,
             PathField::Parent => self.parent = text,
             PathField::Terrain => self.terrain = text,
+            PathField::CloneParent => self.clone_parent = text,
         }
     }
 }
@@ -134,7 +142,7 @@ struct TerrainInput;
 struct NameInput;
 
 #[derive(Component, Default, Clone)]
-struct ParentInput;
+struct UrlInput;
 
 /// The recent-campaigns scan in flight, and what it found.
 ///
@@ -167,7 +175,7 @@ pub struct RecentRow {
     pub present: bool,
 }
 
-/// The dialog's scene: an Open section and a Create section.
+/// The dialog's scene: an Open section, a Create section and a Clone section.
 ///
 /// The status line is deliberately not part of it: the map reports a failure there
 /// long after the dialog has been closed.
@@ -291,7 +299,6 @@ pub fn dialog() -> impl Scene {
                         Children [
                             (
                                 @FeathersTextInput
-                                ParentInput
                                 PathInput(PathField::Parent)
                                 on(|change: On<TextEditChange>,
                                     texts: Query<&EditableText>,
@@ -352,6 +359,89 @@ pub fn dialog() -> impl Scene {
                             mut job: ResMut<OpenJob>,
                             mut status: ResMut<StatusMessage>| {
                             start_create(&fields, &mut job, &mut status);
+                        })
+                    )
+                ]
+            ),
+            (Text("Clone a campaign") ThemedText),
+            (
+                Node {
+                    display: Display::Flex,
+                    flex_direction: FlexDirection::Row,
+                    align_items: AlignItems::Center,
+                    column_gap: px(6),
+                }
+                Children [
+                    (Text("URL") ThemedText),
+                    (
+                        @FeathersTextInputContainer
+                        Node { width: px(320) }
+                        Children [
+                            (
+                                @FeathersTextInput
+                                UrlInput
+                                on(|change: On<TextEditChange>,
+                                    texts: Query<&EditableText>,
+                                    mut fields: ResMut<DialogFields>| {
+                                    if let Ok(text) = texts.get(change.event_target()) {
+                                        fields.url = text.value().to_string();
+                                    }
+                                })
+                            )
+                        ]
+                    )
+                ]
+            ),
+            (
+                Node {
+                    display: Display::Flex,
+                    flex_direction: FlexDirection::Row,
+                    align_items: AlignItems::Center,
+                    column_gap: px(6),
+                }
+                Children [
+                    (Text("Where") ThemedText),
+                    (
+                        @FeathersTextInputContainer
+                        Node { width: px(320) }
+                        Children [
+                            (
+                                @FeathersTextInput
+                                PathInput(PathField::CloneParent)
+                                on(|change: On<TextEditChange>,
+                                    texts: Query<&EditableText>,
+                                    mut fields: ResMut<DialogFields>| {
+                                    if let Ok(text) = texts.get(change.event_target()) {
+                                        fields.clone_parent = text.value().to_string();
+                                    }
+                                })
+                            )
+                        ]
+                    ),
+                    browse_button(PathField::CloneParent)
+                ]
+            ),
+            (
+                Node {
+                    display: Display::Flex,
+                    flex_direction: FlexDirection::Row,
+                    column_gap: px(8),
+                }
+                Children [
+                    (
+                        @FeathersButton {
+                            @caption: bsn! { Text("Clone") ThemedText },
+                        }
+                        on(|_: On<Activate>,
+                            fields: Res<DialogFields>,
+                            mut job: ResMut<OpenJob>,
+                            mut status: ResMut<StatusMessage>| {
+                            start_clone(
+                                PathBuf::from(fields.clone_parent.trim()),
+                                fields.url.trim().to_owned(),
+                                &mut job,
+                                &mut status,
+                            );
                         })
                     )
                 ]
@@ -422,6 +512,34 @@ fn start_create(fields: &DialogFields, job: &mut OpenJob, status: &mut StatusMes
     status.0 = format!("creating {}…", root.display());
     let task = AsyncComputeTaskPool::get()
         .spawn(async move { Campaign::create_named(parent, &name, terrain, &SystemGit) });
+    job.0 = Some(task);
+}
+
+/// Starts cloning `url` into `parent`, off the render thread. Does nothing if `job` is
+/// already busy. Checks [`campaign::campaign::clone_root_for`] on the spot first, so a
+/// bad URL or an occupied destination is answered on `status` before the clone ever
+/// runs — the `git` process itself goes to the task pool, exactly as [`start_create`]'s
+/// copy does.
+pub(crate) fn start_clone(parent: PathBuf, url: String, job: &mut OpenJob, status: &mut StatusMessage) {
+    if job.busy() {
+        return;
+    }
+
+    let root = match campaign::campaign::clone_root_for(&parent, &url) {
+        Ok(root) => root,
+        Err(error) => {
+            status.0 = error.to_string();
+            return;
+        }
+    };
+
+    status.0 = format!("cloning {url} into {}…", root.display());
+    let task = AsyncComputeTaskPool::get().spawn(async move {
+        Campaign::clone_from(parent, &url, &SystemGit).map(|campaign| Created {
+            campaign,
+            repository: Ok(()),
+        })
+    });
     job.0 = Some(task);
 }
 
@@ -598,34 +716,47 @@ fn remember_campaign(campaign: Res<OpenCampaign>) {
 fn seed_parent(
     list: Res<RecentList>,
     mut fields: ResMut<DialogFields>,
-    mut inputs: Query<&mut EditableText, With<ParentInput>>,
+    mut inputs: Query<(&PathInput, &mut EditableText)>,
     mut seeded: Local<bool>,
 ) {
     if *seeded || !list.answered {
         return;
     }
     *seeded = true;
-    if !fields.parent.is_empty() {
-        return;
-    }
 
     let newest = list.listed.first().map(|listed| listed.recent.root.as_path());
     let home = std::env::var_os("HOME");
     let Some(parent) = recent::default_parent(newest, home.as_deref()) else {
         return;
     };
-
     let text = parent.display().to_string();
-    fields.parent = text.clone();
-    for mut field in inputs.iter_mut() {
-        replace_text(&mut field, &text);
+
+    let seed_root = fields.parent.is_empty();
+    let seed_clone = fields.clone_parent.is_empty();
+    if seed_root {
+        fields.parent = text.clone();
+    }
+    if seed_clone {
+        fields.clone_parent = text.clone();
+    }
+
+    for (path, mut field) in inputs.iter_mut() {
+        match path.0 {
+            PathField::Parent if seed_root => replace_text(&mut field, &text),
+            PathField::CloneParent if seed_clone => replace_text(&mut field, &text),
+            _ => {}
+        }
     }
 }
 
 fn fill_new_inputs(
     fields: Res<DialogFields>,
-    mut paths: Query<(&PathInput, &mut EditableText), (Added<PathInput>, Without<NameInput>)>,
-    mut names: Query<&mut EditableText, (Added<NameInput>, Without<PathInput>)>,
+    mut paths: Query<
+        (&PathInput, &mut EditableText),
+        (Added<PathInput>, Without<NameInput>, Without<UrlInput>),
+    >,
+    mut names: Query<&mut EditableText, (Added<NameInput>, Without<PathInput>, Without<UrlInput>)>,
+    mut urls: Query<&mut EditableText, (Added<UrlInput>, Without<PathInput>, Without<NameInput>)>,
 ) {
     for (path, mut field) in paths.iter_mut() {
         let text = fields.path(path.0);
@@ -636,6 +767,11 @@ fn fill_new_inputs(
     for mut field in names.iter_mut() {
         if !fields.name.is_empty() {
             replace_text(&mut field, &fields.name);
+        }
+    }
+    for mut field in urls.iter_mut() {
+        if !fields.url.is_empty() {
+            replace_text(&mut field, &fields.url);
         }
     }
 }

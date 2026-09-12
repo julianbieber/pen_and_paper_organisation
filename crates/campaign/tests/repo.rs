@@ -13,10 +13,10 @@ use std::process::{ExitStatus, Output};
 
 use campaign::repo::{
     GitError, GitRunner, IGNORE, IGNORE_FILE, RemoteOutcome, Repo, Synced, abort_rebase_args,
-    add_args, add_origin_args, changed_between_args, commit_args, committer_ident_args,
-    current_branch_args, head_args, inside_work_tree_args, init_args, origin_url_args,
-    pull_rebase_args, push_args, remote_has_branch_args, remote_refusal, staged_anything_args,
-    stamp_of_ident, sync_subject,
+    add_args, add_origin_args, changed_between_args, clone_args, commit_args,
+    committer_ident_args, current_branch_args, head_args, inside_work_tree_args, init_args,
+    origin_url_args, pull_rebase_args, push_args, remote_has_branch_args, remote_refusal,
+    repository_name, staged_anything_args, stamp_of_ident, sync_subject,
 };
 
 #[derive(Default)]
@@ -741,6 +741,95 @@ fn remote_refusal_on_a_multiline_url() {
 #[test]
 fn remote_refusal_accepts_an_ordinary_url() {
     assert_eq!(remote_refusal("git@example.invalid:campaign.git"), None);
+}
+
+// `clone_into` runs this, from the destination's parent — a `--` before the URL, as
+// `add_origin_args` carries one.
+#[test]
+fn clone_args_is_clone_quiet_dashdash_url_destination() {
+    assert_eq!(
+        clone_args("https://host/campaign.git", Path::new("/tmp/dest")),
+        vec![
+            OsString::from("clone"),
+            OsString::from("--quiet"),
+            OsString::from("--"),
+            OsString::from("https://host/campaign.git"),
+            OsString::from("/tmp/dest"),
+        ]
+    );
+}
+
+// The table `repository_name` must agree with: an ordinary URL, a trailing slash, an
+// scp-style remote, a bare host:name, a local path, a `.git` bare-repo path, a name with
+// dots left unslugged, and every shape that names nothing at all.
+#[test]
+fn repository_name_table() {
+    let cases: &[(&str, Option<&str>)] = &[
+        ("https://host/u/campaign.git", Some("campaign")),
+        ("https://host/u/campaign/", Some("campaign")),
+        ("git@host:u/campaign.git", Some("campaign")),
+        ("host:campaign", Some("campaign")),
+        ("/srv/git/campaign", Some("campaign")),
+        ("/srv/campaign/.git", Some("campaign")),
+        ("My.Campaign.git", Some("My.Campaign")),
+        ("", None),
+        ("/", None),
+        (".git", None),
+        ("https://host/..", None),
+    ];
+    for (url, expected) in cases {
+        assert_eq!(repository_name(url).as_deref(), *expected, "{url}");
+    }
+}
+
+// `clone_into` runs exactly one command, from the destination's parent, with
+// `clone_args`'s own arguments.
+#[test]
+fn clone_into_runs_one_command_from_the_destinations_parent() {
+    let runner = Recorder::default();
+    let destination = Path::new("/tmp/clone-parent/campaign");
+
+    let repo = Repo::clone_into(&runner, "https://host/campaign.git", destination).expect("clone");
+
+    assert_eq!(repo.root(), destination);
+    assert_eq!(runner.args(), vec![vec_of(clone_args("https://host/campaign.git", destination))]);
+    assert_eq!(runner.dirs(), vec![PathBuf::from("/tmp/clone-parent")]);
+}
+
+fn vec_of(args: Vec<OsString>) -> Vec<String> {
+    args.iter().map(|a| a.to_string_lossy().into_owned()).collect()
+}
+
+// A refused clone's message is git's own *last* line: `git clone` prints
+// `Cloning into '…'` before the `fatal:` line, so the first line would just repeat what
+// the caller already typed.
+#[test]
+fn a_refused_clone_reports_the_last_stderr_line() {
+    let runner = Scripted::new(|_index, _args| {
+        Reply::exits(128).stderr("Cloning into 'x'...\nfatal: repository 'y' does not exist")
+    });
+
+    match Repo::clone_into(&runner, "https://host/x", Path::new("/tmp/x")) {
+        Err(GitError::GitRefused { verb, message }) => {
+            assert_eq!(verb, "clone");
+            assert_eq!(message, "fatal: repository 'y' does not exist");
+        }
+        Ok(_) => panic!("the clone must be refused"),
+        Err(other) => panic!("expected GitRefused, got {other:?}"),
+    }
+}
+
+// A URL `remote_refusal` refuses is refused before `git` ever runs.
+#[test]
+fn clone_into_refuses_a_bad_url_without_running_anything() {
+    let runner = Recorder::default();
+
+    match Repo::clone_into(&runner, "", Path::new("/tmp/x")) {
+        Err(GitError::GitRefused { verb: "clone", .. }) => {}
+        Ok(_) => panic!("an empty URL must be refused"),
+        Err(other) => panic!("expected GitRefused, got {other:?}"),
+    }
+    assert!(runner.args().is_empty());
 }
 
 // Every shape `summary` can report must read differently, or a GM cannot tell two

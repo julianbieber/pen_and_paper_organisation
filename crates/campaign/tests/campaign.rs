@@ -3,9 +3,11 @@
 //! `Campaign::open` demands.
 
 use std::ffi::OsString;
+use std::os::unix::process::ExitStatusExt;
 use std::path::{Path, PathBuf};
+use std::process::{ExitStatus, Output};
 
-use campaign::campaign::root_for;
+use campaign::campaign::{clone_root_for, root_for};
 use campaign::repo::GitError;
 use campaign::{CAMPAIGN_VERSION, Campaign, CampaignError, CampaignManifest, GitRunner};
 use glam::UVec2;
@@ -16,6 +18,31 @@ struct NoGit;
 impl GitRunner for NoGit {
     fn run(&self, _dir: &Path, _args: &[OsString]) -> Result<std::process::Output, GitError> {
         Err(GitError::GitMissing)
+    }
+}
+
+struct FakeClone {
+    campaign: bool,
+}
+
+impl GitRunner for FakeClone {
+    fn run(&self, _dir: &Path, args: &[OsString]) -> Result<Output, GitError> {
+        let destination = PathBuf::from(args.last().expect("clone_args ends in the destination"));
+        std::fs::create_dir_all(&destination).expect("fake clone: make the destination");
+        if self.campaign {
+            let terrain_source = tempfile::tempdir().expect("temp dir for the fixture terrain");
+            write_loadable_terrain(terrain_source.path());
+            Campaign::create(&destination, terrain_source.path(), &NoGit)
+                .expect("fake clone: lay out the campaign");
+        } else {
+            std::fs::write(destination.join("README"), "not a campaign")
+                .expect("fake clone: write a plain file");
+        }
+        Ok(Output {
+            status: ExitStatus::from_raw(0),
+            stdout: Vec::new(),
+            stderr: Vec::new(),
+        })
     }
 }
 
@@ -775,4 +802,92 @@ fn root_for_derives_the_slugged_path_and_writes_nothing() {
     let root = root_for(&parent, "The Shattered Coast").expect("root_for");
     assert_eq!(root, parent.join("the-shattered-coast"));
     assert!(!parent.exists(), "root_for must not create anything");
+}
+
+// The acceptance observation for a clone: a URL and a parent, no directory typed, and
+// the campaign that lands opens with its terrain.
+#[test]
+fn clone_from_with_a_campaign_opens_it() {
+    let parent = tempfile::tempdir().expect("temp dir");
+
+    let campaign = Campaign::clone_from(
+        parent.path(),
+        "https://example.invalid/campaign.git",
+        &FakeClone { campaign: true },
+    )
+    .expect("clone_from");
+
+    assert_eq!(campaign.root(), parent.path().join("campaign"));
+}
+
+// The scope's other half: a clone that holds no manifest is refused with a sentence,
+// and the directory it landed in — README included — is left for the GM.
+#[test]
+fn clone_from_with_no_manifest_fails_and_keeps_the_directory() {
+    let parent = tempfile::tempdir().expect("temp dir");
+    let root = parent.path().join("campaign");
+
+    match Campaign::clone_from(
+        parent.path(),
+        "https://example.invalid/campaign.git",
+        &FakeClone { campaign: false },
+    ) {
+        Err(CampaignError::ClonedNotACampaign(reported)) => assert_eq!(reported, root),
+        other => panic!("expected ClonedNotACampaign, got {other:?}"),
+    }
+    assert!(root.join("README").is_file(), "the clone was not left behind");
+}
+
+// A missing `git` fails the clone itself, and writes nothing at all — unlike a clone
+// that lands and then turns out not to be a campaign.
+#[test]
+fn clone_from_with_no_git_fails_and_writes_nothing() {
+    let parent = tempfile::tempdir().expect("temp dir");
+    let root = parent.path().join("campaign");
+
+    match Campaign::clone_from(parent.path(), "https://example.invalid/campaign.git", &NoGit) {
+        Err(CampaignError::CloneFailed(GitError::GitMissing)) => {}
+        other => panic!("expected CloneFailed(GitMissing), got {other:?}"),
+    }
+    assert!(!root.exists(), "a failed clone must leave no root");
+}
+
+// `clone_root_for` only stats, in `root_for`'s shape: every refusal it can give, and
+// none of them write anything.
+#[test]
+fn clone_root_for_refuses_without_writing() {
+    let parent = tempfile::tempdir().expect("temp dir");
+
+    assert!(matches!(
+        clone_root_for(parent.path(), ""),
+        Err(CampaignError::UrlRefused(_))
+    ));
+    assert!(matches!(
+        clone_root_for(parent.path(), "https://host/.."),
+        Err(CampaignError::UrlUnnamed(_))
+    ));
+    assert!(matches!(
+        clone_root_for(Path::new(""), "https://host/campaign.git"),
+        Err(CampaignError::NoParent)
+    ));
+
+    let plain = parent.path().join("campaign");
+    std::fs::create_dir_all(&plain).unwrap();
+    assert!(matches!(
+        clone_root_for(parent.path(), "https://host/campaign.git"),
+        Err(CampaignError::RootInTheWay(_))
+    ));
+    std::fs::remove_dir_all(&plain).unwrap();
+
+    let (_tmp, campaign_root) = root_with_terrain();
+    create(&campaign_root, campaign_root.join("terrain")).expect("create");
+    assert!(matches!(
+        clone_root_for(
+            campaign_root.parent().unwrap(),
+            "https://host/my-campaign.git"
+        ),
+        Err(CampaignError::AlreadyACampaign(_))
+    ));
+
+    assert!(!parent.path().join("campaign").exists());
 }
