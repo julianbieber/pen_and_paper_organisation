@@ -14,8 +14,10 @@ use bevy::prelude::*;
 use bevy::ui_widgets::Activate;
 use bevy::window::PrimaryWindow;
 
+use crate::combat::CombatMaps;
 use crate::dialog::RecentList;
 use crate::document::{WorldDoc, WorldState};
+use crate::features::combat::{CombatFields, CombatIntent};
 use crate::features::dungeon::DungeonIntent;
 use crate::features::draw::Drafting;
 use crate::features::image::{CalibrationDistance, ImageFields, ImportJob, ImportRequest, Placing};
@@ -28,7 +30,7 @@ use crate::features::tool::ActiveTool;
 use crate::map::backdrop::{Backdrop, RetiredBackdrop};
 use crate::map::chunks::{ChunkCoord, MapChunks, PaintedCells};
 use crate::map::image::{BackdropImage, ImageAsset};
-use crate::map::load::{DungeonTileset, MapAssets, MapState, MapTerrain};
+use crate::map::load::{CombatTileset, DungeonTileset, MapAssets, MapState, MapTerrain};
 use crate::map::scale::ScaleFields;
 use crate::notes::references::References;
 use crate::notes::watch::NotesWatch;
@@ -89,6 +91,7 @@ enum CloseDecision {
 fn decide_close(
     campaign_open: bool,
     doc: Option<&WorldDoc>,
+    combat_unsaved: bool,
     asking: &mut Asking,
     closing: &mut CampaignClose,
 ) -> CloseDecision {
@@ -100,7 +103,7 @@ fn decide_close(
     if asking.question.is_some() {
         return CloseDecision::AnotherQuestionIsUp;
     }
-    if doc.is_some_and(WorldDoc::anything_unsaved) {
+    if doc.is_some_and(WorldDoc::anything_unsaved) || combat_unsaved {
         asking.raise(Question::UnsavedOnCampaignClose, None);
         return CloseDecision::AskedToSave;
     }
@@ -112,10 +115,12 @@ fn ask_to_close(
     mut closing: ResMut<CampaignClose>,
     open: Option<Res<OpenCampaign>>,
     doc: Option<Res<WorldDoc>>,
+    combat: Option<Res<CombatMaps>>,
     mut asking: ResMut<Asking>,
     mut status: ResMut<StatusMessage>,
 ) {
-    let decision = decide_close(open.is_some(), doc.as_deref(), &mut asking, &mut closing);
+    let combat_unsaved = combat.is_some_and(|combat| combat.anything_unsaved());
+    let decision = decide_close(open.is_some(), doc.as_deref(), combat_unsaved, &mut asking, &mut closing);
     if decision == CloseDecision::AnotherQuestionIsUp {
         status.say("answer the question on screen first");
     }
@@ -146,6 +151,7 @@ fn close_campaign(world: &mut World) {
     world.remove_resource::<MapAssets>();
     world.remove_resource::<MapTerrain>();
     world.remove_resource::<DungeonTileset>();
+    world.remove_resource::<CombatTileset>();
     world.remove_resource::<Backdrop>();
     world.remove_resource::<NotesWatch>();
 
@@ -163,6 +169,9 @@ fn close_campaign(world: &mut World) {
     world.insert_resource(CalibrationDistance::default());
     world.insert_resource(ImageFields::default());
     world.insert_resource(DungeonIntent::default());
+    world.insert_resource(CombatMaps::default());
+    world.insert_resource(CombatIntent::default());
+    world.insert_resource(CombatFields::default());
     world.insert_resource(PendingLabel::default());
     world.insert_resource(Asking::default());
     world.insert_resource(Ruler::default());
@@ -186,9 +195,11 @@ fn close_campaign(world: &mut World) {
 fn sync_title(
     open: Option<Res<OpenCampaign>>,
     doc: Option<Res<WorldDoc>>,
+    combat: Option<Res<CombatMaps>>,
     mut windows: Query<&mut Window, With<PrimaryWindow>>,
 ) {
-    let dirty = doc.as_deref().is_some_and(WorldDoc::anything_unsaved);
+    let dirty = doc.as_deref().is_some_and(WorldDoc::anything_unsaved)
+        || combat.is_some_and(|combat| combat.anything_unsaved());
     let title = campaign::title::window_title(
         open.as_deref().map(|open| (open.0.manifest().name.as_str(), dirty)),
     );
@@ -248,7 +259,7 @@ mod tests {
         let mut asking = Asking::default();
         let mut closing = CampaignClose::Asked;
 
-        let decision = decide_close(true, Some(&doc), &mut asking, &mut closing);
+        let decision = decide_close(true, Some(&doc), false, &mut asking, &mut closing);
 
         assert_eq!(decision, CloseDecision::AskedToSave);
         assert_eq!(asking.question, Some(Question::UnsavedOnCampaignClose));
@@ -266,11 +277,29 @@ mod tests {
         let mut asking = Asking::default();
         let mut closing = CampaignClose::Asked;
 
-        let decision = decide_close(true, Some(&doc), &mut asking, &mut closing);
+        let decision = decide_close(true, Some(&doc), false, &mut asking, &mut closing);
 
         assert_eq!(decision, CloseDecision::Confirmed);
         assert_eq!(asking.question, None);
         assert_eq!(closing, CampaignClose::Confirmed);
+    }
+
+    // A painted combat map is discarded by a close just as a world edit is, so it is asked
+    // about even when every world document is clean.
+    #[test]
+    fn a_dirty_combat_map_raises_the_question_on_a_clean_world() {
+        let doc = WorldDoc::world_map(
+            Document::new(CampaignWorld::default()),
+            std::path::PathBuf::from("world.ron"),
+        );
+        let mut asking = Asking::default();
+        let mut closing = CampaignClose::Asked;
+
+        let decision = decide_close(true, Some(&doc), true, &mut asking, &mut closing);
+
+        assert_eq!(decision, CloseDecision::AskedToSave);
+        assert_eq!(asking.question, Some(Question::UnsavedOnCampaignClose));
+        assert_eq!(closing, CampaignClose::Nothing);
     }
 
     // Discarding the campaign-close question confirms the close; cancelling it leaves the
@@ -340,6 +369,9 @@ mod tests {
         app.insert_resource(selection);
         app.insert_resource(CampaignClose::Confirmed);
         app.insert_resource(SyncJob::assume_read_origin());
+        let mut combat = CombatMaps::default();
+        combat.open(campaign::CombatMap::new("Ford", 4, 4).expect("a 4x4 map is valid"), None);
+        app.insert_resource(combat);
         let chrome = app.world_mut().spawn(CampaignChrome).id();
         let chunk = app.world_mut().spawn(ChunkCoord { x: 0, y: 0 }).id();
 
@@ -354,5 +386,6 @@ mod tests {
         assert!(app.world().resource::<Selection>().features.is_empty());
         assert_eq!(*app.world().resource::<CampaignClose>(), CampaignClose::Nothing);
         assert!(!app.world().resource::<SyncJob>().read_origin, "the next campaign must ask again");
+        assert_eq!(app.world().resource::<CombatMaps>().names().count(), 0, "a combat map is never inherited");
     }
 }

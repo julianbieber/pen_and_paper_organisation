@@ -4,9 +4,9 @@
 //! so all of it is checked without a window: the tile numbering, the coastline mask,
 //! which cells a chunk covers, and which way up its rows go.
 //!
-//! Two vocabularies, one contract. A terrain cell is a [`TileKind`] and a dungeon cell
-//! is a [`DungeonTile`]; each numbers its own strip, and `index` is the only place
-//! either number is written.
+//! Three vocabularies, one contract. A terrain cell is a [`TileKind`], a dungeon cell is
+//! a [`DungeonTile`] and a combat map cell is a [`CombatTile`]; each numbers its own
+//! strip, and `index` is the only place any of those numbers is written.
 
 use serde::{Deserialize, Serialize};
 use watershed::{FieldRole, Terrain};
@@ -177,6 +177,112 @@ impl DungeonTile {
             Self::StairsDown => "stairs down",
             Self::Water => "water",
             Self::Rubble => "rubble",
+        }
+    }
+}
+
+/// Tiles the combat strip holds.
+///
+/// Every index [`CombatTile::index`] can produce is below this and every index below it
+/// is one it can produce, so the strip has no tile a combat map cannot paint.
+pub const COMBAT_TILE_COUNT: u16 = 12;
+
+/// What a combat map cell is drawn as.
+///
+/// The variants are `combat_tiles.png`'s columns in order, and [`CombatTile::index`] is
+/// the only place one of its tile numbers is written. The strip is drawn by hand in
+/// `bevy_sprite_editor`, so a redraw that keeps the order changes nothing here, and a
+/// redraw that reorders it draws every combat map wrongly.
+///
+/// [`CombatTile::Grass`] is the default, which is what every cell of a new combat map is
+/// filled with.
+///
+/// Deliberately not `#[non_exhaustive]`, for the reason [`TileKind`] is not.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum CombatTile {
+    #[default]
+    Grass,
+    Dirt,
+    Road,
+    Sand,
+    Mud,
+    ShallowWater,
+    DeepWater,
+    Tree,
+    Bush,
+    Boulder,
+    Wall,
+    Floor,
+}
+
+impl TileVocabulary for CombatTile {
+    const WALL: Self = Self::Wall;
+    const FLOOR: Self = Self::Floor;
+
+    fn index(self) -> u16 {
+        CombatTile::index(self)
+    }
+}
+
+impl CombatTile {
+    /// The tile's column in the combat strip, which is also its layer in the array
+    /// texture.
+    ///
+    /// Always below [`COMBAT_TILE_COUNT`].
+    pub fn index(self) -> u16 {
+        match self {
+            Self::Grass => 0,
+            Self::Dirt => 1,
+            Self::Road => 2,
+            Self::Sand => 3,
+            Self::Mud => 4,
+            Self::ShallowWater => 5,
+            Self::DeepWater => 6,
+            Self::Tree => 7,
+            Self::Bush => 8,
+            Self::Boulder => 9,
+            Self::Wall => 10,
+            Self::Floor => 11,
+        }
+    }
+
+    /// Every combat tile, in strip order.
+    ///
+    /// The array length is the count, so adding a variant without extending this fails
+    /// to compile.
+    pub const fn all() -> [Self; COMBAT_TILE_COUNT as usize] {
+        [
+            Self::Grass,
+            Self::Dirt,
+            Self::Road,
+            Self::Sand,
+            Self::Mud,
+            Self::ShallowWater,
+            Self::DeepWater,
+            Self::Tree,
+            Self::Bush,
+            Self::Boulder,
+            Self::Wall,
+            Self::Floor,
+        ]
+    }
+
+    /// The word for this tile in the tool strip, on the status line and on the control
+    /// socket.
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Grass => "grass",
+            Self::Dirt => "dirt",
+            Self::Road => "road",
+            Self::Sand => "sand",
+            Self::Mud => "mud",
+            Self::ShallowWater => "shallow water",
+            Self::DeepWater => "deep water",
+            Self::Tree => "tree",
+            Self::Bush => "bush",
+            Self::Boulder => "boulder",
+            Self::Wall => "wall",
+            Self::Floor => "floor",
         }
     }
 }

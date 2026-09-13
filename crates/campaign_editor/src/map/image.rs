@@ -92,12 +92,18 @@ pub fn sync_backdrop_image(
     doc: Res<WorldDoc>,
     backdrop: Res<Backdrop>,
     placing: Res<Placing>,
+    combat: Option<Res<crate::combat::CombatMaps>>,
     mut held: ResMut<ImageAsset>,
     mut images: ResMut<Assets<Image>>,
     mut status: ResMut<StatusMessage>,
     mut sprites: Query<(Entity, &mut Transform, &mut Sprite), With<BackdropImage>>,
 ) {
-    let declared = doc.document.world().image().cloned();
+    let in_combat = combat.is_some_and(|combat| combat.is_on_screen());
+    let declared = if in_combat {
+        None
+    } else {
+        doc.document.world().image().cloned()
+    };
 
     let Some(declared) = declared else {
         if !held.file.is_empty() {

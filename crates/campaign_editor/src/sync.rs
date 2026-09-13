@@ -237,7 +237,9 @@ pub(crate) struct AuthoringReset<'w> {
 }
 
 impl AuthoringReset<'_> {
-    fn clear(&mut self) {
+    /// Clear the selection, cancel a drag and an image placement, abandon a draft and a
+    /// stroke, clear the measurement and the pending label, and settle any question.
+    pub(crate) fn clear(&mut self) {
         self.selection.clear();
         self.dragging.cancel();
         self.drafting.abandon();
@@ -257,7 +259,9 @@ impl AuthoringReset<'_> {
 /// changed every frame; [`SyncJob::set_changed`] is called once it lands, which is what
 /// wakes [`show_sync_panel`]. When a sync's reload replaces the document on screen, it
 /// clears the same authoring state [`crate::features::dungeon::switch_document`] clears
-/// on a document switch — a reload replaces the document just as thoroughly.
+/// on a document switch — a reload replaces the document just as thoroughly. While a combat
+/// map is on screen the backdrop is left as it is, and is set from the reloaded document
+/// when the GM goes back to the map.
 pub fn land_git_job(
     mut job: ResMut<SyncJob>,
     mut doc: ResMut<WorldDoc>,
@@ -265,6 +269,7 @@ pub fn land_git_job(
     mut backdrop: ResMut<Backdrop>,
     terrain: Res<MapTerrain>,
     mut reset: AuthoringReset,
+    combat: Option<Res<crate::combat::CombatMaps>>,
     camera: Single<(&Transform, &Projection), With<MapCamera>>,
     mut fields: Query<&mut EditableText, With<RemoteField>>,
     mut sync_fields: ResMut<SyncFields>,
@@ -286,16 +291,14 @@ pub fn land_git_job(
 
             if reloaded.on_screen {
                 reset.clear();
+            }
 
-                let (width, height) = match backdrop.source {
-                    BackdropSource::Grid => {
-                        let grid = doc.document.world().grid().expect("a dungeon document carries a grid");
-                        (grid.width(), grid.height())
-                    }
-                    BackdropSource::Terrain => (terrain.width, terrain.height),
+            if reloaded.on_screen && !combat.is_some_and(|combat| combat.is_on_screen()) {
+                let (width, height, source) = match doc.document.world().grid() {
+                    Some(grid) => (grid.width(), grid.height(), BackdropSource::Grid),
+                    None => (terrain.width, terrain.height, BackdropSource::Terrain),
                 };
                 let cell_size = backdrop.view.cell_size;
-                let source = backdrop.source;
                 let (transform, projection) = camera.into_inner();
                 let here = dungeon::bookmark_of(transform, projection);
                 backdrop.switch_to(MapView::new(width, height, cell_size), source, here);

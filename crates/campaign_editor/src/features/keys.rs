@@ -36,6 +36,7 @@ pub fn authoring_keys(
     mut placing: ResMut<crate::features::image::Placing>,
     mut ruler: ResMut<crate::features::ruler::Ruler>,
     mut asking: ResMut<Asking>,
+    mut painted: ResMut<crate::map::chunks::PaintedCells>,
     mut status: ResMut<StatusMessage>,
 ) {
     let control = keys.pressed(KeyCode::ControlLeft) || keys.pressed(KeyCode::ControlRight);
@@ -61,7 +62,11 @@ pub fn authoring_keys(
             doc.document.undo()
         };
         match stepped {
-            Ok(true) => {}
+            Ok(true) => {
+                if doc.document.world().grid().is_some() {
+                    painted.everything = true;
+                }
+            }
             Ok(false) => status.say(if shift {
                 "nothing to redo"
             } else {

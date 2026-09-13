@@ -1,4 +1,5 @@
-//! Turning a brush stroke on a dungeon's grid into one [`Edit`].
+//! Turning a brush stroke on a dungeon's grid into one [`Edit`]. A combat map's strokes
+//! share the gesture, [`advance_stroke`], and land in `features/combat.rs`.
 //!
 //! The stroke is held in a resource rather than a `Local` for the same reason a drag is:
 //! Escape has to be able to abandon it, and the control socket has to be able to drive one
@@ -13,7 +14,7 @@
 //! frame.
 
 use bevy::prelude::*;
-use campaign::brush;
+use campaign::brush::{self, Brush};
 use campaign::edit::Edit;
 use campaign::feature::CellPoint;
 
@@ -60,39 +61,15 @@ pub fn paint_tiles(
     mut painted: ResMut<PaintedCells>,
     mut status: ResMut<StatusMessage>,
 ) {
-    let at = pointer.cell.map(cell_of);
-
-    if buttons.just_pressed(MouseButton::Left) && !over_ui.0
-        && let Some(at) = at
-    {
-        stroking.path = vec![at];
-    }
-
-    if !stroking.is_live() {
+    let Some(path) = advance_stroke(
+        &buttons,
+        pointer.cell.map(cell_of),
+        over_ui.0,
+        active.brush,
+        &mut stroking,
+    ) else {
         return;
-    }
-
-    if buttons.pressed(MouseButton::Left)
-        && active.brush.tracks_the_path()
-        && let Some(at) = at
-        && stroking.path.last() != Some(&at)
-    {
-        let from = *stroking.path.last().expect("a live stroke has a first cell");
-        let mut between = brush::line(from, at);
-        between.remove(0);
-        stroking.path.extend(between);
-    }
-
-    if !buttons.just_released(MouseButton::Left) {
-        return;
-    }
-
-    let mut path = std::mem::take(&mut stroking.path);
-    if let Some(at) = at
-        && path.last() != Some(&at)
-    {
-        path.push(at);
-    }
+    };
 
     let Some(grid) = doc.document.world().grid() else {
         return;
@@ -110,9 +87,57 @@ pub fn paint_tiles(
             changes: changes.clone(),
         },
     ) {
-        painted.0.extend(changes);
+        painted.cells.extend(changes.iter().map(|change| (change.x, change.y)));
         status.say(format!("painted {count} cell(s)"));
     }
+}
+
+/// Carries the stroke in `stroking` one frame on, and hands back every cell it covered on
+/// the frame the left button is released.
+///
+/// `at` is the cell under the pointer, or `None` when it is over no cell; a stroke never
+/// begins there, nor where `over_ui` says the press landed on the interface. `brush` decides
+/// whether the cells between frames are part of the path. `None` on every other frame, and
+/// the stroke is gone from `stroking` once its path has been handed back.
+pub fn advance_stroke(
+    buttons: &ButtonInput<MouseButton>,
+    at: Option<(i64, i64)>,
+    over_ui: bool,
+    brush: Brush,
+    stroking: &mut Stroking,
+) -> Option<Vec<(i64, i64)>> {
+    if buttons.just_pressed(MouseButton::Left) && !over_ui
+        && let Some(at) = at
+    {
+        stroking.path = vec![at];
+    }
+
+    if !stroking.is_live() {
+        return None;
+    }
+
+    if buttons.pressed(MouseButton::Left)
+        && brush.tracks_the_path()
+        && let Some(at) = at
+        && stroking.path.last() != Some(&at)
+    {
+        let from = *stroking.path.last().expect("a live stroke has a first cell");
+        let mut between = brush::line(from, at);
+        between.remove(0);
+        stroking.path.extend(between);
+    }
+
+    if !buttons.just_released(MouseButton::Left) {
+        return None;
+    }
+
+    let mut path = std::mem::take(&mut stroking.path);
+    if let Some(at) = at
+        && path.last() != Some(&at)
+    {
+        path.push(at);
+    }
+    Some(path)
 }
 
 /// Whether the paint tool is in hand.
@@ -125,6 +150,7 @@ pub fn a_grid_is_open(doc: Option<Res<WorldDoc>>) -> bool {
     doc.is_some_and(|doc| doc.document.world().grid().is_some())
 }
 
-fn cell_of(cell: CellPoint) -> (i64, i64) {
+/// The whole cell a position in cells lies in, rounding each axis down.
+pub(crate) fn cell_of(cell: CellPoint) -> (i64, i64) {
     (cell.x.floor() as i64, cell.y.floor() as i64)
 }

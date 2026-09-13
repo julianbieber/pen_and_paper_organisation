@@ -17,6 +17,8 @@ use bevy::input_focus::InputFocus;
 use bevy::prelude::*;
 use bevy::text::EditableText;
 
+/// Opening a blank combat map, painting it, and getting back to the map.
+pub mod combat;
 /// The campaign's `world.ron` under authorship.
 pub mod doc;
 /// Turning clicks into a draft, and a finished draft into an Edit.
@@ -71,6 +73,9 @@ impl Plugin for FeaturesPlugin {
             .init_resource::<image::CalibrationDistance>()
             .init_resource::<image::ImageFields>()
             .init_resource::<dungeon::DungeonIntent>()
+            .init_resource::<crate::combat::CombatMaps>()
+            .init_resource::<combat::CombatIntent>()
+            .init_resource::<combat::CombatFields>()
             .init_resource::<select::Selection>()
             .init_resource::<select::Dragging>()
             .init_resource::<prompt::Asking>()
@@ -92,6 +97,7 @@ impl Plugin for FeaturesPlugin {
                         prompt::build_prompt,
                         image::build_image_panel,
                         ruler::build_ruler_readout,
+                        combat::build_combat_panel,
                     )
                         .run_if(resource_added::<WorldDoc>),
                     crate::notes::panel::build_notes_panel
@@ -108,25 +114,43 @@ impl Plugin for FeaturesPlugin {
                                 .and_then(crate::sync::a_git_job_is_running),
                         ),
                     ),
-                    tool::sync_tool_strip.run_if(resource_exists_and_changed::<tool::ActiveTool>),
+                    tool::sync_tool_strip.run_if(
+                        resource_exists_and_changed::<tool::ActiveTool>
+                            .or_else(resource_exists_and_changed::<crate::combat::CombatMaps>),
+                    ),
                     (
-                        draw::draw_features.run_if(a_drawing_tool_is_active),
-                        select::select_features.run_if(the_select_tool_is_active),
-                        paint::paint_tiles
-                            .run_if(paint::the_paint_tool_is_active.and_then(paint::a_grid_is_open)),
-                        image::place_image,
-                        keys::authoring_keys,
-                        panel::commit_label,
-                        ruler::run_ruler.run_if(ruler::the_measure_tool_is_active),
-                    )
-                        .run_if(authoring_is_live),
+                        (
+                            draw::draw_features.run_if(a_drawing_tool_is_active),
+                            select::select_features.run_if(the_select_tool_is_active),
+                            paint::paint_tiles
+                                .run_if(paint::the_paint_tool_is_active.and_then(paint::a_grid_is_open)),
+                            image::place_image,
+                            keys::authoring_keys,
+                            panel::commit_label,
+                            ruler::run_ruler.run_if(ruler::the_measure_tool_is_active),
+                        )
+                            .run_if(authoring_is_live.and_then(crate::combat::the_map_is_on_screen)),
+                        (
+                            combat::paint_combat_tiles.run_if(paint::the_paint_tool_is_active),
+                            combat::combat_keys,
+                        )
+                            .run_if(authoring_is_live.and_then(crate::combat::a_combat_map_is_on_screen)),
+                    ),
                     (
                         image::commit_image_fields,
                         image::import_image.run_if(
                             resource_exists::<WorldDoc>.and_then(resource_exists::<Backdrop>),
                         ),
+                        combat::refuse_dungeon_switch.run_if(
+                            dungeon::a_switch_was_asked_for.and_then(crate::combat::a_combat_map_is_on_screen),
+                        ),
                         dungeon::switch_document.run_if(
                             dungeon::a_switch_was_asked_for
+                                .and_then(resource_exists::<WorldDoc>)
+                                .and_then(resource_exists::<Backdrop>),
+                        ),
+                        combat::switch_combat.run_if(
+                            combat::a_combat_switch_was_asked_for
                                 .and_then(resource_exists::<WorldDoc>)
                                 .and_then(resource_exists::<Backdrop>),
                         ),
@@ -146,6 +170,7 @@ impl Plugin for FeaturesPlugin {
                         (image::show_image_panel, image::land_opacity)
                             .chain()
                             .run_if(resource_exists::<WorldDoc>),
+                        combat::show_combat_panel.run_if(any_with_component::<combat::CombatPanel>),
                     ),
                     (
                         crate::notes::watch::drain_notes_watch

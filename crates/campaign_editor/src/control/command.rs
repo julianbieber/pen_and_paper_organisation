@@ -18,18 +18,20 @@ use campaign::draft::DraftShape;
 use campaign::edit::Edit;
 use campaign::feature::{CellPoint, FeatureKind, Rank};
 use campaign::notebook::NoteKind;
-use campaign::tiles::DungeonTile;
+use campaign::tiles::{CombatTile, DungeonTile};
 use serde_json::{Value, json};
 
 use bevy::input_focus::InputFocus;
 use bevy::ui_widgets::SliderValue;
 use bevy::text::EditableText;
 
+use crate::combat::CombatMaps;
 use crate::dialog;
 use crate::features::PointerOverUi;
 use crate::document::{WorldDoc, WorldOutcome, WorldState};
 use crate::features::panel::PendingLabel;
 use crate::features::draw::Drafting;
+use crate::features::combat::{CombatFields, CombatIntent};
 use crate::features::dungeon::DungeonIntent;
 use crate::features::image::{
     CalibrationDistance, ImportJob, ImportRequest, OpacitySlider, Placing,
@@ -88,6 +90,18 @@ pub(super) enum Command {
         asks: DungeonIntent,
         /// Whether the intent has been written. It is consumed a frame later, so the reply
         /// never races the switch.
+        started: bool,
+    },
+    /// Chooses the tile a stroke lays on a combat map.
+    CombatTile(CombatTile),
+    /// Presses the *Combat maps* panel's New combat map, one of its rows, or Back to map,
+    /// and waits for the switch.
+    ///
+    /// Goes through [`CombatIntent`] for the reason [`Command::Switch`] goes through
+    /// [`DungeonIntent`]. `fields` is what the New combat map form holds, written first.
+    CombatSwitch {
+        asks: CombatIntent,
+        fields: Option<CombatFields>,
         started: bool,
     },
     /// Sets the selected feature's rank, or clears it.
@@ -238,6 +252,8 @@ pub(super) enum Topic {
     },
     /// The picture the open document is drawn over, and whether it could be read.
     Image,
+    /// Every open combat map, and which one is on screen.
+    Combat,
     /// The measurement in hand, and the figures shown for it.
     Measure,
     /// The scale bar's label and how wide it is drawn.
@@ -264,6 +280,12 @@ impl Command {
             Self::Switch { asks, .. } => match asks {
                 DungeonIntent::Enter => "enter-dungeon",
                 _ => "leave-dungeon",
+            },
+            Self::CombatTile(_) => "combat-tile",
+            Self::CombatSwitch { asks, .. } => match asks {
+                CombatIntent::New => "new-combat",
+                CombatIntent::Leave => "leave-combat",
+                _ => "combat",
             },
             Self::SetRank(_) => "rank",
             Self::SetReveal(_) => "reveal",
@@ -330,6 +352,47 @@ impl Command {
                 asks: DungeonIntent::Leave,
                 started: false,
             }),
+            "combat-tile" => {
+                if rest.is_empty() {
+                    return Err("combat-tile needs a name".to_owned());
+                }
+                Ok(Self::CombatTile(combat_tile(&rest.join("-"))?))
+            }
+            "new-combat" => {
+                let sized = rest.len() >= 2
+                    && rest[0].parse::<u32>().is_ok()
+                    && rest[1].parse::<u32>().is_ok();
+                let (width, height, named) = if sized {
+                    (rest[0].to_owned(), rest[1].to_owned(), &rest[2..])
+                } else {
+                    (String::new(), String::new(), &rest[..])
+                };
+                Ok(Self::CombatSwitch {
+                    asks: CombatIntent::New,
+                    fields: Some(CombatFields {
+                        name: named.join(" "),
+                        width,
+                        height,
+                    }),
+                    started: false,
+                })
+            }
+            "combat" => {
+                let name = rest.join(" ");
+                if name.is_empty() {
+                    return Err("combat needs the name of an open combat map".to_owned());
+                }
+                Ok(Self::CombatSwitch {
+                    asks: CombatIntent::Open(name),
+                    fields: None,
+                    started: false,
+                })
+            }
+            "leave-combat" => Ok(Self::CombatSwitch {
+                asks: CombatIntent::Leave,
+                fields: None,
+                started: false,
+            }),
             "rank" => Ok(Self::SetRank(match *rest.first().ok_or("rank needs a name")? {
                 "none" | "clear" => None,
                 word => Some(rank(word)?),
@@ -387,6 +450,7 @@ impl Command {
                 "scalebar" => Topic::ScaleBar,
                 "references" => Topic::References,
                 "image" => Topic::Image,
+                "combat" => Topic::Combat,
                 "grid" => {
                     let number = |at: usize, what: &str| -> Result<u32, String> {
                         rest.get(at)
@@ -581,6 +645,49 @@ impl Command {
                     .get_resource::<WorldDoc>()
                     .map(|doc| doc.path.display().to_string());
                 Poll::Done(json!({ "document": path }))
+            }
+
+            Self::CombatTile(chosen) => {
+                let Some(mut active) = world.get_resource_mut::<ActiveTool>() else {
+                    return Poll::Failed("no campaign is open".into());
+                };
+                active.combat_tile = *chosen;
+                Poll::Done(json!({}))
+            }
+
+            Self::CombatSwitch {
+                asks,
+                fields,
+                started,
+            } => {
+                if !*started {
+                    if let Some(typed) = fields.take() {
+                        let Some(mut held) = world.get_resource_mut::<CombatFields>() else {
+                            return Poll::Failed("no campaign is open".into());
+                        };
+                        *held = typed;
+                    }
+                    let Some(mut intent) = world.get_resource_mut::<CombatIntent>() else {
+                        return Poll::Failed("no campaign is open".into());
+                    };
+                    *intent = asks.clone();
+                    *started = true;
+                    return Poll::Running;
+                }
+                if world
+                    .get_resource::<CombatIntent>()
+                    .is_some_and(|intent| *intent != CombatIntent::Nothing)
+                {
+                    return Poll::Running;
+                }
+                let on_screen = world
+                    .get_resource::<CombatMaps>()
+                    .and_then(CombatMaps::on_screen)
+                    .map(|document| document.content().name().to_owned());
+                let status = world
+                    .get_resource::<StatusMessage>()
+                    .map(|status| status.0.clone());
+                Poll::Done(json!({ "combat": on_screen, "status": status }))
             }
 
             Self::SetRank(rank) => author(world, |id| Edit::SetRank { id, rank: *rank }),
@@ -1192,6 +1299,17 @@ fn observe(world: &mut World, topic: &Topic) -> Value {
         Topic::Input => return input(world),
         Topic::Measure => return measure_topic(world),
         Topic::ScaleBar => return scale_bar_topic(world),
+        Topic::Combat => return combat_topic(world),
+        Topic::Grid {
+            x,
+            y,
+            width,
+            height,
+        } => {
+            if let Some(answer) = combat_grid(world, *x, *y, *width, *height) {
+                return answer;
+            }
+        }
         _ => {}
     }
     let Some(doc) = world.get_resource::<WorldDoc>() else {
@@ -1245,7 +1363,7 @@ fn observe(world: &mut World, topic: &Topic) -> Value {
                 }),
             })
         }
-        Topic::Input | Topic::References | Topic::Measure | Topic::ScaleBar => {
+        Topic::Input | Topic::References | Topic::Measure | Topic::ScaleBar | Topic::Combat => {
             unreachable!("answered before the document is looked for")
         }
         Topic::Image => {
@@ -1273,19 +1391,11 @@ fn observe(world: &mut World, topic: &Topic) -> Value {
             let Some(grid) = doc.document.world().grid() else {
                 return json!({ "open": true, "grid": Value::Null });
             };
-            let rows: Vec<Vec<Value>> = (*y..y.saturating_add(*height))
-                .map(|row| {
-                    (*x..x.saturating_add(*width))
-                        .map(|column| match grid.get(i64::from(column), i64::from(row)) {
-                            Some(tile) => Value::String(tile.label().to_owned()),
-                            None => Value::Null,
-                        })
-                        .collect()
-                })
-                .collect();
+            let rows = grid_rows(grid, *x, *y, *width, *height, DungeonTile::label);
             json!({
                 "open": true,
                 "grid": {
+                    "document": "world",
                     "width": grid.width(),
                     "height": grid.height(),
                     "metres_per_cell": grid.metres_per_cell(),
@@ -1310,9 +1420,72 @@ fn observe(world: &mut World, topic: &Topic) -> Value {
                     },
                 }),
                 "kind": active.map(|active| format!("{:?}", active.kind())),
+                "combat_tile": active.map(|active| active.combat_tile.label()),
             })
         }
     }
+}
+
+fn grid_rows<T: campaign::grid::TileVocabulary>(
+    grid: &campaign::grid::TileGrid<T>,
+    x: u32,
+    y: u32,
+    width: u32,
+    height: u32,
+    label: impl Fn(T) -> &'static str,
+) -> Vec<Vec<Value>> {
+    (y..y.saturating_add(height))
+        .map(|row| {
+            (x..x.saturating_add(width))
+                .map(|column| match grid.get(i64::from(column), i64::from(row)) {
+                    Some(tile) => Value::String(label(tile).to_owned()),
+                    None => Value::Null,
+                })
+                .collect()
+        })
+        .collect()
+}
+
+fn combat_grid(world: &World, x: u32, y: u32, width: u32, height: u32) -> Option<Value> {
+    let map = world.get_resource::<CombatMaps>()?.on_screen()?.content();
+    let grid = map.grid();
+    Some(json!({
+        "open": true,
+        "grid": {
+            "document": "combat",
+            "name": map.name(),
+            "width": grid.width(),
+            "height": grid.height(),
+            "metres_per_cell": grid.metres_per_cell(),
+            "at": { "x": x, "y": y },
+            "tiles": grid_rows(grid, x, y, width, height, CombatTile::label),
+        }
+    }))
+}
+
+fn combat_topic(world: &World) -> Value {
+    let Some(maps) = world.get_resource::<CombatMaps>() else {
+        return json!({ "open": false });
+    };
+    let listed: Vec<Value> = maps
+        .listed()
+        .map(|(document, on_screen)| {
+            json!({
+                "name": document.content().name(),
+                "on_screen": on_screen,
+                "dirty": document.is_dirty(),
+                "undo": document.undo_depth(),
+                "redo": document.redo_depth(),
+                "width": document.content().grid().width(),
+                "height": document.content().grid().height(),
+            })
+        })
+        .collect();
+    json!({
+        "open": true,
+        "maps": listed,
+        "on_screen": maps.on_screen().map(|document| document.content().name()),
+    })
 }
 
 fn input(world: &mut World) -> Value {
@@ -1330,6 +1503,7 @@ fn input(world: &mut World) -> Value {
         "text_field_has_focus": focused,
         "question_up": world.get_resource::<Asking>().map(|asking| asking.question.is_some()),
         "has_document": world.get_resource::<WorldDoc>().is_some(),
+        "combat_on_screen": world.get_resource::<CombatMaps>().map(CombatMaps::is_on_screen),
         "has_terrain": world.get_resource::<MapTerrain>().is_some(),
         "note_job": world.get_resource::<NoteJob>().map(NoteJob::busy),
         "zk_answered": world.get_resource::<ZkState>().map(|zk| zk.answered),
@@ -1370,6 +1544,13 @@ fn tile(word: &str) -> Result<DungeonTile, String> {
         .into_iter()
         .find(|tile| tile.label().replace(' ', "-") == word.replace(' ', "-"))
         .ok_or_else(|| format!("there is no {word} tile"))
+}
+
+fn combat_tile(word: &str) -> Result<CombatTile, String> {
+    CombatTile::all()
+        .into_iter()
+        .find(|tile| tile.label().replace(' ', "-") == word.replace(' ', "-"))
+        .ok_or_else(|| format!("there is no {word} combat tile"))
 }
 
 fn kind(word: &str) -> Result<FeatureKind, String> {

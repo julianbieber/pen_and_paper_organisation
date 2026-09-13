@@ -83,7 +83,14 @@ dropped on campaign close. `TileGrid<T>`, `TileChange<T>` and `brush::cells` are
 over `grid::TileVocabulary` — a default tile, a strip index, a serde name, and the room
 brush's wall and floor — with the paint edit's rules in `edit::paint`, `Document<D>` generic
 over `document::Authored`, and `AtlasMeta::read` taking the tile count it checks (#42); #43
-consumes it. Nothing about dungeons changes for the GM, and the dungeon's generated strip
+consumes it. A blank combat map opens from the *Combat maps* panel and is painted with the
+four brushes (#43): `campaign::combat` owns `CombatMap`, `CombatEdit` and the name and size
+refusals, `CombatTile` in `campaign::tiles` fixes the strip order,
+`crates/campaign_editor/src/combat.rs` holds `CombatMaps` — the open combat maps and which
+one is on screen — beside `WorldDoc`, `features/combat.rs` owns the panel, the switch, the
+strokes and the keys, and `assets/combat_tiles.png` is a placeholder strip to be redrawn in
+`bevy_sprite_editor`. A combat map is not saved yet: Ctrl+S says so, and *Save and close*
+writes only the world documents. Nothing about dungeons changes for the GM, and the dungeon's generated strip
 stays generated. The plan,
 with its settled decisions and the assumptions it makes on its own, is at
 `~/fun_repos/hobby-mimisbrunnr/notes/pen_and_paper_organisation/planning/combat_map/plan-2026-09-13-combat-map.md`.
@@ -186,6 +193,12 @@ directory: a dungeon that has been opened and not saved has a name and no file.
 
 A dungeon does not open another. Nesting is refused where it is stored, so the rule is
 checkable without a window and there is always exactly one place to come back to.
+
+**A combat map is not a `World`.** It lives in `CombatMaps`, not `WorldDoc`, and is drawn on
+`BackdropSource::Combat`, the third backdrop. It sits over whatever `WorldDoc` has on screen
+— the world map or a dungeon — which is untouched until *Back to map* returns to it, so
+every system that draws or authors the world document checks `CombatMaps` first, and
+entering or leaving a dungeon is refused while a combat map is on screen.
 
 **Both documents stay live.** `campaign_editor/src/document.rs` parks whichever document is
 not on screen, with its undo stack, its dirty flag and where the camera was looking at it,
@@ -464,6 +477,11 @@ turned into an array by the image loader instead, which is a different route to 
 array texture. A tile's layer is its `DungeonTile::index` either way. The four door and
 stair kinds therefore differ by hue alone; that is deliberate, and replacing
 `build_dungeon_tileset` with a hand-drawn strip later changes nothing else.
+
+**The combat strip is drawn, not generated** (#43): `crates/campaign_editor/assets/combat_tiles.png`
+and its `.atlas.json` sidecar, a single row loaded exactly as the terrain strip is, its
+columns listed on `CombatTile`. A missing or unreadable combat strip refuses *New combat
+map* with the reason rather than making the map unavailable.
 
 **The terrain tileset is drawn by hand in `bevy_sprite_editor`** (`~/fun_repos/bevy_sprite_editor`)
 and lives at `crates/campaign_editor/assets/terrain_tiles.png` with its

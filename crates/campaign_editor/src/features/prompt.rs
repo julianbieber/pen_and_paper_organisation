@@ -109,13 +109,14 @@ pub fn build_prompt(mut commands: Commands) {
 pub fn guard_close(
     mut requests: MessageReader<WindowCloseRequested>,
     doc: Res<WorldDoc>,
+    combat: Option<Res<crate::combat::CombatMaps>>,
     mut asking: ResMut<Asking>,
     mut exit: MessageWriter<AppExit>,
 ) {
     if requests.read().next().is_none() {
         return;
     }
-    if doc.anything_unsaved() {
+    if doc.anything_unsaved() || combat.is_some_and(|combat| combat.anything_unsaved()) {
         asking.raise(Question::UnsavedOnClose, None);
     } else {
         exit.write(AppExit::Success);

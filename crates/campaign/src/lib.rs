@@ -13,6 +13,8 @@ pub mod brush;
 pub mod browse;
 /// Opening and creating a campaign directory, and why either failed.
 pub mod campaign;
+/// A combat map: a grid of combat tiles and nothing else, and every reason one is refused.
+pub mod combat;
 /// A value under authorship: its undo and redo stacks, and whether it is unsaved.
 pub mod document;
 /// A shape part-way through being drawn, and the feature it becomes.
@@ -70,7 +72,8 @@ pub use feature::{CellPoint, Feature, FeatureId, FeatureKind, Geometry, Rank};
 pub use gesture::Orphans;
 pub use grid::{DEFAULT_GRID_CELLS, DEFAULT_METRES_PER_CELL, GridProblem, MAX_GRID_CELLS, TileGrid, TileVocabulary};
 pub use image::{ImageBackdrop, ImageProblem, Imported, ImportError};
-pub use tiles::DungeonTile;
+pub use tiles::{CombatTile, DungeonTile};
+pub use combat::{CombatEdit, CombatMap, CombatProblem, DEFAULT_COMBAT_CELLS};
 pub use pick::{Hit, Landing, Snap};
 pub use recent::{Listed, MAX_RECENT, Recent, RecentError, Recents};
 pub use slug::dungeon_name;

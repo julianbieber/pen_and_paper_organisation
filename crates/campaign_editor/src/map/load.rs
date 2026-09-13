@@ -10,7 +10,7 @@ use bevy::image::{ImageArrayLayout, ImageLoaderSettings, ImageSampler};
 use bevy::prelude::*;
 use campaign::atlas::{self, AtlasMeta};
 use campaign::style;
-use campaign::tiles::{self, DUNGEON_TILE_COUNT, DungeonTile, HeightRamp};
+use campaign::tiles::{self, COMBAT_TILE_COUNT, DUNGEON_TILE_COUNT, DungeonTile, HeightRamp};
 
 use crate::OpenCampaign;
 use crate::StatusMessage;
@@ -21,6 +21,12 @@ use crate::map::backdrop::{Backdrop, RetiredBackdrop};
 /// One strip for every campaign: the backdrop is deliberately neutral, so there is
 /// nothing per-campaign about it. Edit it in place with `bevy_sprite_editor`.
 pub const TILESET_BASE: &str = "terrain_tiles";
+
+/// The combat tileset shipped with the tool, relative to the assets directory.
+///
+/// Drawn by hand in `bevy_sprite_editor` and loaded exactly as [`TILESET_BASE`] is; its
+/// columns are [`CombatTile`](campaign::CombatTile)'s variants in order.
+pub const COMBAT_TILESET_BASE: &str = "combat_tiles";
 
 /// Whether there is a map, decided once.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -68,6 +74,15 @@ pub struct DungeonTileset {
     pub tileset: Handle<Image>,
 }
 
+/// The strip a combat map is drawn through, or why there is none.
+///
+/// A missing or unusable combat strip refuses a new combat map rather than the whole map,
+/// which does not depend on it.
+#[derive(Resource, Debug, Clone)]
+pub struct CombatTileset {
+    pub tileset: Result<Handle<Image>, String>,
+}
+
 /// The tileset, once it has been asked for.
 #[derive(Resource, Debug, Clone)]
 pub struct MapAssets {
@@ -89,9 +104,10 @@ pub struct MapTerrain {
     pub accumulation_high: f32,
 }
 
-/// Reads the tileset sidecar, asks for its strip as an array texture, builds the dungeon
-/// strip, and describes the terrain and the backdrop it makes — exactly once per opened
-/// campaign.
+/// Reads the tileset sidecars, asks for the terrain and combat strips as array textures,
+/// builds the dungeon strip, and describes the terrain and the backdrop it makes — exactly
+/// once per opened campaign. A combat strip that cannot be read is recorded on
+/// [`CombatTileset`] and does not make the map unavailable.
 pub fn open_map(
     mut commands: Commands,
     open: Res<OpenCampaign>,
@@ -126,15 +142,31 @@ pub fn open_map(
         return;
     };
 
-    let columns = meta.width_in_tiles;
-    let tileset = assets
-        .load_builder()
-        .with_settings(move |settings: &mut ImageLoaderSettings| {
-            settings.array_layout = Some(ImageArrayLayout::GridCount { columns, rows: 1 });
-            settings.sampler = ImageSampler::nearest();
-            settings.asset_usage = RenderAssetUsages::RENDER_WORLD;
-        })
-        .load(format!("{TILESET_BASE}.png"));
+    let tileset = load_strip(&assets, format!("{TILESET_BASE}.png"), meta.width_in_tiles);
+
+    let combat_base = tileset_root.0.join(COMBAT_TILESET_BASE);
+    let combat = match combat_meta(&tileset_root.0) {
+        Ok(combat) => {
+            if !combat.is_known_version() {
+                warn!(
+                    "{} declares tileset format version {}; reading it as {}",
+                    atlas::sidecar_path(&combat_base).display(),
+                    combat.version,
+                    atlas::SIDECAR_VERSION
+                );
+            }
+            Ok(load_strip(
+                &assets,
+                format!("{COMBAT_TILESET_BASE}.png"),
+                combat.width_in_tiles,
+            ))
+        }
+        Err(error) => {
+            warn!("{error}");
+            Err(error.to_string())
+        }
+    };
+    commands.insert_resource(CombatTileset { tileset: combat });
 
     commands.insert_resource(DungeonTileset {
         tileset: images.add(build_dungeon_tileset(meta.tile_size)),
@@ -159,6 +191,17 @@ pub fn open_map(
         outcome: MapOutcome::Ready,
         message: String::new(),
     });
+}
+
+fn load_strip(assets: &AssetServer, file: String, columns: u32) -> Handle<Image> {
+    assets
+        .load_builder()
+        .with_settings(move |settings: &mut ImageLoaderSettings| {
+            settings.array_layout = Some(ImageArrayLayout::GridCount { columns, rows: 1 });
+            settings.sampler = ImageSampler::nearest();
+            settings.asset_usage = RenderAssetUsages::RENDER_WORLD;
+        })
+        .load(file)
 }
 
 fn build_dungeon_tileset(tile_size: u32) -> Image {
@@ -202,6 +245,28 @@ fn channel(value: f32) -> u8 {
 
 fn terrain_meta(root: &std::path::Path) -> Result<AtlasMeta, atlas::AtlasError> {
     AtlasMeta::read(&root.join(TILESET_BASE), tiles::TILE_COUNT)
+}
+
+fn combat_meta(root: &std::path::Path) -> Result<AtlasMeta, atlas::AtlasError> {
+    AtlasMeta::read(&root.join(COMBAT_TILESET_BASE), COMBAT_TILE_COUNT)
+}
+
+/// Why a combat map cannot be drawn through `tileset` yet, or `None` when it can.
+///
+/// The sidecar's refusal, the asset server's load failure, or that the strip is still
+/// loading.
+pub fn combat_tileset_refusal(assets: &AssetServer, tileset: &CombatTileset) -> Option<String> {
+    let handle = match &tileset.tileset {
+        Ok(handle) => handle,
+        Err(error) => return Some(format!("the combat tileset cannot be used: {error}")),
+    };
+    if let Some(LoadState::Failed(error)) = assets.get_load_state(handle) {
+        return Some(format!("the combat tileset could not be loaded: {error}"));
+    }
+    if !assets.is_loaded_with_dependencies(handle) {
+        return Some("the combat tileset is still loading".to_owned());
+    }
+    None
 }
 
 /// Where the tileset's files sit on disk, so the sidecar can be read beside the image
@@ -251,5 +316,20 @@ mod tests {
         let meta = terrain_meta(std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/assets")))
             .expect("the committed terrain strip reads");
         assert!(meta.width_in_tiles >= u32::from(tiles::TILE_COUNT));
+    }
+
+    // The combat strip is art that gets redrawn: this pins that what is committed still
+    // reads against the vocabulary's count, and that the PNG is the size its sidecar says.
+    #[test]
+    fn the_committed_combat_strip_is_read_against_the_combat_tile_count() {
+        let root = std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/assets"));
+        let meta = combat_meta(root).expect("the committed combat strip reads");
+        assert!(meta.width_in_tiles >= u32::from(COMBAT_TILE_COUNT));
+
+        let png = std::fs::read(root.join(format!("{COMBAT_TILESET_BASE}.png"))).expect("the strip is committed");
+        let width = u32::from_be_bytes(png[16..20].try_into().unwrap());
+        let height = u32::from_be_bytes(png[20..24].try_into().unwrap());
+        assert_eq!(width, meta.width_in_tiles * meta.tile_size);
+        assert_eq!(height, meta.height_in_tiles * meta.tile_size);
     }
 }
