@@ -253,7 +253,7 @@ impl World {
     ///
     /// Writes nothing.
     pub fn load(path: &Path) -> Result<Self, WorldError> {
-        let text = match Self::read_to_string(path)? {
+        let text = match read_document(path)? {
             Some(text) => text,
             None => return Ok(Self::default()),
         };
@@ -284,41 +284,11 @@ impl World {
     ///
     /// Fails [`WorldError::WorldUnwritable`] naming `path`.
     pub fn save(&self, path: &Path) -> Result<(), WorldError> {
-        use std::io::Write as _;
-
-        let unwritable = |source: std::io::Error| WorldError::WorldUnwritable {
-            path: path.to_owned(),
-            source,
-        };
-
         let text = self.to_ron().map_err(|error| WorldError::WorldUnwritable {
             path: path.to_owned(),
             source: std::io::Error::other(error),
         })?;
-
-        if text.len() as u64 > MAX_WORLD_BYTES {
-            return Err(WorldError::WorldTooLarge {
-                path: path.to_owned(),
-                bytes: text.len() as u64,
-                limit: MAX_WORLD_BYTES,
-            });
-        }
-
-        if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
-            std::fs::create_dir_all(parent).map_err(unwritable)?;
-        }
-
-        let temporary = temporary_beside(path);
-        let _ = std::fs::remove_file(&temporary);
-        let mut file = std::fs::File::create_new(&temporary).map_err(unwritable)?;
-        file.write_all(text.as_bytes()).map_err(unwritable)?;
-        file.sync_all().map_err(unwritable)?;
-        drop(file);
-
-        std::fs::rename(&temporary, path).map_err(|source| {
-            let _ = std::fs::remove_file(&temporary);
-            unwritable(source)
-        })
+        write_document(path, &text)
     }
 
     /// The world this RON text describes, checked as [`World::load`] checks it.
@@ -472,34 +442,6 @@ impl World {
         &mut self.image
     }
 
-    fn read_to_string(path: &Path) -> Result<Option<String>, WorldError> {
-        let unreadable = |source: std::io::Error| WorldError::WorldUnreadable {
-            path: path.to_owned(),
-            source,
-        };
-
-        let meta = match std::fs::metadata(path) {
-            Ok(meta) => meta,
-            Err(source) if source.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-            Err(source) => return Err(unreadable(source)),
-        };
-        if !meta.is_file() {
-            return Err(unreadable(std::io::Error::other(
-                "not a regular file, so it is refused rather than read as an empty world",
-            )));
-        }
-
-        let len = meta.len();
-        if len > MAX_WORLD_BYTES {
-            return Err(unreadable(std::io::Error::new(
-                std::io::ErrorKind::FileTooLarge,
-                format!("{len} bytes, over the {MAX_WORLD_BYTES} byte limit"),
-            )));
-        }
-
-        std::fs::read_to_string(path).map(Some).map_err(unreadable)
-    }
-
     fn check(&self, path: &Path) -> Result<(), WorldError> {
         if let Some(grid) = &self.grid
             && let Some(source) = grid.refusal()
@@ -623,6 +565,77 @@ impl World {
 enum Mark {
     InProgress,
     Settled,
+}
+
+/// The text of the document at `path`, or `None` when nothing is there.
+///
+/// Fails [`WorldError::WorldUnreadable`] naming `path` for something that is not a regular
+/// file, for a file over [`MAX_WORLD_BYTES`], and for one that could not be read as UTF-8
+/// text. Writes nothing.
+pub(crate) fn read_document(path: &Path) -> Result<Option<String>, WorldError> {
+    let unreadable = |source: std::io::Error| WorldError::WorldUnreadable {
+        path: path.to_owned(),
+        source,
+    };
+
+    let meta = match std::fs::metadata(path) {
+        Ok(meta) => meta,
+        Err(source) if source.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(source) => return Err(unreadable(source)),
+    };
+    if !meta.is_file() {
+        return Err(unreadable(std::io::Error::other(
+            "not a regular file, so it is refused rather than read as an empty world",
+        )));
+    }
+
+    let len = meta.len();
+    if len > MAX_WORLD_BYTES {
+        return Err(unreadable(std::io::Error::new(
+            std::io::ErrorKind::FileTooLarge,
+            format!("{len} bytes, over the {MAX_WORLD_BYTES} byte limit"),
+        )));
+    }
+
+    std::fs::read_to_string(path).map(Some).map_err(unreadable)
+}
+
+/// Write `text` to `path`, replacing whatever is there, as [`World::save`] describes:
+/// through a sibling temporary renamed over the target, creating `path`'s parent first.
+///
+/// Refuses [`WorldError::WorldTooLarge`] for text over [`MAX_WORLD_BYTES`], having written
+/// nothing, and fails [`WorldError::WorldUnwritable`] naming `path`.
+pub(crate) fn write_document(path: &Path, text: &str) -> Result<(), WorldError> {
+    use std::io::Write as _;
+
+    let unwritable = |source: std::io::Error| WorldError::WorldUnwritable {
+        path: path.to_owned(),
+        source,
+    };
+
+    if text.len() as u64 > MAX_WORLD_BYTES {
+        return Err(WorldError::WorldTooLarge {
+            path: path.to_owned(),
+            bytes: text.len() as u64,
+            limit: MAX_WORLD_BYTES,
+        });
+    }
+
+    if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
+        std::fs::create_dir_all(parent).map_err(unwritable)?;
+    }
+
+    let temporary = temporary_beside(path);
+    let _ = std::fs::remove_file(&temporary);
+    let mut file = std::fs::File::create_new(&temporary).map_err(unwritable)?;
+    file.write_all(text.as_bytes()).map_err(unwritable)?;
+    file.sync_all().map_err(unwritable)?;
+    drop(file);
+
+    std::fs::rename(&temporary, path).map_err(|source| {
+        let _ = std::fs::remove_file(&temporary);
+        unwritable(source)
+    })
 }
 
 fn temporary_beside(path: &Path) -> PathBuf {

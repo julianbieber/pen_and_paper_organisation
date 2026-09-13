@@ -160,6 +160,10 @@ pub fn show_prompt(
 /// Takes the question away whatever the answer. [`Answer::Cancel`], and any answer
 /// belonging to the other question, then change nothing else — so an answer can never be
 /// applied to a question it was not offered for.
+///
+/// A Save writes every world document and then, when `combat` names the open combat maps
+/// and the campaign root, every unsaved combat map; with `None` it writes only the world
+/// documents. A failed write is said on the status line and neither exits nor closes.
 pub fn answer(
     answer: Answer,
     asking: &mut Asking,
@@ -168,6 +172,7 @@ pub fn answer(
     status: &mut StatusMessage,
     closing: &mut CampaignClose,
     exit: &mut MessageWriter<AppExit>,
+    combat: Option<(&mut crate::combat::CombatMaps, &std::path::Path)>,
 ) {
     let Some(question) = asking.question else {
         return;
@@ -176,7 +181,7 @@ pub fn answer(
     asking.settle();
 
     match (question, answer) {
-        (Question::UnsavedOnClose, Answer::Save) => match doc.save_everything() {
+        (Question::UnsavedOnClose, Answer::Save) => match save_everything(doc, combat) {
             Ok(()) => {
                 exit.write(AppExit::Success);
             }
@@ -188,7 +193,7 @@ pub fn answer(
         (Question::UnsavedOnClose, Answer::Discard) => {
             exit.write(AppExit::Success);
         }
-        (Question::UnsavedOnCampaignClose, Answer::Save) => match doc.save_everything() {
+        (Question::UnsavedOnCampaignClose, Answer::Save) => match save_everything(doc, combat) {
             Ok(()) => {
                 *closing = CampaignClose::Confirmed;
             }
@@ -215,6 +220,17 @@ pub fn answer(
             }
         }
         _ => {}
+    }
+}
+
+fn save_everything(
+    doc: &mut WorldDoc,
+    combat: Option<(&mut crate::combat::CombatMaps, &std::path::Path)>,
+) -> Result<(), campaign::WorldError> {
+    doc.save_everything()?;
+    match combat {
+        Some((maps, root)) => maps.save_everything(root),
+        None => Ok(()),
     }
 }
 
@@ -301,10 +317,13 @@ fn answer_button(caption: &'static str, answer: Answer) -> impl Scene {
             mut selection: ResMut<Selection>,
             mut status: ResMut<StatusMessage>,
             mut closing: ResMut<CampaignClose>,
-            mut exit: MessageWriter<AppExit>| {
+            mut exit: MessageWriter<AppExit>,
+            mut combat: Option<ResMut<crate::combat::CombatMaps>>,
+            campaign: Option<Res<crate::OpenCampaign>>| {
             let Ok(button) = buttons.get(activate.event_target()) else {
                 return;
             };
+            let root = campaign.as_ref().map(|campaign| campaign.0.root().to_owned());
             super::prompt::answer(
                 button.answer,
                 &mut asking,
@@ -313,6 +332,7 @@ fn answer_button(caption: &'static str, answer: Answer) -> impl Scene {
                 &mut status,
                 &mut closing,
                 &mut exit,
+                combat.as_deref_mut().zip(root.as_deref()),
             );
         })
     }

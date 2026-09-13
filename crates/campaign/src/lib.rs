@@ -76,7 +76,7 @@ pub use tiles::{CombatTile, DungeonTile};
 pub use combat::{CombatEdit, CombatMap, CombatProblem, DEFAULT_COMBAT_CELLS};
 pub use pick::{Hit, Landing, Snap};
 pub use recent::{Listed, MAX_RECENT, Recent, RecentError, Recents};
-pub use slug::dungeon_name;
+pub use slug::{combat_map_name, dungeon_name};
 pub use notebook::{NewNote, NoteError, NoteKind, Notebook, Runner, SystemRunner};
 pub use repo::{GitError, GitRunner, RemoteOutcome, Repo, SystemGit, Synced};
 pub use manifest::{

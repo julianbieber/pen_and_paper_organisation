@@ -152,7 +152,8 @@ impl Plugin for FeaturesPlugin {
                         combat::switch_combat.run_if(
                             combat::a_combat_switch_was_asked_for
                                 .and_then(resource_exists::<WorldDoc>)
-                                .and_then(resource_exists::<Backdrop>),
+                                .and_then(resource_exists::<Backdrop>)
+                                .and_then(resource_exists::<OpenCampaign>),
                         ),
                         keys::escape_answers_a_question.run_if(prompt::a_question_is_up),
                     )
@@ -170,7 +171,13 @@ impl Plugin for FeaturesPlugin {
                         (image::show_image_panel, image::land_opacity)
                             .chain()
                             .run_if(resource_exists::<WorldDoc>),
-                        combat::show_combat_panel.run_if(any_with_component::<combat::CombatPanel>),
+                        (
+                            combat::list_stored_combat_maps.run_if(
+                                resource_exists::<OpenCampaign>.and_then(combat::the_stored_list_is_stale),
+                            ),
+                            combat::show_combat_panel.run_if(any_with_component::<combat::CombatPanel>),
+                        )
+                            .chain(),
                     ),
                     (
                         crate::notes::watch::drain_notes_watch

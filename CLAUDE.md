@@ -89,10 +89,17 @@ refusals, `CombatTile` in `campaign::tiles` fixes the strip order,
 `crates/campaign_editor/src/combat.rs` holds `CombatMaps` — the open combat maps and which
 one is on screen — beside `WorldDoc`, `features/combat.rs` owns the panel, the switch, the
 strokes and the keys, and `assets/combat_tiles.png` is a placeholder strip to be redrawn in
-`bevy_sprite_editor`. A combat map is not saved yet: Ctrl+S says so, and *Save and close*
-writes only the world documents. Nothing about dungeons changes for the GM, and the dungeon's generated strip
-stays generated. The plan,
-with its settled decisions and the assumptions it makes on its own, is at
+`bevy_sprite_editor`. A combat map is saved and opened again from the list of stored ones
+(#44): `CombatMap::save` writes `combat/<file>.ron` holding the grid alone — no name, no
+version, no tokens — through the same writer a world uses, so a hand-edited file whose runs
+do not cover its extent is refused with the dungeon's `WorldError::BadGrid` sentence. Its
+file name is `slug::combat_map_name` of the typed name, fixed when the map is opened and
+unique against the open maps and `combat/`; a reopened map is named by its file stem.
+`crates/campaign_editor/src/combat.rs` caches the listing, the panel lists it under
+*Stored*, Ctrl+S and *Save and close* write combat maps, and `pnp-ctl open-combat <name>`
+opens one. Sync does not save combat maps, and a pull does not replace an open one.
+Nothing about dungeons changes for the GM, and the dungeon's generated strip stays
+generated. The plan, with its settled decisions and the assumptions it makes on its own, is at
 `~/fun_repos/hobby-mimisbrunnr/notes/pen_and_paper_organisation/planning/combat_map/plan-2026-09-13-combat-map.md`.
 
 `gh issue view <n>` carries the scope and acceptance criteria for a session's work. Each
@@ -291,6 +298,7 @@ my-campaign/
 ├── terrain/             watershed output, copied in on create (#24), read-only after
 ├── world.ron            features
 ├── dungeons/*.ron       child documents
+├── combat/*.ron         stored combat maps, the grid alone; created by the first save (#44)
 ├── images/              imported backdrops, copied in so the directory stays portable
 └── notes/               zk notebook; .zk/templates/ holds place, person, faction, session
 ```

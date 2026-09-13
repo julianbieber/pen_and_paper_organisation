@@ -73,6 +73,24 @@ pub fn dungeon_name<'a>(
     taken: impl IntoIterator<Item = &'a str>,
 ) -> String {
     let stem = slug_of(label).unwrap_or_else(|| format!("dungeon-{}", id.0));
+    unique_ron_name(&stem, taken)
+}
+
+/// The stored file name for a combat map named `name`, avoiding every name in `taken`.
+///
+/// `taken` must hold every name already spoken for, from the maps that are open *and*
+/// from the `combat` directory, for the reason [`dungeon_name`] needs both: a map opened
+/// and not yet saved has a file name and no file.
+///
+/// Falls back to `combat-map` when the name yields no slug, which a
+/// [`CombatMap`](crate::combat::CombatMap) never has. The result always ends in `.ron` and
+/// always passes [`combat::file_name_refusal`](crate::combat::file_name_refusal).
+pub fn combat_map_name<'a>(name: &str, taken: impl IntoIterator<Item = &'a str>) -> String {
+    let stem = slug_of(name).unwrap_or_else(|| "combat-map".to_owned());
+    unique_ron_name(&stem, taken)
+}
+
+fn unique_ron_name<'a>(stem: &str, taken: impl IntoIterator<Item = &'a str>) -> String {
     let spoken_for: Vec<&str> = taken.into_iter().collect();
 
     let candidate = format!("{stem}{DUNGEON_EXTENSION}");

@@ -1,13 +1,19 @@
 //! The combat map as a document: the strip order its vocabulary fixes, what a new map is
-//! filled with, what it refuses, and that a stroke is exactly one press of undo.
+//! filled with, what it refuses, that a stroke is exactly one press of undo, and what a
+//! stored map is on disk.
 
 use campaign::brush::{self, Brush, TileChange};
-use campaign::combat::{CombatEdit, CombatMap, CombatProblem, DEFAULT_COMBAT_CELLS, unused_name};
+use campaign::combat::{
+    CombatEdit, CombatMap, CombatProblem, DEFAULT_COMBAT_CELLS, file_name_refusal, stem_of, stored, unused_name,
+};
 use campaign::document::Document;
 use campaign::edit::EditError;
-use campaign::grid::{DEFAULT_METRES_PER_CELL, GridProblem, TileVocabulary};
+use campaign::grid::{DEFAULT_METRES_PER_CELL, GridProblem, TileGrid, TileVocabulary};
+use campaign::layout;
 use campaign::measure::{DistanceUnit, worth_of_grid};
-use campaign::tiles::{COMBAT_TILE_COUNT, CombatTile};
+use campaign::slug::combat_map_name;
+use campaign::tiles::{COMBAT_TILE_COUNT, CombatTile, DungeonTile};
+use campaign::world::{World, WorldError};
 
 fn map() -> CombatMap {
     CombatMap::new("Bridge", DEFAULT_COMBAT_CELLS, DEFAULT_COMBAT_CELLS).expect("a 30x30 map is valid")
@@ -181,4 +187,134 @@ fn a_taken_name_gets_the_next_free_number() {
     assert_eq!(unused_name(" Ford ", ["Bridge"]), "Ford");
     assert_eq!(unused_name("Ford", ["Ford"]), "Ford 2");
     assert_eq!(unused_name("Ford", ["Ford", "Ford 2"]), "Ford 3");
+}
+
+fn painted(width: u32, height: u32) -> CombatMap {
+    let mut map = CombatMap::new("Bridge", width, height).unwrap();
+    stroke(&map, Brush::Rectangle, (1, 1), (3, 3), CombatTile::Tree).apply(&mut map).unwrap();
+    stroke(&map, Brush::Rectangle, (0, height as i64 - 1), (0, height as i64 - 1), CombatTile::DeepWater)
+        .apply(&mut map)
+        .unwrap();
+    map
+}
+
+// The first acceptance criterion: a map saved and opened again is the same size with the
+// same tiles, named by its file.
+#[test]
+fn a_saved_map_loads_as_the_same_grid() {
+    let root = tempfile::tempdir().unwrap();
+    let map = painted(12, 7);
+    let path = layout::combat_map(root.path(), "bridge.ron");
+    map.save(&path).unwrap();
+
+    let loaded = CombatMap::load(&path, "bridge").unwrap();
+    assert_eq!(loaded.grid(), map.grid());
+    assert_eq!((loaded.grid().width(), loaded.grid().height()), (12, 7));
+    assert_eq!(loaded.grid().get(2, 2), Some(CombatTile::Tree));
+    assert_eq!(loaded.grid().get(0, 6), Some(CombatTile::DeepWater));
+    assert_eq!(loaded.name(), "bridge");
+}
+
+// The second acceptance criterion and the clone case: a campaign with no `combat/` gains
+// the directory and exactly one file in it, holding nothing but the grid.
+#[test]
+fn saving_into_a_campaign_without_combat_creates_one_file() {
+    let root = tempfile::tempdir().unwrap();
+    painted(8, 8).save(&layout::combat_map(root.path(), "bridge.ron")).unwrap();
+
+    let top: Vec<String> = std::fs::read_dir(root.path())
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().into_string().unwrap())
+        .collect();
+    assert_eq!(top, ["combat"]);
+    assert_eq!(stored(root.path()).unwrap(), ["bridge.ron"]);
+
+    let text = std::fs::read_to_string(layout::combat_map(root.path(), "bridge.ron")).unwrap();
+    assert!(text.contains("runs:") && text.contains("width: 8"), "{text}");
+    assert!(!text.contains("Bridge"), "the name is not part of the file: {text}");
+}
+
+// The third acceptance criterion: two maps typed with one name are given two files, each
+// a name the file-name rule accepts.
+#[test]
+fn a_taken_file_name_gets_the_next_free_number() {
+    let first = combat_map_name("Bridge", []);
+    let second = combat_map_name("Bridge", [first.as_str()]);
+    let third = combat_map_name("  bridge!  ", [first.as_str(), second.as_str()]);
+    assert_eq!([first.as_str(), second.as_str(), third.as_str()], ["bridge.ron", "bridge-2.ron", "bridge-3.ron"]);
+    for name in [&first, &second, &third] {
+        assert_eq!(file_name_refusal(name), None, "{name}");
+    }
+    assert_eq!(stem_of(&second), "bridge-2");
+}
+
+// The panel lists the directory, so only stored maps may appear in it: not a save's
+// temporary, not another kind of file, not a directory, and nothing at all before the
+// first save.
+#[test]
+fn the_stored_list_holds_only_combat_map_files() {
+    let root = tempfile::tempdir().unwrap();
+    assert_eq!(stored(root.path()).unwrap(), Vec::<String>::new());
+
+    let combat = layout::combat(root.path());
+    std::fs::create_dir_all(combat.join("nested.ron")).unwrap();
+    for name in ["bridge-2.ron", "bridge.ron", "bridge.ron.123.tmp", "notes.txt", ".hidden.ron"] {
+        std::fs::write(combat.join(name), "").unwrap();
+    }
+    assert_eq!(stored(root.path()).unwrap(), ["bridge-2.ron", "bridge.ron"]);
+}
+
+// The fourth acceptance criterion: a hand-edited file whose runs do not cover its extent
+// is refused with the very sentence a dungeon with the same grid gets.
+#[test]
+fn a_tile_count_that_does_not_match_is_refused_as_a_dungeons_is() {
+    let path = std::path::Path::new("/campaign/combat/bridge.ron");
+    let combat_text = CombatMap::new("Bridge", 8, 8).unwrap().to_ron().unwrap();
+    let dungeon_text = World::on_a_grid(TileGrid::<DungeonTile>::new(8, 8, DEFAULT_METRES_PER_CELL).unwrap())
+        .to_ron()
+        .unwrap();
+    assert_eq!(combat_text.matches("64").count(), 1, "{combat_text}");
+    assert_eq!(dungeon_text.matches("64").count(), 1, "{dungeon_text}");
+
+    let combat = CombatMap::from_ron(&combat_text.replace("64", "63"), path, "bridge").unwrap_err();
+    let dungeon = World::from_ron(&dungeon_text.replace("64", "63"), path).unwrap_err();
+    let mismatch = GridProblem::TileCountMismatch {
+        width: 8,
+        height: 8,
+        want: 64,
+        have: 63,
+    };
+    assert!(matches!(&combat, WorldError::BadGrid { source, .. } if *source == mismatch), "{combat}");
+    assert_eq!(combat.to_string(), dungeon.to_string());
+}
+
+// A file that is not RON, or not there, must say so rather than open as a blank map.
+#[test]
+fn an_unparseable_or_absent_file_is_refused() {
+    let root = tempfile::tempdir().unwrap();
+    let path = layout::combat_map(root.path(), "bridge.ron");
+    assert!(matches!(CombatMap::load(&path, "bridge"), Err(WorldError::WorldUnreadable { .. })));
+
+    std::fs::create_dir_all(layout::combat(root.path())).unwrap();
+    std::fs::write(&path, "not a grid").unwrap();
+    assert!(matches!(CombatMap::load(&path, "bridge"), Err(WorldError::WorldMalformed { .. })));
+}
+
+// The close guard trusts the dirty flag, so a save that failed must leave the map unsaved
+// and one that landed must not.
+#[test]
+fn a_combat_document_is_clean_only_once_its_save_lands() {
+    let root = tempfile::tempdir().unwrap();
+    let mut document = Document::new(map());
+    let trees = stroke(document.content(), Brush::Rectangle, (2, 2), (4, 4), CombatTile::Tree);
+    document.apply(trees).unwrap();
+
+    let blocker = root.path().join("combat");
+    std::fs::write(&blocker, "a file where the directory would go").unwrap();
+    assert!(document.save(&blocker.join("bridge.ron")).is_err());
+    assert!(document.is_dirty());
+
+    document.save(&root.path().join("elsewhere").join("bridge.ron")).unwrap();
+    assert!(!document.is_dirty());
+    assert_eq!(document.undo_depth(), 1);
 }
