@@ -20,6 +20,7 @@ use bevy::prelude::*;
 use bevy::window::{ExitCondition, WindowCloseRequested};
 use campaign::{Campaign, Created};
 
+mod combat;
 mod control;
 mod dialog;
 mod document;

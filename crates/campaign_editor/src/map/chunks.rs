@@ -12,15 +12,15 @@ use bevy::camera::Projection;
 use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
 use bevy::sprite_render::{TileData, TilemapChunk, TilemapChunkTileData};
-use campaign::brush::TileChange;
-use campaign::grid::TileVocabulary;
-use campaign::tiles::{self, CHUNK_CELLS, ChunkScratch, ChunkTiles, DungeonTile, MapTile};
+use campaign::grid::{TileGrid, TileVocabulary};
+use campaign::tiles::{self, CHUNK_CELLS, ChunkScratch, ChunkTiles, MapTile};
 
 use crate::OpenCampaign;
+use crate::combat::CombatMaps;
 use crate::document::WorldDoc;
 use crate::map::backdrop::{Backdrop, BackdropSource};
 use crate::map::camera::{MapCamera, viewport_of};
-use crate::map::load::{DungeonTileset, MapAssets, MapTerrain};
+use crate::map::load::{CombatTileset, DungeonTileset, MapAssets, MapTerrain};
 use crate::map::panel::RiverThreshold;
 
 /// Chunks filled per frame, so a fast pan costs frames rather than one long hitch.
@@ -73,9 +73,11 @@ pub fn stream_chunks(
     open: Res<OpenCampaign>,
     backdrop: Res<Backdrop>,
     doc: Option<Res<WorldDoc>>,
+    combat: Option<Res<CombatMaps>>,
     terrain: Res<MapTerrain>,
     assets: Res<MapAssets>,
     dungeon: Res<DungeonTileset>,
+    combat_tileset: Option<Res<CombatTileset>>,
     threshold: Res<RiverThreshold>,
     mut chunks: ResMut<MapChunks>,
     mut drawn: Local<Option<u32>>,
@@ -154,6 +156,10 @@ pub fn stream_chunks(
     let tileset = match backdrop.source {
         BackdropSource::Terrain => assets.tileset.clone(),
         BackdropSource::Grid => dungeon.tileset.clone(),
+        BackdropSource::Combat => match combat_tileset.as_ref().map(|combat| &combat.tileset) {
+            Some(Ok(handle)) => handle.clone(),
+            _ => return,
+        },
     };
 
     for coord in missing.into_iter().take(CHUNKS_PER_FRAME) {
@@ -175,6 +181,15 @@ pub fn stream_chunks(
                 };
                 (
                     to_grid_data(&tiles::grid_chunk_tiles(grid, coord.x, coord.y)),
+                    ChunkCache::Grid,
+                )
+            }
+            BackdropSource::Combat => {
+                let Some(map) = combat.as_ref().and_then(|combat| combat.on_screen()) else {
+                    return;
+                };
+                (
+                    to_grid_data(&tiles::grid_chunk_tiles(map.content().grid(), coord.x, coord.y)),
                     ChunkCache::Grid,
                 )
             }
@@ -223,35 +238,61 @@ pub fn stream_chunks(
     }
 }
 
-/// Rewrites the cells a paint stroke touched, in the chunks they fall in.
+/// Rewrites the cells a paint stroke touched, in the chunks they fall in, from the grid of
+/// whichever document the backdrop is.
 ///
 /// Without this a painted cell reaches the screen only once its chunk has left the view and
 /// come back: [`stream_chunks`] fills a chunk that is *missing*, and [`refill_chunks`]
-/// answers only for the river threshold. Driven off the edit's own change list rather than
-/// re-filling every resident chunk, because it runs on every stroke.
+/// answers only for the river threshold. A stroke rewrites only the chunks its cells fall
+/// in; an undo or a redo rewrites every resident chunk. Does nothing on the terrain.
 pub fn repaint_grid_chunks(
-    doc: Res<WorldDoc>,
+    backdrop: Res<Backdrop>,
+    doc: Option<Res<WorldDoc>>,
+    combat: Option<Res<CombatMaps>>,
     chunks: Res<MapChunks>,
     changes: Res<PaintedCells>,
     mut resident: Query<(&ChunkCoord, &mut TilemapChunkTileData), With<ChunkCache>>,
 ) {
-    let Some(grid) = doc.document.world().grid() else {
-        return;
-    };
     let side = i64::from(CHUNK_CELLS);
-    let mut touched: Vec<ChunkCoord> = Vec::new();
-    for change in &changes.0 {
-        let coord = ChunkCoord {
-            x: (i64::from(change.x).div_euclid(side)) as i32,
-            y: (i64::from(change.y).div_euclid(side)) as i32,
-        };
-        if !touched.contains(&coord) {
-            touched.push(coord);
+    let touched: Vec<ChunkCoord> = if changes.everything {
+        chunks.live.keys().copied().collect()
+    } else {
+        let mut touched = Vec::new();
+        for (x, y) in &changes.cells {
+            let coord = ChunkCoord {
+                x: (i64::from(*x).div_euclid(side)) as i32,
+                y: (i64::from(*y).div_euclid(side)) as i32,
+            };
+            if !touched.contains(&coord) {
+                touched.push(coord);
+            }
+        }
+        touched
+    };
+
+    match backdrop.source {
+        BackdropSource::Terrain => {}
+        BackdropSource::Grid => {
+            if let Some(grid) = doc.as_ref().and_then(|doc| doc.document.world().grid()) {
+                rewrite(grid, &touched, &chunks, &mut resident);
+            }
+        }
+        BackdropSource::Combat => {
+            if let Some(map) = combat.as_ref().and_then(|combat| combat.on_screen()) {
+                rewrite(map.content().grid(), &touched, &chunks, &mut resident);
+            }
         }
     }
+}
 
+fn rewrite<T: TileVocabulary>(
+    grid: &TileGrid<T>,
+    touched: &[ChunkCoord],
+    chunks: &MapChunks,
+    resident: &mut Query<(&ChunkCoord, &mut TilemapChunkTileData), With<ChunkCache>>,
+) {
     for coord in touched {
-        let Some(entity) = chunks.live.get(&coord) else {
+        let Some(entity) = chunks.live.get(coord) else {
             continue;
         };
         let Ok((_, mut data)) = resident.get_mut(*entity) else {
@@ -263,19 +304,24 @@ pub fn repaint_grid_chunks(
 
 /// The cells the last stroke changed, so the redraw need not guess which chunks moved.
 ///
-/// Cleared by [`repaint_grid_chunks`] once it has acted, so a stroke redraws once rather
-/// than every frame until the next one.
+/// An undo or a redo names no cells, so it sets `everything` instead, which rewrites every
+/// resident grid chunk. Cleared by [`clear_painted_cells`] once [`repaint_grid_chunks`] has
+/// acted, so a stroke redraws once rather than every frame until the next one.
 #[derive(Resource, Debug, Default)]
-pub struct PaintedCells(pub Vec<TileChange<DungeonTile>>);
+pub struct PaintedCells {
+    pub cells: Vec<(u32, u32)>,
+    pub everything: bool,
+}
 
-/// Whether a stroke is waiting to be drawn.
+/// Whether a stroke, an undo or a redo is waiting to be drawn.
 pub fn cells_were_painted(changes: Res<PaintedCells>) -> bool {
-    !changes.0.is_empty()
+    !changes.cells.is_empty() || changes.everything
 }
 
 /// Forgets the stroke once it has been drawn.
 pub fn clear_painted_cells(mut changes: ResMut<PaintedCells>) {
-    changes.0.clear();
+    changes.cells.clear();
+    changes.everything = false;
 }
 
 /// Restates the resident chunks' tiles when the river threshold moves.

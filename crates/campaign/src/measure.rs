@@ -12,6 +12,7 @@
 //! [`CellWorth::units`] is the one place the widths meet.
 
 use crate::feature::{CellPoint, Geometry};
+use crate::grid::{TileGrid, TileVocabulary};
 use crate::manifest::CampaignManifest;
 use crate::world::World;
 
@@ -99,8 +100,8 @@ impl DistanceUnit {
 
 /// What one cell of one document is worth, and whether a pace means anything on it.
 ///
-/// Built by [`worth_of`] and nowhere else, so every consumer is given the same answer for
-/// the same document.
+/// Built by [`worth_of`] and [`worth_of_grid`] and nowhere else, so every consumer is given
+/// the same answer for the same document.
 #[derive(Debug, Clone, PartialEq)]
 pub struct CellWorth {
     units_per_cell: f64,
@@ -172,16 +173,25 @@ pub fn worth_refusal(units_per_cell: f64) -> Option<&'static str> {
 /// travelled, so no figure inside one is ever a duration.
 pub fn worth_of(world: &World, manifest: &CampaignManifest) -> CellWorth {
     match world.grid() {
-        Some(grid) => CellWorth {
-            units_per_cell: f64::from(grid.metres_per_cell()) / METRES_PER_FOOT,
-            unit: DistanceUnit::Feet.label().to_owned(),
-            travelled: false,
-        },
+        Some(grid) => worth_of_grid(grid),
         None => CellWorth {
             units_per_cell: manifest.units_per_cell,
             unit: manifest.unit.clone(),
             travelled: true,
         },
+    }
+}
+
+/// What one cell of a document drawn on `grid` is worth: feet off the grid's own scale,
+/// and never travelled.
+///
+/// The answer [`worth_of`] gives a dungeon, for a document that is a grid and nothing
+/// else — a combat map.
+pub fn worth_of_grid<T: TileVocabulary>(grid: &TileGrid<T>) -> CellWorth {
+    CellWorth {
+        units_per_cell: f64::from(grid.metres_per_cell()) / METRES_PER_FOOT,
+        unit: DistanceUnit::Feet.label().to_owned(),
+        travelled: false,
     }
 }
 

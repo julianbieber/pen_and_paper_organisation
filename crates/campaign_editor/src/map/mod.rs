@@ -89,8 +89,7 @@ impl Plugin for MapPlugin {
                     (chunks::repaint_grid_chunks, chunks::clear_painted_cells)
                         .chain()
                         .run_if(
-                            chunks::cells_were_painted
-                                .and_then(resource_exists::<crate::document::WorldDoc>),
+                            chunks::cells_were_painted.and_then(resource_exists::<Backdrop>),
                         ),
                 )
                     .chain()

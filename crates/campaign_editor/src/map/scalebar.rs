@@ -10,6 +10,7 @@ use bevy::prelude::*;
 use bevy::scene::CommandsSceneExt;
 use campaign::measure;
 
+use crate::combat::CombatMaps;
 use crate::document::WorldDoc;
 use crate::map::backdrop::Backdrop;
 use crate::map::camera::{MapCamera, viewport_of};
@@ -48,6 +49,7 @@ pub fn build_scale_bar(mut commands: Commands) {
 pub fn show_scale_bar(
     backdrop: Res<Backdrop>,
     doc: Option<Res<WorldDoc>>,
+    combat: Option<Res<CombatMaps>>,
     open: Res<OpenCampaign>,
     camera: Single<(&Projection, &Camera), With<MapCamera>>,
     mut roots: Query<&mut Node, (With<ScaleBarRoot>, Without<ScaleBarTrack>)>,
@@ -55,7 +57,7 @@ pub fn show_scale_bar(
     mut labels: Query<&mut Text, With<ScaleBarLabel>>,
 ) {
     let (projection, camera) = camera.into_inner();
-    let bar = scale_bar_of(projection, camera, &backdrop, doc.as_deref(), &open);
+    let bar = scale_bar_of(projection, camera, &backdrop, doc.as_deref(), combat.as_deref(), &open);
 
     let display = match bar {
         Some(_) => Display::Flex,
@@ -89,15 +91,17 @@ fn scale_bar_of(
     camera: &Camera,
     backdrop: &Backdrop,
     doc: Option<&WorldDoc>,
+    combat: Option<&CombatMaps>,
     open: &OpenCampaign,
 ) -> Option<(f64, String, f32)> {
     let Projection::Orthographic(orthographic) = projection else {
         return None;
     };
     let viewport = viewport_of(camera)?;
-    let doc = doc?;
-
-    let worth = measure::worth_of(doc.document.world(), open.0.manifest());
+    let worth = match combat.and_then(CombatMaps::on_screen) {
+        Some(map) => measure::worth_of_grid(map.content().grid()),
+        None => measure::worth_of(doc?.document.world(), open.0.manifest()),
+    };
     let cells_per_pixel = orthographic.scale / backdrop.view.cell_size;
     let units_per_pixel = worth.units(cells_per_pixel);
 

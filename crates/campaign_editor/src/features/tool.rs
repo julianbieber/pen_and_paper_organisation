@@ -14,8 +14,9 @@ use bevy::ui_widgets::Activate;
 use campaign::brush::Brush;
 use campaign::draft::DraftShape;
 use campaign::feature::{FeatureKind, Rank};
-use campaign::tiles::DungeonTile;
+use campaign::tiles::{CombatTile, DungeonTile};
 
+use crate::combat::CombatMaps;
 use crate::document::WorldDoc;
 use crate::features::draw::Drafting;
 use crate::CampaignChrome;
@@ -49,8 +50,10 @@ pub struct ActiveTool {
     pub polygon_kind: FeatureKind,
     /// What a stroke does to the cells it covers.
     pub brush: Brush,
-    /// The tile a stroke lays, which [`Brush::Room`] ignores.
+    /// The tile a stroke lays on a dungeon, which [`Brush::Room`] ignores.
     pub tile: DungeonTile,
+    /// The tile a stroke lays on a combat map, which [`Brush::Room`] ignores.
+    pub combat_tile: CombatTile,
 }
 
 impl Default for ActiveTool {
@@ -63,11 +66,17 @@ impl Default for ActiveTool {
             polygon_kind: FeatureKind::Territory,
             brush: Brush::Freehand,
             tile: DungeonTile::Floor,
+            combat_tile: CombatTile::Dirt,
         }
     }
 }
 
 impl ActiveTool {
+    /// Take the paint tool, the only tool a combat map offers.
+    pub fn enter_combat(&mut self) {
+        self.tool = Tool::Paint;
+    }
+
     /// Whether the active tool draws a feature.
     pub fn drawing(&self) -> bool {
         self.tool == Tool::Draw
@@ -161,9 +170,27 @@ pub struct TileButton {
     pub tile: DungeonTile,
 }
 
-/// A row shown only while the document on screen has a grid to paint.
+/// A button that chooses the tile a stroke lays on a combat map.
+#[derive(Component, Debug, Clone, Copy, PartialEq)]
+pub struct CombatTileButton {
+    pub tile: CombatTile,
+}
+
+/// A row shown only while what is on screen has a grid to paint.
 #[derive(Component, Default, Debug, Clone, Copy, PartialEq)]
 pub struct GridRow;
+
+/// The row of tools that author a world document, hidden while a combat map is on screen.
+#[derive(Component, Default, Debug, Clone, Copy, PartialEq)]
+pub struct MapToolRow;
+
+/// The dungeon's tiles, shown only while a dungeon is on screen.
+#[derive(Component, Default, Debug, Clone, Copy, PartialEq)]
+pub struct DungeonTileRow;
+
+/// The combat map's tiles, shown only while a combat map is on screen.
+#[derive(Component, Default, Debug, Clone, Copy, PartialEq)]
+pub struct CombatTileRow;
 
 /// What the point tool offers.
 ///
@@ -218,22 +245,28 @@ pub fn build_tool_strip(mut commands: Commands) {
     commands.spawn_scene(strip());
 }
 
-/// Marks which tool and which kind are live, and shows only the kinds the active shape
-/// can place.
+/// Marks which tool, kind, brush and tile are live, and shows only the rows that apply to
+/// what is on screen: the map tools and kinds off a combat map, the brushes on any grid,
+/// and the tiles of the grid on screen.
 ///
 /// The one system that touches the strip, and it only writes: nothing here reads a button
 /// to find out what was pressed.
 pub fn sync_tool_strip(
     active: Res<ActiveTool>,
     doc: Option<Res<WorldDoc>>,
-    mut tools: Query<(&ToolButton, &mut ButtonVariant), (Without<KindButton>, Without<BrushButton>, Without<TileButton>)>,
-    mut kinds: Query<(&KindButton, &mut ButtonVariant), (Without<ToolButton>, Without<BrushButton>, Without<TileButton>)>,
-    mut brushes: Query<(&BrushButton, &mut ButtonVariant), (Without<ToolButton>, Without<KindButton>, Without<TileButton>)>,
-    mut tiles: Query<(&TileButton, &mut ButtonVariant), (Without<ToolButton>, Without<KindButton>, Without<BrushButton>)>,
-    mut kind_rows: Query<(&KindRow, &mut Node), Without<GridRow>>,
-    mut grid_rows: Query<&mut Node, With<GridRow>>,
+    combat: Option<Res<CombatMaps>>,
+    mut tools: Query<(&ToolButton, &mut ButtonVariant), (Without<KindButton>, Without<BrushButton>, Without<TileButton>, Without<CombatTileButton>)>,
+    mut kinds: Query<(&KindButton, &mut ButtonVariant), (Without<ToolButton>, Without<BrushButton>, Without<TileButton>, Without<CombatTileButton>)>,
+    mut brushes: Query<(&BrushButton, &mut ButtonVariant), (Without<ToolButton>, Without<KindButton>, Without<TileButton>, Without<CombatTileButton>)>,
+    mut tiles: Query<(&TileButton, &mut ButtonVariant), (Without<ToolButton>, Without<KindButton>, Without<BrushButton>, Without<CombatTileButton>)>,
+    mut combat_tiles: Query<(&CombatTileButton, &mut ButtonVariant), (Without<ToolButton>, Without<KindButton>, Without<BrushButton>, Without<TileButton>)>,
+    mut rows: Query<
+        (&mut Node, Option<&KindRow>, Has<GridRow>, Has<MapToolRow>, Has<DungeonTileRow>, Has<CombatTileRow>),
+        Or<(With<KindRow>, With<GridRow>, With<MapToolRow>, With<DungeonTileRow>, With<CombatTileRow>)>,
+    >,
 ) {
-    let on_a_grid = doc.is_some_and(|doc| doc.document.world().grid().is_some());
+    let in_combat = combat.is_some_and(|combat| combat.is_on_screen());
+    let on_a_dungeon = !in_combat && doc.is_some_and(|doc| doc.document.world().grid().is_some());
 
     for (button, mut variant) in tools.iter_mut() {
         let live = button.tool == active.tool
@@ -250,12 +283,22 @@ pub fn sync_tool_strip(
     for (button, mut variant) in tiles.iter_mut() {
         set_variant(&mut variant, button.tile == active.tile);
     }
-    for (row, mut node) in kind_rows.iter_mut() {
-        let shown = active.drawing() && row.shape == active.shape;
-        show(&mut node, shown);
+    for (button, mut variant) in combat_tiles.iter_mut() {
+        set_variant(&mut variant, button.tile == active.combat_tile);
     }
-    for mut node in grid_rows.iter_mut() {
-        show(&mut node, on_a_grid);
+    for (mut node, kind, grid, map_tools, dungeon_tiles, combat_tiles) in rows.iter_mut() {
+        let shown = if let Some(row) = kind {
+            !in_combat && active.drawing() && row.shape == active.shape
+        } else if map_tools {
+            !in_combat
+        } else if dungeon_tiles {
+            on_a_dungeon
+        } else if combat_tiles {
+            in_combat
+        } else {
+            grid && (in_combat || on_a_dungeon)
+        };
+        show(&mut node, shown);
     }
 }
 
@@ -297,6 +340,7 @@ fn strip() -> impl Scene {
                     flex_direction: FlexDirection::Row,
                     column_gap: px(6),
                 }
+                MapToolRow
                 Children [
                     tool_button("Select", Tool::Select, DraftShape::Point),
                     tool_button("Point", Tool::Draw, DraftShape::Point),
@@ -330,7 +374,7 @@ fn strip() -> impl Scene {
                     row_gap: px(4),
                     max_width: px(420),
                 }
-                GridRow
+                DungeonTileRow
                 Children [
                     tile_button(DungeonTile::Floor),
                     tile_button(DungeonTile::Wall),
@@ -341,6 +385,31 @@ fn strip() -> impl Scene {
                     tile_button(DungeonTile::Water),
                     tile_button(DungeonTile::Rubble),
                     tile_button(DungeonTile::Empty)
+                ]
+            ),
+            (
+                Node {
+                    display: Display::None,
+                    flex_direction: FlexDirection::Row,
+                    flex_wrap: FlexWrap::Wrap,
+                    column_gap: px(6),
+                    row_gap: px(4),
+                    max_width: px(420),
+                }
+                CombatTileRow
+                Children [
+                    combat_tile_button(CombatTile::Grass),
+                    combat_tile_button(CombatTile::Dirt),
+                    combat_tile_button(CombatTile::Road),
+                    combat_tile_button(CombatTile::Sand),
+                    combat_tile_button(CombatTile::Mud),
+                    combat_tile_button(CombatTile::ShallowWater),
+                    combat_tile_button(CombatTile::DeepWater),
+                    combat_tile_button(CombatTile::Tree),
+                    combat_tile_button(CombatTile::Bush),
+                    combat_tile_button(CombatTile::Boulder),
+                    combat_tile_button(CombatTile::Wall),
+                    combat_tile_button(CombatTile::Floor)
                 ]
             ),
             kind_row(DraftShape::Point, POINT_KINDS),
@@ -387,6 +456,25 @@ fn tile_button(tile: DungeonTile) -> impl Scene {
             };
             stroking.abandon();
             active.tile = button.tile;
+        })
+    }
+}
+
+fn combat_tile_button(tile: CombatTile) -> impl Scene {
+    bsn! {
+        @FeathersButton {
+            @caption: bsn! { Text({tile.label().to_string()}) ThemedText },
+        }
+        CombatTileButton { tile: {tile} }
+        on(|activate: On<Activate>,
+            buttons: Query<&CombatTileButton>,
+            mut active: ResMut<ActiveTool>,
+            mut stroking: ResMut<crate::features::paint::Stroking>| {
+            let Ok(button) = buttons.get(activate.event_target()) else {
+                return;
+            };
+            stroking.abandon();
+            active.combat_tile = button.tile;
         })
     }
 }
@@ -484,6 +572,14 @@ impl Default for BrushButton {
     fn default() -> Self {
         Self {
             brush: Brush::Freehand,
+        }
+    }
+}
+
+impl Default for CombatTileButton {
+    fn default() -> Self {
+        Self {
+            tile: CombatTile::Grass,
         }
     }
 }

@@ -24,6 +24,8 @@ pub enum BackdropSource {
     Terrain,
     /// The open document's own tile grid, which a dungeon is drawn on.
     Grid,
+    /// The grid of the combat map on screen.
+    Combat,
 }
 
 /// Where the camera was looking at a backdrop, so that leaving one and coming back does
@@ -90,9 +92,10 @@ impl Backdrop {
         }
     }
 
-    /// Whether this backdrop is the open document's own grid.
+    /// Whether this backdrop is a grid — a dungeon's or a combat map's — rather than the
+    /// terrain.
     pub fn is_grid(&self) -> bool {
-        self.source == BackdropSource::Grid
+        matches!(self.source, BackdropSource::Grid | BackdropSource::Combat)
     }
 
     /// Become `next`, one generation on, to be looked at from `restore` or framed afresh.

@@ -69,6 +69,7 @@ pub fn render_features(
     active: Res<ActiveTool>,
     pointer: Res<crate::map::pointer::MapPointer>,
     backdrop: Res<crate::map::backdrop::Backdrop>,
+    combat: Option<Res<crate::combat::CombatMaps>>,
     camera: Single<(&Transform, &Projection, &Camera), With<MapCamera>>,
     mut pens: Pens,
     mut points: Local<Vec<Vec2>>,
@@ -85,6 +86,11 @@ pub fn render_features(
     let half = viewport * orthographic.scale / 2.0;
     let centre = transform.translation.truncate();
     let visible = Rect::from_corners(centre - half, centre + half);
+
+    if let Some(map) = combat.as_ref().and_then(|combat| combat.on_screen()) {
+        draw_grid(&mut pens, view, map.content().grid(), visible, pointer.cells_per_pixel);
+        return;
+    }
 
     if let Some(grid) = doc.document.world().grid() {
         draw_grid(&mut pens, view, grid, visible, pointer.cells_per_pixel);

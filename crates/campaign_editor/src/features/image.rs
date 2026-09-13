@@ -525,12 +525,18 @@ pub fn show_image_panel(
     mut commands: Commands,
     doc: Res<WorldDoc>,
     active: Res<ActiveTool>,
+    combat: Option<Res<crate::combat::CombatMaps>>,
     mut panels: Query<&mut Node, (With<ImagePanel>, Without<DeclaredRow>)>,
     mut rows: Query<&mut Node, (With<DeclaredRow>, Without<ImagePanel>)>,
     sliders: Query<(Entity, &SliderValue), With<OpacitySlider>>,
 ) {
-    let declared = doc.document.world().image().map(ImageBackdrop::opacity);
-    show(&mut panels, active.placing() || declared.is_some());
+    let in_combat = combat.is_some_and(|combat| combat.is_on_screen());
+    let declared = if in_combat {
+        None
+    } else {
+        doc.document.world().image().map(ImageBackdrop::opacity)
+    };
+    show(&mut panels, !in_combat && (active.placing() || declared.is_some()));
     show(&mut rows, declared.is_some());
 
     if !doc.is_changed() {
