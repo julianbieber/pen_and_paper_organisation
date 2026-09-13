@@ -1,0 +1,46 @@
+# Paints a combat map, saves it, saves a second map typed with the same name, closes the
+# campaign, opens it again and opens the first map from the stored list. Proves issue #44's
+# acceptance headless: the same tiles and size come back, and the two maps are two files.
+#
+#   rm -rf /tmp/pnp-44 && cargo run -p campaign --example make_demo -- /tmp/pnp-44
+#   PNP_CONTROL=/tmp/pnp-44.sock cargo run -p campaign_editor -- /tmp/pnp-44 &
+#   PNP_CONTROL=/tmp/pnp-44.sock cargo run -p campaign_editor --bin pnp-ctl -- run \
+#       crates/campaign_editor/scenarios/combat-save.scenario
+#   git -C /tmp/pnp-44 status --short   # ?? combat/, and nothing else
+
+ping
+fixed-delta 0.016
+step 60                       # the terrain loads and the chrome appears
+
+# A bridge of trees, saved.
+new-combat 8 8 Bridge
+step 5
+brush rect
+combat-tile tree
+drag 1 1 3 3
+step 5
+save
+step 5
+
+# A second map typed with the same name, saved to its own file.
+leave-combat
+new-combat 8 8 Bridge
+step 5
+combat-tile deep-water
+click 0 0
+step 5
+save
+step 5
+observe combat                # files bridge.ron and bridge-2.ron, both clean
+
+# Close and open the campaign again: nothing is open, both files are stored.
+close
+open /tmp/pnp-44
+step 60
+observe combat                # stored lists bridge-2.ron and bridge.ron
+
+# The first map comes back from the list.
+open-combat bridge
+step 5
+observe grid 0 0 8 8          # (1, 1)-(3, 3) read "tree", width and height 8
+observe combat

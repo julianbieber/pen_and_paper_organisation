@@ -22,6 +22,12 @@ pub const WORLD_FILE: &str = "world.ron";
 /// Child map documents, one file each.
 pub const DUNGEONS_DIR: &str = "dungeons";
 
+/// Stored combat maps, one file each.
+///
+/// Not among [`SUBDIRS`]: nothing creates it empty, and the first combat map saved into a
+/// campaign creates it.
+pub const COMBAT_DIR: &str = "combat";
+
 /// Backdrop images imported into the campaign, copied in so the directory stays
 /// portable.
 pub const IMAGES_DIR: &str = "images";
@@ -65,6 +71,21 @@ pub fn dungeons(root: &Path) -> PathBuf {
 /// one by hand, which is the whole reason this module does.
 pub fn dungeon(root: &Path, name: &str) -> PathBuf {
     dungeons(root).join(name)
+}
+
+/// Where stored combat maps sit under `root`, whether or not the directory exists yet.
+pub fn combat(root: &Path) -> PathBuf {
+    root.join(COMBAT_DIR)
+}
+
+/// Where the combat map stored as `name` sits under `root`.
+///
+/// `name` is a file name and not a path — it is constrained by
+/// [`combat::file_name_refusal`](crate::combat::file_name_refusal) wherever it is used, so
+/// it carries its own `.ron` and no separator. This exists so that no consumer joins one
+/// by hand, which is the whole reason this module does.
+pub fn combat_map(root: &Path, name: &str) -> PathBuf {
+    combat(root).join(name)
 }
 
 /// Where imported backdrops sit under `root`.

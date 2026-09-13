@@ -129,6 +129,7 @@ pub fn escape_answers_a_question(
         &mut status,
         &mut closing,
         &mut exit,
+        None,
     );
 }
 

@@ -94,8 +94,8 @@ pub(super) enum Command {
     },
     /// Chooses the tile a stroke lays on a combat map.
     CombatTile(CombatTile),
-    /// Presses the *Combat maps* panel's New combat map, one of its rows, or Back to map,
-    /// and waits for the switch.
+    /// Presses the *Combat maps* panel's New combat map, one of its open or stored rows, or
+    /// Back to map, and waits for the switch.
     ///
     /// Goes through [`CombatIntent`] for the reason [`Command::Switch`] goes through
     /// [`DungeonIntent`]. `fields` is what the New combat map form holds, written first.
@@ -285,6 +285,7 @@ impl Command {
             Self::CombatSwitch { asks, .. } => match asks {
                 CombatIntent::New => "new-combat",
                 CombatIntent::Leave => "leave-combat",
+                CombatIntent::OpenStored(_) => "open-combat",
                 _ => "combat",
             },
             Self::SetRank(_) => "rank",
@@ -384,6 +385,18 @@ impl Command {
                 }
                 Ok(Self::CombatSwitch {
                     asks: CombatIntent::Open(name),
+                    fields: None,
+                    started: false,
+                })
+            }
+            "open-combat" => {
+                let name = rest.join(" ");
+                if name.is_empty() {
+                    return Err("open-combat needs the name of a stored combat map".to_owned());
+                }
+                let file = if name.ends_with(".ron") { name } else { format!("{name}.ron") };
+                Ok(Self::CombatSwitch {
+                    asks: CombatIntent::OpenStored(file),
                     fields: None,
                     started: false,
                 })
@@ -1469,9 +1482,11 @@ fn combat_topic(world: &World) -> Value {
     };
     let listed: Vec<Value> = maps
         .listed()
-        .map(|(document, on_screen)| {
+        .zip(maps.files())
+        .map(|((document, on_screen), file)| {
             json!({
                 "name": document.content().name(),
+                "file": file,
                 "on_screen": on_screen,
                 "dirty": document.is_dirty(),
                 "undo": document.undo_depth(),
@@ -1485,6 +1500,7 @@ fn combat_topic(world: &World) -> Value {
         "open": true,
         "maps": listed,
         "on_screen": maps.on_screen().map(|document| document.content().name()),
+        "stored": maps.stored_not_open(),
     })
 }
 
@@ -1616,6 +1632,7 @@ mod tests {
             ("undo", "key"),
             ("redo", "key"),
             ("save", "key"),
+            ("open-combat bridge", "open-combat"),
             ("rank city", "rank"),
             ("reveal here", "reveal"),
             ("zoom 2", "zoom"),
@@ -1646,6 +1663,7 @@ mod tests {
         for line in [
             "", "fly", "tool wobble", "kind wobble", "at 1", "at x y", "key wobble", "note",
             "note wobble", "note place Riverford", "label", "remote", "clone", "clone /tmp/origin",
+            "open-combat",
         ] {
             assert!(Command::parse(line).is_err(), "{line:?} should be refused");
         }

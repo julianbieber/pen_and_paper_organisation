@@ -10,6 +10,7 @@ use std::collections::VecDeque;
 use std::fmt::Debug;
 use std::path::Path;
 
+use crate::combat::CombatMap;
 use crate::edit::{Edit, EditError};
 use crate::feature::FeatureId;
 use crate::world::{World, WorldError};
@@ -192,6 +193,19 @@ impl Document<World> {
     /// the document knowing it still has something to write. Fails exactly as
     /// [`World::save`] does. The stacks are untouched: saving is not a change, and it does
     /// not cost the GM their history.
+    pub fn save(&mut self, path: &Path) -> Result<(), WorldError> {
+        self.content.save(path)?;
+        self.dirty = false;
+        Ok(())
+    }
+}
+
+impl Document<CombatMap> {
+    /// Write the map to `path` and mark the document saved.
+    ///
+    /// The dirty flag is cleared only once the write has landed, so a failed save leaves
+    /// the document knowing it still has something to write. Fails exactly as
+    /// [`CombatMap::save`] does. The stacks are untouched.
     pub fn save(&mut self, path: &Path) -> Result<(), WorldError> {
         self.content.save(path)?;
         self.dirty = false;

@@ -334,6 +334,7 @@ mod tests {
                             &mut status,
                             &mut closing,
                             &mut exit,
+                            None,
                         );
                     },
                 );
@@ -370,7 +371,7 @@ mod tests {
         app.insert_resource(CampaignClose::Confirmed);
         app.insert_resource(SyncJob::assume_read_origin());
         let mut combat = CombatMaps::default();
-        combat.open(campaign::CombatMap::new("Ford", 4, 4).expect("a 4x4 map is valid"), None);
+        combat.open(campaign::CombatMap::new("Ford", 4, 4).expect("a 4x4 map is valid"), "ford.ron".to_owned(), None);
         app.insert_resource(combat);
         let chrome = app.world_mut().spawn(CampaignChrome).id();
         let chunk = app.world_mut().spawn(ChunkCoord { x: 0, y: 0 }).id();

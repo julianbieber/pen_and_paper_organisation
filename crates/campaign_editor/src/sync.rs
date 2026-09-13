@@ -261,7 +261,7 @@ impl AuthoringReset<'_> {
 /// clears the same authoring state [`crate::features::dungeon::switch_document`] clears
 /// on a document switch — a reload replaces the document just as thoroughly. While a combat
 /// map is on screen the backdrop is left as it is, and is set from the reloaded document
-/// when the GM goes back to the map.
+/// when the GM goes back to the map. A landed sync has the stored combat maps listed again.
 pub fn land_git_job(
     mut job: ResMut<SyncJob>,
     mut doc: ResMut<WorldDoc>,
@@ -269,7 +269,7 @@ pub fn land_git_job(
     mut backdrop: ResMut<Backdrop>,
     terrain: Res<MapTerrain>,
     mut reset: AuthoringReset,
-    combat: Option<Res<crate::combat::CombatMaps>>,
+    mut combat: Option<ResMut<crate::combat::CombatMaps>>,
     camera: Single<(&Transform, &Projection), With<MapCamera>>,
     mut fields: Query<&mut EditableText, With<RemoteField>>,
     mut sync_fields: ResMut<SyncFields>,
@@ -291,6 +291,10 @@ pub fn land_git_job(
 
             if reloaded.on_screen {
                 reset.clear();
+            }
+
+            if let Some(combat) = combat.as_mut() {
+                combat.forget_stored();
             }
 
             if reloaded.on_screen && !combat.is_some_and(|combat| combat.is_on_screen()) {
