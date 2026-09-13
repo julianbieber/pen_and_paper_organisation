@@ -23,6 +23,7 @@ use crate::document::{self, WorldDoc};
 use crate::features::PointerOverUi;
 use crate::features::dungeon::{self, DungeonIntent};
 use crate::features::paint::{Stroking, advance_stroke, cell_of};
+use crate::features::token::TokenGesture;
 use crate::features::tool::ActiveTool;
 use crate::map::backdrop::{Backdrop, BackdropSource, CameraBookmark};
 use crate::map::camera::MapCamera;
@@ -323,7 +324,7 @@ pub fn switch_combat(
                     restore,
                 ),
             }
-            active.leave_a_grid_if(doc.document.world().grid().is_none());
+            active.leave_combat(doc.document.world().grid().is_some());
             status.say("back to the map");
         }
     }
@@ -402,7 +403,8 @@ pub fn paint_combat_tiles(
 
 /// Undo, redo, save and escape on the combat map on screen.
 ///
-/// Escape, an undo and a redo each abandon a stroke in flight. Saving writes the map on
+/// Escape, an undo and a redo each abandon a stroke in flight. Escape also cancels a token
+/// drag in flight, or with none, clears the token selection. Saving writes the map on
 /// screen to its file in `combat/`, whether or not it has changed, and says where or why
 /// not on the status line.
 pub fn combat_keys(
@@ -411,6 +413,7 @@ pub fn combat_keys(
     mut maps: ResMut<CombatMaps>,
     mut stroking: ResMut<Stroking>,
     mut painted: ResMut<PaintedCells>,
+    mut tokens: ResMut<TokenGesture>,
     mut status: ResMut<StatusMessage>,
 ) {
     let control = keys.pressed(KeyCode::ControlLeft) || keys.pressed(KeyCode::ControlRight);
@@ -418,6 +421,11 @@ pub fn combat_keys(
 
     if keys.just_pressed(KeyCode::Escape) {
         stroking.abandon();
+        if tokens.drag.is_some() {
+            tokens.cancel_drag();
+        } else {
+            tokens.clear();
+        }
         return;
     }
     if control && keys.just_pressed(KeyCode::KeyS) {

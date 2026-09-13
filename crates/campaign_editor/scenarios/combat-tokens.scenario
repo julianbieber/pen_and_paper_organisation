@@ -1,0 +1,60 @@
+# Places named tokens on a combat map, drags one, renames and deletes others, parks the map
+# and comes back, saves it, closes the campaign and opens the map again. Proves issue #45's
+# acceptance headless: bare names number themselves, a drag lands on whole cells, orc2 is
+# never placed twice, parking keeps the board, and a saved or reopened map carries no token.
+#
+#   rm -rf /tmp/pnp-45 && cargo run -p campaign --example make_demo -- /tmp/pnp-45
+#   PNP_CONTROL=/tmp/pnp-45.sock cargo run -p campaign_editor -- /tmp/pnp-45 &
+#   PNP_CONTROL=/tmp/pnp-45.sock cargo run -p campaign_editor --bin pnp-ctl -- run \
+#       crates/campaign_editor/scenarios/combat-tokens.scenario
+#   git -C /tmp/pnp-45 status --short   # ?? combat/, and nothing else
+#   rg -c 'orc|chief' /tmp/pnp-45/combat # finds nothing
+
+ping
+fixed-delta 0.016
+step 60                       # the terrain loads and the chrome appears
+
+new-combat 12 12 Ambush
+step 5
+
+# Type orc, choose size 2, click three times.
+token-name orc
+token-size 2
+tool token
+click 1 1
+click 5 1
+click 9 1
+step 3
+observe tokens                # orc1 (1, 1), orc2 (5, 1), orc3 (9, 1), each size 2
+
+# Drag orc2 from inside one cell to a fraction inside another: it lands on whole cells.
+tool select
+drag 5.5 1.5 6.6 4.4
+step 3
+observe tokens                # orc2 at (6, 4)
+
+# Rename orc3 to chief, delete orc1, and place one more orc.
+click 9 1
+rename-token chief
+click 1 1
+delete-token
+tool token
+click 1 8
+step 3
+observe tokens                # orc2, chief, orc3 — exactly one orc2
+
+# Leave for the world map and come back.
+leave-combat
+combat Ambush
+step 3
+observe tokens                # unchanged
+
+# Save, close, open again, reopen the map: no tokens.
+save
+step 5
+close
+open /tmp/pnp-45
+step 60
+open-combat ambush
+step 5
+observe tokens                # tokens is empty

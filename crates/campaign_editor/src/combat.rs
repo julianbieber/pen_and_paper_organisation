@@ -15,7 +15,7 @@
 use std::path::Path;
 
 use bevy::prelude::*;
-use campaign::{CombatMap, Document, WorldError, layout};
+use campaign::{CombatMap, Document, Tokens, WorldError, layout};
 
 use crate::map::backdrop::CameraBookmark;
 
@@ -31,13 +31,16 @@ pub struct OpenCombatMap {
     pub file: String,
     /// Where the camera was looking at it when it was parked, or `None` if it never was.
     pub camera: Option<CameraBookmark>,
+    /// The tokens on it this session. Never saved, and kept while the map is parked.
+    pub tokens: Tokens,
 }
 
 /// Every combat map open this session, in the order they were opened, and which one is on
 /// screen.
 ///
 /// Session state: a map reaches the disk only through [`CombatMaps::save_on_screen`] and
-/// [`CombatMaps::save_everything`], and [`crate::session::close_campaign`] resets it.
+/// [`CombatMaps::save_everything`], its tokens never do, and
+/// [`crate::session::close_campaign`] resets it.
 #[derive(Resource, Debug, Default)]
 pub struct CombatMaps {
     maps: Vec<OpenCombatMap>,
@@ -55,6 +58,27 @@ impl CombatMaps {
     /// The combat map on screen, to apply an edit to.
     pub fn on_screen_mut(&mut self) -> Option<&mut Document<CombatMap>> {
         self.on_screen.map(|index| &mut self.maps[index].document)
+    }
+
+    /// The tokens on the combat map on screen, with that map's `(width, height)` in cells.
+    pub fn tokens_on_screen(&self) -> Option<(&Tokens, (u32, u32))> {
+        let open = &self.maps[self.on_screen?];
+        let grid = open.document.content().grid();
+        Some((&open.tokens, (grid.width(), grid.height())))
+    }
+
+    /// The tokens on the combat map on screen, to change, with that map's `(width, height)`
+    /// in cells.
+    pub fn tokens_on_screen_mut(&mut self) -> Option<(&mut Tokens, (u32, u32))> {
+        let open = &mut self.maps[self.on_screen?];
+        let grid = open.document.content().grid();
+        let extent = (grid.width(), grid.height());
+        Some((&mut open.tokens, extent))
+    }
+
+    /// How many tokens every open combat map carries, in the order it was opened.
+    pub fn token_counts(&self) -> impl Iterator<Item = usize> {
+        self.maps.iter().map(|open| open.tokens.len())
     }
 
     /// Whether a combat map is on screen.
@@ -103,6 +127,7 @@ impl CombatMaps {
             document: Document::new(map),
             file,
             camera: None,
+            tokens: Tokens::default(),
         });
         self.on_screen = Some(self.maps.len() - 1);
     }
@@ -357,5 +382,41 @@ mod tests {
         let loaded = CombatMap::load(&layout::combat_map(root.path(), "ford.ron"), "ford").unwrap();
         assert_eq!(loaded.grid().get(2, 2), Some(CombatTile::Mud));
         assert_eq!(loaded.grid().get(1, 1), Some(CombatTile::Tree));
+    }
+
+    // The issue's fourth acceptance step: checking the world map mid-fight and coming back
+    // keeps every token where it was.
+    #[test]
+    fn tokens_survive_parking_the_map() {
+        let mut maps = CombatMaps::default();
+        maps.open(painted("Ford"), "ford.ron".to_owned(), None);
+        let (tokens, extent) = maps.tokens_on_screen_mut().unwrap();
+        tokens.place("orc", 2, (3, 4), extent).unwrap();
+
+        maps.leave(None);
+        assert!(maps.tokens_on_screen().is_none());
+        maps.switch_to("Ford", None).unwrap();
+
+        let (tokens, extent) = maps.tokens_on_screen().unwrap();
+        assert_eq!(extent, (8, 8));
+        let token = tokens.get("orc1").unwrap();
+        assert_eq!((token.x(), token.y(), token.size()), (3, 4, 2));
+    }
+
+    // The issue's fifth acceptance step: a saved map carries no token, so `git diff` in the
+    // campaign shows none.
+    #[test]
+    fn a_saved_map_carries_no_token() {
+        let root = tempfile::tempdir().unwrap();
+        let mut maps = CombatMaps::default();
+        maps.open(painted("Ford"), "ford.ron".to_owned(), None);
+        paint_on_screen(&mut maps);
+        let (tokens, extent) = maps.tokens_on_screen_mut().unwrap();
+        tokens.place("goblinchief", 1, (0, 0), extent).unwrap();
+
+        maps.save_on_screen(root.path()).unwrap().unwrap();
+        let text = std::fs::read_to_string(layout::combat_map(root.path(), "ford.ron")).unwrap();
+        assert!(!text.contains("goblinchief"), "{text}");
+        assert_eq!(maps.tokens_on_screen().unwrap().0.len(), 1, "saving keeps the board");
     }
 }

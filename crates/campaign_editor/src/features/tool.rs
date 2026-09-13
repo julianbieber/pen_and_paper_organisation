@@ -35,6 +35,7 @@ pub enum Tool {
     Paint,
     Image,
     Measure,
+    Token,
 }
 
 /// The tool in hand, and what each drawing tool would place.
@@ -72,9 +73,27 @@ impl Default for ActiveTool {
 }
 
 impl ActiveTool {
-    /// Take the paint tool, the only tool a combat map offers.
+    /// Take a tool a combat map offers: the paint, select or token tool in hand is kept, and
+    /// any other becomes the paint tool.
     pub fn enter_combat(&mut self) {
-        self.tool = Tool::Paint;
+        if !matches!(self.tool, Tool::Paint | Tool::Select | Tool::Token) {
+            self.tool = Tool::Paint;
+        }
+    }
+
+    /// Put down the tools only a combat map offers, going back to a document that carries a
+    /// grid when `onto_grid` holds: the token tool becomes the select tool, and the paint
+    /// tool does too off a grid.
+    pub fn leave_combat(&mut self, onto_grid: bool) {
+        if self.tool == Tool::Token {
+            self.tool = Tool::Select;
+        }
+        self.leave_a_grid_if(!onto_grid);
+    }
+
+    /// Whether the active tool places tokens.
+    pub fn placing_tokens(&self) -> bool {
+        self.tool == Tool::Token
     }
 
     /// Whether the active tool draws a feature.
@@ -184,6 +203,10 @@ pub struct GridRow;
 #[derive(Component, Default, Debug, Clone, Copy, PartialEq)]
 pub struct MapToolRow;
 
+/// The tools a combat map offers besides painting, shown only while one is on screen.
+#[derive(Component, Default, Debug, Clone, Copy, PartialEq)]
+pub struct CombatToolRow;
+
 /// The dungeon's tiles, shown only while a dungeon is on screen.
 #[derive(Component, Default, Debug, Clone, Copy, PartialEq)]
 pub struct DungeonTileRow;
@@ -246,8 +269,8 @@ pub fn build_tool_strip(mut commands: Commands) {
 }
 
 /// Marks which tool, kind, brush and tile are live, and shows only the rows that apply to
-/// what is on screen: the map tools and kinds off a combat map, the brushes on any grid,
-/// and the tiles of the grid on screen.
+/// what is on screen: the map tools and kinds off a combat map, the select and token tools
+/// on one, the brushes on any grid, and the tiles of the grid on screen.
 ///
 /// The one system that touches the strip, and it only writes: nothing here reads a button
 /// to find out what was pressed.
@@ -261,8 +284,8 @@ pub fn sync_tool_strip(
     mut tiles: Query<(&TileButton, &mut ButtonVariant), (Without<ToolButton>, Without<KindButton>, Without<BrushButton>, Without<CombatTileButton>)>,
     mut combat_tiles: Query<(&CombatTileButton, &mut ButtonVariant), (Without<ToolButton>, Without<KindButton>, Without<BrushButton>, Without<TileButton>)>,
     mut rows: Query<
-        (&mut Node, Option<&KindRow>, Has<GridRow>, Has<MapToolRow>, Has<DungeonTileRow>, Has<CombatTileRow>),
-        Or<(With<KindRow>, With<GridRow>, With<MapToolRow>, With<DungeonTileRow>, With<CombatTileRow>)>,
+        (&mut Node, Option<&KindRow>, Has<GridRow>, Has<MapToolRow>, Has<CombatToolRow>, Has<DungeonTileRow>, Has<CombatTileRow>),
+        Or<(With<KindRow>, With<GridRow>, With<MapToolRow>, With<CombatToolRow>, With<DungeonTileRow>, With<CombatTileRow>)>,
     >,
 ) {
     let in_combat = combat.is_some_and(|combat| combat.is_on_screen());
@@ -286,15 +309,15 @@ pub fn sync_tool_strip(
     for (button, mut variant) in combat_tiles.iter_mut() {
         set_variant(&mut variant, button.tile == active.combat_tile);
     }
-    for (mut node, kind, grid, map_tools, dungeon_tiles, combat_tiles) in rows.iter_mut() {
+    for (mut node, kind, grid, map_tools, combat_tools, dungeon_tiles, combat_tiles) in rows.iter_mut() {
         let shown = if let Some(row) = kind {
             !in_combat && active.drawing() && row.shape == active.shape
         } else if map_tools {
             !in_combat
+        } else if combat_tools || combat_tiles {
+            in_combat
         } else if dungeon_tiles {
             on_a_dungeon
-        } else if combat_tiles {
-            in_combat
         } else {
             grid && (in_combat || on_a_dungeon)
         };
@@ -348,6 +371,18 @@ fn strip() -> impl Scene {
                     tool_button("Area", Tool::Draw, DraftShape::Polygon),
                     tool_button("Image", Tool::Image, DraftShape::Point),
                     tool_button("Measure", Tool::Measure, DraftShape::Point)
+                ]
+            ),
+            (
+                Node {
+                    display: Display::None,
+                    flex_direction: FlexDirection::Row,
+                    column_gap: px(6),
+                }
+                CombatToolRow
+                Children [
+                    tool_button("Select", Tool::Select, DraftShape::Point),
+                    tool_button("Token", Tool::Token, DraftShape::Point)
                 ]
             ),
             (
@@ -491,10 +526,12 @@ fn tool_button(caption: &'static str, tool: Tool, shape: DraftShape) -> impl Sce
             mut drafting: ResMut<Drafting>,
             mut stroking: ResMut<crate::features::paint::Stroking>,
             mut placing: ResMut<crate::features::image::Placing>,
-            mut ruler: ResMut<crate::features::ruler::Ruler>| {
+            mut ruler: ResMut<crate::features::ruler::Ruler>,
+            mut tokens: ResMut<crate::features::token::TokenGesture>| {
             let Ok(button) = buttons.get(activate.event_target()) else {
                 return;
             };
+            tokens.cancel_drag();
             drafting.abandon();
             stroking.abandon();
             placing.cancel();

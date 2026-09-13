@@ -233,12 +233,14 @@ pub(crate) struct AuthoringReset<'w> {
     placing: ResMut<'w, crate::features::image::Placing>,
     ruler: ResMut<'w, crate::features::ruler::Ruler>,
     pending: ResMut<'w, crate::features::panel::PendingLabel>,
+    tokens: ResMut<'w, crate::features::token::TokenGesture>,
     asking: ResMut<'w, Asking>,
 }
 
 impl AuthoringReset<'_> {
     /// Clear the selection, cancel a drag and an image placement, abandon a draft and a
-    /// stroke, clear the measurement and the pending label, and settle any question.
+    /// stroke, clear the measurement, the pending label and the token selection and drag, and
+    /// settle any question.
     pub(crate) fn clear(&mut self) {
         self.selection.clear();
         self.dragging.cancel();
@@ -248,6 +250,7 @@ impl AuthoringReset<'_> {
         self.ruler.clear();
         self.pending.feature = None;
         self.pending.text.clear();
+        self.tokens.clear();
         self.asking.settle();
     }
 }

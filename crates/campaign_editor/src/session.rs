@@ -26,6 +26,7 @@ use crate::features::paint::Stroking;
 use crate::features::prompt::{Asking, Question};
 use crate::features::ruler::{Ruler, TravelSpeed};
 use crate::features::select::{Dragging, Selection};
+use crate::features::token::{TokenFields, TokenGesture, TokenIntent};
 use crate::features::tool::ActiveTool;
 use crate::map::backdrop::{Backdrop, RetiredBackdrop};
 use crate::map::chunks::{ChunkCoord, MapChunks, PaintedCells};
@@ -172,6 +173,9 @@ fn close_campaign(world: &mut World) {
     world.insert_resource(CombatMaps::default());
     world.insert_resource(CombatIntent::default());
     world.insert_resource(CombatFields::default());
+    world.insert_resource(TokenGesture::default());
+    world.insert_resource(TokenFields::default());
+    world.insert_resource(TokenIntent::default());
     world.insert_resource(PendingLabel::default());
     world.insert_resource(Asking::default());
     world.insert_resource(Ruler::default());
@@ -185,7 +189,7 @@ fn close_campaign(world: &mut World) {
     world.insert_resource(SyncFields::default());
 
     if let Some(mut active) = world.get_resource_mut::<ActiveTool>() {
-        active.leave_a_grid_if(true);
+        active.leave_combat(false);
     }
     if let Some(mut status) = world.get_resource_mut::<StatusMessage>() {
         status.say(format!("closed {name}"));
@@ -372,7 +376,13 @@ mod tests {
         app.insert_resource(SyncJob::assume_read_origin());
         let mut combat = CombatMaps::default();
         combat.open(campaign::CombatMap::new("Ford", 4, 4).expect("a 4x4 map is valid"), "ford.ron".to_owned(), None);
+        let (tokens, extent) = combat.tokens_on_screen_mut().expect("Ford is on screen");
+        tokens.place("orc", 1, (0, 0), extent).expect("a token fits on Ford");
         app.insert_resource(combat);
+        app.insert_resource(TokenGesture {
+            selected: Some("orc1".to_owned()),
+            drag: None,
+        });
         let chrome = app.world_mut().spawn(CampaignChrome).id();
         let chunk = app.world_mut().spawn(ChunkCoord { x: 0, y: 0 }).id();
 
@@ -388,5 +398,6 @@ mod tests {
         assert_eq!(*app.world().resource::<CampaignClose>(), CampaignClose::Nothing);
         assert!(!app.world().resource::<SyncJob>().read_origin, "the next campaign must ask again");
         assert_eq!(app.world().resource::<CombatMaps>().names().count(), 0, "a combat map is never inherited");
+        assert_eq!(app.world().resource::<TokenGesture>().selected, None, "a token selection is never inherited");
     }
 }

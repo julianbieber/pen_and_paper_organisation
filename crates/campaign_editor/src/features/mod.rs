@@ -43,6 +43,8 @@ pub mod render;
 pub mod ruler;
 /// What is selected, and carrying a drag until it lands as one Edit.
 pub mod select;
+/// Placing, dragging, naming and drawing the tokens on a combat map.
+pub mod token;
 /// Which tool is active, and which kind each drawing tool will place.
 pub mod tool;
 
@@ -82,6 +84,9 @@ impl Plugin for FeaturesPlugin {
             .init_resource::<panel::PendingLabel>()
             .init_resource::<ruler::Ruler>()
             .init_resource::<ruler::TravelSpeed>()
+            .init_resource::<token::TokenFields>()
+            .init_resource::<token::TokenGesture>()
+            .init_resource::<token::TokenIntent>()
             .init_resource::<PointerOverUi>()
             .add_systems(
                 Update,
@@ -98,6 +103,7 @@ impl Plugin for FeaturesPlugin {
                         image::build_image_panel,
                         ruler::build_ruler_readout,
                         combat::build_combat_panel,
+                        token::build_token_panel,
                     )
                         .run_if(resource_added::<WorldDoc>),
                     crate::notes::panel::build_notes_panel
@@ -119,6 +125,8 @@ impl Plugin for FeaturesPlugin {
                             .or_else(resource_exists_and_changed::<crate::combat::CombatMaps>),
                     ),
                     (
+                        token::release_focus_on_map_press.run_if(crate::combat::a_combat_map_is_on_screen),
+                        (
                         (
                             draw::draw_features.run_if(a_drawing_tool_is_active),
                             select::select_features.run_if(the_select_tool_is_active),
@@ -132,10 +140,14 @@ impl Plugin for FeaturesPlugin {
                             .run_if(authoring_is_live.and_then(crate::combat::the_map_is_on_screen)),
                         (
                             combat::paint_combat_tiles.run_if(paint::the_paint_tool_is_active),
+                            token::place_tokens.run_if(token::the_token_tool_is_active),
+                            token::move_tokens.run_if(the_select_tool_is_active),
                             combat::combat_keys,
                         )
                             .run_if(authoring_is_live.and_then(crate::combat::a_combat_map_is_on_screen)),
-                    ),
+                        ),
+                    )
+                        .chain(),
                     (
                         image::commit_image_fields,
                         image::import_image.run_if(
@@ -155,6 +167,7 @@ impl Plugin for FeaturesPlugin {
                                 .and_then(resource_exists::<Backdrop>)
                                 .and_then(resource_exists::<OpenCampaign>),
                         ),
+                        token::apply_token_intent.run_if(resource_exists_and_changed::<token::TokenIntent>),
                         keys::escape_answers_a_question.run_if(prompt::a_question_is_up),
                     )
                         .chain(),
@@ -178,6 +191,13 @@ impl Plugin for FeaturesPlugin {
                             combat::show_combat_panel.run_if(any_with_component::<combat::CombatPanel>),
                         )
                             .chain(),
+                        token::show_token_panel.run_if(
+                            any_with_component::<token::TokenPanel>.and_then(
+                                resource_changed::<crate::combat::CombatMaps>
+                                    .or_else(resource_changed::<token::TokenFields>)
+                                    .or_else(resource_changed::<token::TokenGesture>),
+                            ),
+                        ),
                     ),
                     (
                         crate::notes::watch::drain_notes_watch
@@ -218,6 +238,9 @@ impl Plugin for FeaturesPlugin {
                     (
                         render::render_features.run_if(
                             resource_exists::<WorldDoc>.and_then(resource_exists::<Backdrop>),
+                        ),
+                        token::draw_tokens.run_if(
+                            crate::combat::a_combat_map_is_on_screen.and_then(resource_exists::<Backdrop>),
                         ),
                         ruler::draw_ruler.run_if(
                             ruler::the_measure_tool_is_active
