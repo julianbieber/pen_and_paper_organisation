@@ -97,7 +97,15 @@ file name is `slug::combat_map_name` of the typed name, fixed when the map is op
 unique against the open maps and `combat/`; a reopened map is named by its file stem.
 `crates/campaign_editor/src/combat.rs` caches the listing, the panel lists it under
 *Stored*, Ctrl+S and *Save and close* write combat maps, and `pnp-ctl open-combat <name>`
-opens one. Sync does not save combat maps, and a pull does not replace an open one.
+opens one. Sync does not save combat maps, and a pull does not replace an open one. Named tokens
+sit on a combat map (#45): `campaign::token` owns naming, snapping, coverage and which token
+a cell picks, `OpenCombatMap::tokens` in `crates/campaign_editor/src/combat.rs` holds a map's
+tokens beside its document — which is what keeps them while it is parked — and
+`features/token.rs` owns the placing, the drag, the token panel and the three token pens. A
+bare name is numbered one more than the highest number that name carries on the board, a
+name typed with its own number is placed as typed, and names are unique on a board. A combat
+map offers *Select* and *Token* beside *Paint*: the token tool only places, and the select
+tool selects and drags.
 Nothing about dungeons changes for the GM, and the dungeon's generated strip stays
 generated. The plan, with its settled decisions and the assumptions it makes on its own, is at
 `~/fun_repos/hobby-mimisbrunnr/notes/pen_and_paper_organisation/planning/combat_map/plan-2026-09-13-combat-map.md`.

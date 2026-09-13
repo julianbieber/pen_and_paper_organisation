@@ -45,6 +45,18 @@ pub const OVERLAY_WIDTH_PIXELS: f32 = 1.5;
 /// is drawn over terrain and features alike.
 pub const MEASURE_WIDTH_PIXELS: f32 = 2.5;
 
+/// The width a token's ring and coverage square are drawn at, in logical pixels.
+pub const TOKEN_RING_PIXELS: f32 = 2.5;
+
+/// The width of the dark lettering under a token's name, in logical pixels.
+pub const TOKEN_SHADOW_PIXELS: f32 = 3.5;
+
+/// The width of a token's name, in logical pixels.
+pub const TOKEN_LABEL_WIDTH_PIXELS: f32 = 1.5;
+
+/// How tall a token's name is drawn, in logical pixels, whatever the zoom.
+pub const TOKEN_LABEL_PIXELS: f32 = 13.0;
+
 /// The widest a river is drawn, in logical pixels.
 ///
 /// A river matches the terrain's own channel, which is one cell wide, so its pen is
@@ -74,6 +86,9 @@ pen_groups!(
     LabelPen,
     DraftPen,
     HandlePen,
+    TokenPen,
+    TokenShadowPen,
+    TokenLabelPen,
     MeasurePen,
     MeasureGhostPen,
 );
@@ -141,13 +156,27 @@ impl<T: bevy::gizmos::config::GizmoConfigGroup> StrokePen for Gizmos<'_, '_, T> 
     }
 }
 
+/// The three pens a token is drawn through: its ring, the dark lettering under its name,
+/// and its name.
+///
+/// Separate from [`Pens`] because a token is not a feature and is drawn by its own system.
+/// Three groups because the name is lettered twice at two widths, and a width belongs to
+/// the group.
+#[derive(SystemParam)]
+pub struct TokenPens<'w, 's> {
+    pub ring: Gizmos<'w, 's, TokenPen>,
+    pub shadow: Gizmos<'w, 's, TokenShadowPen>,
+    pub label: Gizmos<'w, 's, TokenLabelPen>,
+}
+
 /// Registers every pen, in the order they paint.
 ///
 /// The registration order is the paint order — the grid, then the region fills, then the
-/// feature strokes, then labels, then the draft, then the handles, then the measurement —
-/// so the handles a GM is dragging are never hidden under the shape they belong to, a
-/// measurement is never hidden under what it measures, and a dungeon's grid rules the
-/// backdrop without ruling over what is drawn on it.
+/// feature strokes, then labels, then the draft, then the handles, then a token's ring, its
+/// name's shadow and its name, then the measurement — so the handles a GM is dragging are
+/// never hidden under the shape they belong to, a token's name is never hidden under its own
+/// shadow, a measurement is never hidden under what it measures, and a dungeon's grid rules
+/// the backdrop without ruling over what is drawn on it.
 pub fn register_pens(app: &mut App) {
     app.init_gizmo_group::<GridPen>()
         .init_gizmo_group::<RegionPen>()
@@ -159,6 +188,9 @@ pub fn register_pens(app: &mut App) {
         .init_gizmo_group::<LabelPen>()
         .init_gizmo_group::<DraftPen>()
         .init_gizmo_group::<HandlePen>()
+        .init_gizmo_group::<TokenPen>()
+        .init_gizmo_group::<TokenShadowPen>()
+        .init_gizmo_group::<TokenLabelPen>()
         .init_gizmo_group::<MeasurePen>()
         .init_gizmo_group::<MeasureGhostPen>();
 }
@@ -210,6 +242,9 @@ pub fn size_pens(
     set::<LabelPen>(&mut store, (LABEL_WIDTH_PIXELS * factor).max(1.0), solid);
     set::<DraftPen>(&mut store, (OVERLAY_WIDTH_PIXELS * factor).max(1.0), solid);
     set::<HandlePen>(&mut store, (OVERLAY_WIDTH_PIXELS * factor).max(1.0), solid);
+    set::<TokenPen>(&mut store, (TOKEN_RING_PIXELS * factor).max(1.0), solid);
+    set::<TokenShadowPen>(&mut store, (TOKEN_SHADOW_PIXELS * factor).max(1.0), solid);
+    set::<TokenLabelPen>(&mut store, (TOKEN_LABEL_WIDTH_PIXELS * factor).max(1.0), solid);
 
     let measure = (MEASURE_WIDTH_PIXELS * factor).max(1.0);
     set::<MeasurePen>(&mut store, measure, solid);

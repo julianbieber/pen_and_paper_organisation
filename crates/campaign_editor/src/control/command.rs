@@ -19,6 +19,7 @@ use campaign::edit::Edit;
 use campaign::feature::{CellPoint, FeatureKind, Rank};
 use campaign::notebook::NoteKind;
 use campaign::tiles::{CombatTile, DungeonTile};
+use campaign::token::{MAX_TOKEN_SIZE, MIN_TOKEN_SIZE};
 use serde_json::{Value, json};
 
 use bevy::input_focus::InputFocus;
@@ -38,6 +39,7 @@ use crate::features::image::{
 };
 use crate::features::prompt::Asking;
 use crate::features::select::Selection;
+use crate::features::token::{TokenFields, TokenGesture, TokenIntent};
 use crate::features::tool::{ActiveTool, Tool};
 use crate::features::doc as world_doc;
 use crate::map::camera::MapCamera;
@@ -102,6 +104,20 @@ pub(super) enum Command {
     CombatSwitch {
         asks: CombatIntent,
         fields: Option<CombatFields>,
+        started: bool,
+    },
+    /// Types a name into the token panel's name field.
+    TokenName(String),
+    /// Presses one of the token panel's size buttons.
+    TokenSize(u8),
+    /// Presses the token panel's *Rename*, *Delete* or *Clear tokens*, and waits for it to
+    /// be applied.
+    ///
+    /// Goes through [`TokenIntent`] for the reason [`Command::Switch`] goes through
+    /// [`DungeonIntent`]. `rename` is what the rename field holds, written first.
+    TokenAct {
+        asks: TokenIntent,
+        rename: Option<String>,
         started: bool,
     },
     /// Sets the selected feature's rank, or clears it.
@@ -254,6 +270,9 @@ pub(super) enum Topic {
     Image,
     /// Every open combat map, and which one is on screen.
     Combat,
+    /// The tokens on the combat map on screen, the one selected and the one being dragged,
+    /// and what the token tool would place.
+    Tokens,
     /// The measurement in hand, and the figures shown for it.
     Measure,
     /// The scale bar's label and how wide it is drawn.
@@ -287,6 +306,13 @@ impl Command {
                 CombatIntent::Leave => "leave-combat",
                 CombatIntent::OpenStored(_) => "open-combat",
                 _ => "combat",
+            },
+            Self::TokenName(_) => "token-name",
+            Self::TokenSize(_) => "token-size",
+            Self::TokenAct { asks, .. } => match asks {
+                TokenIntent::Rename => "rename-token",
+                TokenIntent::Delete => "delete-token",
+                _ => "clear-tokens",
             },
             Self::SetRank(_) => "rank",
             Self::SetReveal(_) => "reveal",
@@ -335,6 +361,7 @@ impl Command {
                     "select" => (Tool::Select, DraftShape::Point),
                     "image" => (Tool::Image, DraftShape::Point),
                     "measure" => (Tool::Measure, DraftShape::Point),
+                    "token" => (Tool::Token, DraftShape::Point),
                     "point" => (Tool::Draw, DraftShape::Point),
                     "line" | "polyline" => (Tool::Draw, DraftShape::Polyline),
                     "area" | "polygon" => (Tool::Draw, DraftShape::Polygon),
@@ -406,6 +433,40 @@ impl Command {
                 fields: None,
                 started: false,
             }),
+            "token-name" => Ok(Self::TokenName(title_after(line, ""))),
+            "token-size" => {
+                let word = rest.first().ok_or("token-size needs a number of cells")?;
+                let size: u8 = word
+                    .parse()
+                    .map_err(|_| format!("{word} is not a number of cells"))?;
+                if !(MIN_TOKEN_SIZE..=MAX_TOKEN_SIZE).contains(&size) {
+                    return Err(format!(
+                        "a token is {MIN_TOKEN_SIZE} to {MAX_TOKEN_SIZE} cells a side, not {size}"
+                    ));
+                }
+                Ok(Self::TokenSize(size))
+            }
+            "rename-token" => {
+                let name = title_after(line, "");
+                if name.is_empty() {
+                    return Err("rename-token needs a new name".to_owned());
+                }
+                Ok(Self::TokenAct {
+                    asks: TokenIntent::Rename,
+                    rename: Some(name),
+                    started: false,
+                })
+            }
+            "delete-token" => Ok(Self::TokenAct {
+                asks: TokenIntent::Delete,
+                rename: None,
+                started: false,
+            }),
+            "clear-tokens" => Ok(Self::TokenAct {
+                asks: TokenIntent::Clear,
+                rename: None,
+                started: false,
+            }),
             "rank" => Ok(Self::SetRank(match *rest.first().ok_or("rank needs a name")? {
                 "none" | "clear" => None,
                 word => Some(rank(word)?),
@@ -464,6 +525,7 @@ impl Command {
                 "references" => Topic::References,
                 "image" => Topic::Image,
                 "combat" => Topic::Combat,
+                "tokens" => Topic::Tokens,
                 "grid" => {
                     let number = |at: usize, what: &str| -> Result<u32, String> {
                         rest.get(at)
@@ -596,8 +658,18 @@ impl Command {
                 {
                     placing.cancel();
                 }
+                if *tool == Tool::Token
+                    && !world
+                        .get_resource::<CombatMaps>()
+                        .is_some_and(CombatMaps::is_on_screen)
+                {
+                    return Poll::Failed("the token tool is only on a combat map".into());
+                }
                 if let Some(mut ruler) = world.get_resource_mut::<crate::features::ruler::Ruler>() {
                     ruler.clear();
+                }
+                if let Some(mut tokens) = world.get_resource_mut::<TokenGesture>() {
+                    tokens.cancel_drag();
                 }
                 let Some(mut active) = world.get_resource_mut::<ActiveTool>() else {
                     return Poll::Failed("no campaign is open".into());
@@ -701,6 +773,54 @@ impl Command {
                     .get_resource::<StatusMessage>()
                     .map(|status| status.0.clone());
                 Poll::Done(json!({ "combat": on_screen, "status": status }))
+            }
+
+            Self::TokenName(name) => {
+                let Some(mut fields) = world.get_resource_mut::<TokenFields>() else {
+                    return Poll::Failed("no campaign is open".into());
+                };
+                fields.name.clone_from(name);
+                Poll::Done(json!({}))
+            }
+
+            Self::TokenSize(size) => {
+                let Some(mut fields) = world.get_resource_mut::<TokenFields>() else {
+                    return Poll::Failed("no campaign is open".into());
+                };
+                fields.size = *size;
+                Poll::Done(json!({}))
+            }
+
+            Self::TokenAct {
+                asks,
+                rename,
+                started,
+            } => {
+                if !*started {
+                    if let Some(typed) = rename.take() {
+                        let Some(mut fields) = world.get_resource_mut::<TokenFields>() else {
+                            return Poll::Failed("no campaign is open".into());
+                        };
+                        fields.rename = typed;
+                    }
+                    let Some(mut intent) = world.get_resource_mut::<TokenIntent>() else {
+                        return Poll::Failed("no campaign is open".into());
+                    };
+                    *intent = *asks;
+                    *started = true;
+                    return Poll::Running;
+                }
+                if world
+                    .get_resource::<TokenIntent>()
+                    .is_some_and(|intent| *intent != TokenIntent::Nothing)
+                {
+                    return Poll::Running;
+                }
+                let mut answer = tokens_topic(world);
+                answer["status"] = json!(world
+                    .get_resource::<StatusMessage>()
+                    .map(|status| status.0.clone()));
+                Poll::Done(answer)
             }
 
             Self::SetRank(rank) => author(world, |id| Edit::SetRank { id, rank: *rank }),
@@ -1313,6 +1433,7 @@ fn observe(world: &mut World, topic: &Topic) -> Value {
         Topic::Measure => return measure_topic(world),
         Topic::ScaleBar => return scale_bar_topic(world),
         Topic::Combat => return combat_topic(world),
+        Topic::Tokens => return tokens_topic(world),
         Topic::Grid {
             x,
             y,
@@ -1376,7 +1497,12 @@ fn observe(world: &mut World, topic: &Topic) -> Value {
                 }),
             })
         }
-        Topic::Input | Topic::References | Topic::Measure | Topic::ScaleBar | Topic::Combat => {
+        Topic::Input
+        | Topic::References
+        | Topic::Measure
+        | Topic::ScaleBar
+        | Topic::Combat
+        | Topic::Tokens => {
             unreachable!("answered before the document is looked for")
         }
         Topic::Image => {
@@ -1426,6 +1552,7 @@ fn observe(world: &mut World, topic: &Topic) -> Value {
                     Tool::Paint => "paint",
                     Tool::Image => "image",
                     Tool::Measure => "measure",
+                    Tool::Token => "token",
                     Tool::Draw => match active.shape {
                         DraftShape::Point => "point",
                         DraftShape::Polyline => "line",
@@ -1483,7 +1610,8 @@ fn combat_topic(world: &World) -> Value {
     let listed: Vec<Value> = maps
         .listed()
         .zip(maps.files())
-        .map(|((document, on_screen), file)| {
+        .zip(maps.token_counts())
+        .map(|(((document, on_screen), file), tokens)| {
             json!({
                 "name": document.content().name(),
                 "file": file,
@@ -1493,6 +1621,7 @@ fn combat_topic(world: &World) -> Value {
                 "redo": document.redo_depth(),
                 "width": document.content().grid().width(),
                 "height": document.content().grid().height(),
+                "tokens": tokens,
             })
         })
         .collect();
@@ -1501,6 +1630,39 @@ fn combat_topic(world: &World) -> Value {
         "maps": listed,
         "on_screen": maps.on_screen().map(|document| document.content().name()),
         "stored": maps.stored_not_open(),
+    })
+}
+
+fn tokens_topic(world: &World) -> Value {
+    let Some(maps) = world.get_resource::<CombatMaps>() else {
+        return json!({ "open": false });
+    };
+    let tokens: Vec<Value> = maps
+        .tokens_on_screen()
+        .map(|(tokens, _)| {
+            tokens
+                .iter()
+                .map(|token| {
+                    json!({
+                        "name": token.name(),
+                        "x": token.x(),
+                        "y": token.y(),
+                        "size": token.size(),
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    let gesture = world.get_resource::<TokenGesture>();
+    let fields = world.get_resource::<TokenFields>();
+    json!({
+        "open": true,
+        "on_screen": maps.on_screen().map(|document| document.content().name()),
+        "tokens": tokens,
+        "selected": gesture.and_then(|gesture| gesture.selected.clone()),
+        "dragging": gesture.and_then(|gesture| gesture.drag.as_ref().map(|drag| drag.name.clone())),
+        "name": fields.map(|fields| fields.name.clone()),
+        "size": fields.map(|fields| fields.size),
     })
 }
 
@@ -1633,6 +1795,13 @@ mod tests {
             ("redo", "key"),
             ("save", "key"),
             ("open-combat bridge", "open-combat"),
+            ("tool token", "tool"),
+            ("token-name orc", "token-name"),
+            ("token-size 4", "token-size"),
+            ("rename-token chief", "rename-token"),
+            ("delete-token", "delete-token"),
+            ("clear-tokens", "clear-tokens"),
+            ("observe tokens", "observe"),
             ("rank city", "rank"),
             ("reveal here", "reveal"),
             ("zoom 2", "zoom"),
@@ -1663,7 +1832,8 @@ mod tests {
         for line in [
             "", "fly", "tool wobble", "kind wobble", "at 1", "at x y", "key wobble", "note",
             "note wobble", "note place Riverford", "label", "remote", "clone", "clone /tmp/origin",
-            "open-combat",
+            "open-combat", "token-size", "token-size 0", "token-size 5", "token-size big",
+            "rename-token",
         ] {
             assert!(Command::parse(line).is_err(), "{line:?} should be refused");
         }

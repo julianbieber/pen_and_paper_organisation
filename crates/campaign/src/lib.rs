@@ -58,6 +58,8 @@ pub mod style;
 pub mod tiles;
 /// The window title, and the one thing it is allowed to say.
 pub mod title;
+/// The tokens on a combat map, what each is called, and where one may sit.
+pub mod token;
 /// What a map document holds, and every rule such a document must satisfy.
 pub mod world;
 
@@ -73,6 +75,7 @@ pub use gesture::Orphans;
 pub use grid::{DEFAULT_GRID_CELLS, DEFAULT_METRES_PER_CELL, GridProblem, MAX_GRID_CELLS, TileGrid, TileVocabulary};
 pub use image::{ImageBackdrop, ImageProblem, Imported, ImportError};
 pub use tiles::{CombatTile, DungeonTile};
+pub use token::{Token, TokenProblem, Tokens};
 pub use combat::{CombatEdit, CombatMap, CombatProblem, DEFAULT_COMBAT_CELLS};
 pub use pick::{Hit, Landing, Snap};
 pub use recent::{Listed, MAX_RECENT, Recent, RecentError, Recents};
