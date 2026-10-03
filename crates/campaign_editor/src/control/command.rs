@@ -226,7 +226,7 @@ pub(super) enum Command {
         /// the reply never races the git process.
         started: bool,
     },
-    /// Sets the campaign's remote, exactly as the Set remote button does, and waits for
+    /// Sets the campaign's remote through [`crate::sync::start_set_remote`], and waits for
     /// it to land.
     Remote {
         url: String,
@@ -1166,14 +1166,10 @@ impl Command {
                         return Poll::Failed("no campaign is open".into());
                     }
                     *started = true;
-                    let typed = url.clone();
                     world.resource_scope(|world, mut job: Mut<sync::SyncJob>| {
-                        world.resource_scope(|world, mut fields: Mut<sync::SyncFields>| {
-                            world.resource_scope(|world, mut status: Mut<StatusMessage>| {
-                                fields.remote = typed;
-                                let campaign = world.resource::<OpenCampaign>();
-                                sync::start_set_remote(&mut job, campaign, &fields, &mut status);
-                            });
+                        world.resource_scope(|world, mut status: Mut<StatusMessage>| {
+                            let campaign = world.resource::<OpenCampaign>();
+                            sync::start_set_remote(&mut job, campaign, url, &mut status);
                         });
                     });
                     if !world.resource::<sync::SyncJob>().busy() {

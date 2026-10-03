@@ -34,7 +34,7 @@ use crate::map::load::{CombatTileset, DungeonTileset, MapAssets, MapState, MapTe
 use crate::notes::references::References;
 use crate::notes::watch::NotesWatch;
 use crate::notes::NoteJob;
-use crate::sync::{SyncFields, SyncJob};
+use crate::sync::SyncJob;
 use crate::{CampaignChrome, EditorSet, OpenCampaign, StatusMessage};
 
 /// What the GM has asked of the open campaign, written by the Close button and the
@@ -181,7 +181,6 @@ fn close_campaign(world: &mut World) {
     world.insert_resource(RecentList::default());
     world.insert_resource(CampaignClose::default());
     world.insert_resource(SyncJob::default());
-    world.insert_resource(SyncFields::default());
 
     if let Some(mut active) = world.get_resource_mut::<ActiveTool>() {
         active.leave_combat(false);

@@ -1,4 +1,4 @@
-//! Syncing the open campaign with its remote from inside the editor, and the panel that
+//! Syncing the open campaign with its remote from inside the editor, and the button that
 //! asks for it.
 //!
 //! One job slot for every git process this starts — a sync, reading `origin`, setting
@@ -7,12 +7,11 @@
 //! the save and a reload that would replace it; the map keeps drawing throughout.
 
 use bevy::ecs::system::SystemParam;
-use bevy::feathers::controls::{FeathersButton, FeathersTextInput, FeathersTextInputContainer};
+use bevy::feathers::controls::FeathersButton;
 use bevy::feathers::theme::ThemedText;
 use bevy::input_focus::InputFocus;
 use bevy::prelude::*;
 use bevy::tasks::{IoTaskPool, Task, block_on, futures_lite::future};
-use bevy::text::{EditableText, TextEdit, TextEditChange};
 use bevy::ui::InteractionDisabled;
 use bevy::ui_widgets::Activate;
 use campaign::repo::{self, GitError, RemoteOutcome, Repo, Synced};
@@ -28,17 +27,9 @@ use crate::map::view::MapView;
 use crate::notes::NoteJob;
 use crate::{CampaignChrome, EditorSet, OpenCampaign, StatusMessage};
 
-/// The field the campaign's remote is typed into.
-#[derive(Component, Default, Clone)]
-pub struct RemoteField;
-
 /// The button that starts a sync.
 #[derive(Component, Default, Clone)]
 pub struct SyncButton;
-
-/// The button that sets `origin` from [`SyncFields::remote`].
-#[derive(Component, Default, Clone)]
-pub struct SetRemoteButton;
 
 /// The panel's root.
 #[derive(Component, Default, Clone)]
@@ -93,25 +84,17 @@ impl SyncJob {
     }
 }
 
-/// What has been typed into the Remote field but not yet landed.
-#[derive(Resource, Debug, Default)]
-pub struct SyncFields {
-    pub remote: String,
-}
-
 /// Everything that syncs the open campaign with its remote.
 pub struct SyncPlugin;
 
 impl Plugin for SyncPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<SyncJob>()
-            .init_resource::<SyncFields>()
             .add_systems(
                 Update,
                 (
                     build_sync_panel.run_if(resource_added::<WorldDoc>),
                     read_origin.run_if(resource_exists::<OpenCampaign>),
-                    commit_remote.run_if(resource_exists::<OpenCampaign>),
                     show_sync_panel.run_if(resource_exists_and_changed::<SyncJob>),
                 )
                     .after(EditorSet::Authoring),
@@ -179,7 +162,7 @@ pub fn start_sync(
     true
 }
 
-/// Set `origin` to what [`SyncFields::remote`] holds.
+/// Set `origin` to `url`.
 ///
 /// Refuses while a job is running, once `origin` is already set — the issue's "sets
 /// `origin` when there is none" — or on [`repo::remote_refusal`]. Returns whether it
@@ -187,7 +170,7 @@ pub fn start_sync(
 pub fn start_set_remote(
     job: &mut SyncJob,
     campaign: &OpenCampaign,
-    fields: &SyncFields,
+    url: &str,
     status: &mut StatusMessage,
 ) -> bool {
     if job.busy() {
@@ -198,7 +181,7 @@ pub fn start_set_remote(
         status.say(format!("origin is already set to {origin}"));
         return false;
     }
-    let url = fields.remote.trim().to_owned();
+    let url = url.trim().to_owned();
     if let Some(reason) = repo::remote_refusal(&url) {
         status.say(reason);
         return false;
@@ -271,8 +254,6 @@ pub fn land_git_job(
     mut reset: AuthoringReset,
     mut combat: Option<ResMut<crate::combat::CombatMaps>>,
     camera: Single<(&Transform, &Projection), With<MapCamera>>,
-    mut fields: Query<&mut EditableText, With<RemoteField>>,
-    mut sync_fields: ResMut<SyncFields>,
     mut status: ResMut<StatusMessage>,
 ) {
     let bypassed = job.bypass_change_detection();
@@ -330,17 +311,7 @@ pub fn land_git_job(
                 ..Default::default()
             });
         }
-        GitWork::RemoteRead(Ok(origin)) => {
-            if let Some(url) = &origin {
-                sync_fields.remote.clone_from(url);
-                for mut text in fields.iter_mut() {
-                    text.queue_edit(TextEdit::SelectAll);
-                    text.queue_edit(TextEdit::Backspace);
-                    text.queue_edit(TextEdit::Insert(url.as_str().into()));
-                }
-            }
-            job.origin = origin;
-        }
+        GitWork::RemoteRead(Ok(origin)) => job.origin = origin,
         GitWork::RemoteRead(Err(error)) => warn!("{error}"),
         GitWork::RemoteSet(url, Ok(())) => {
             status.say(format!("origin is now {url}"));
@@ -364,27 +335,6 @@ fn remote_label(remote: &RemoteOutcome) -> &'static str {
     }
 }
 
-fn commit_remote(
-    keys: Res<ButtonInput<KeyCode>>,
-    focus: Res<InputFocus>,
-    typed_in: Query<(), With<RemoteField>>,
-    mut job: ResMut<SyncJob>,
-    campaign: Res<OpenCampaign>,
-    fields: Res<SyncFields>,
-    mut status: ResMut<StatusMessage>,
-) {
-    if !keys.just_pressed(KeyCode::Enter) && !keys.just_pressed(KeyCode::NumpadEnter) {
-        return;
-    }
-    let Some(entity) = focus.get() else {
-        return;
-    };
-    if !typed_in.contains(entity) {
-        return;
-    }
-    start_set_remote(&mut job, &campaign, &fields, &mut status);
-}
-
 fn build_sync_panel(mut commands: Commands) {
     commands.spawn_scene(panel());
 }
@@ -393,10 +343,8 @@ fn show_sync_panel(
     mut commands: Commands,
     job: Res<SyncJob>,
     sync_buttons: Query<(Entity, Has<InteractionDisabled>), With<SyncButton>>,
-    remote_buttons: Query<(Entity, Has<InteractionDisabled>), With<SetRemoteButton>>,
 ) {
     toggle(&mut commands, sync_buttons.iter(), job.busy());
-    toggle(&mut commands, remote_buttons.iter(), job.busy() || job.origin.is_some());
 }
 
 fn toggle(commands: &mut Commands, buttons: impl Iterator<Item = (Entity, bool)>, wanted: bool) {
@@ -426,26 +374,7 @@ fn panel() -> impl Scene {
         CampaignChrome
         SyncPanel
         Children [
-            sync_button(),
-            (Text("Remote") ThemedText),
-            (
-                @FeathersTextInputContainer
-                Node { width: px(220) }
-                Children [
-                    (
-                        @FeathersTextInput
-                        RemoteField
-                        on(|change: On<TextEditChange>,
-                            texts: Query<&EditableText>,
-                            mut fields: ResMut<SyncFields>| {
-                            if let Ok(text) = texts.get(change.event_target()) {
-                                fields.remote = text.value().to_string();
-                            }
-                        })
-                    )
-                ]
-            ),
-            set_remote_button()
+            sync_button()
         ]
     }
 }
@@ -465,24 +394,6 @@ fn sync_button() -> impl Scene {
             mut status: ResMut<StatusMessage>,
             mut focus: ResMut<InputFocus>| {
             start_sync(&mut job, &mut doc, &campaign, &notes, &asking, &mut status);
-            focus.clear();
-        })
-    }
-}
-
-fn set_remote_button() -> impl Scene {
-    bsn! {
-        @FeathersButton {
-            @caption: bsn! { Text("Set remote") ThemedText },
-        }
-        SetRemoteButton
-        on(|_: On<Activate>,
-            mut job: ResMut<SyncJob>,
-            campaign: Res<OpenCampaign>,
-            fields: Res<SyncFields>,
-            mut status: ResMut<StatusMessage>,
-            mut focus: ResMut<InputFocus>| {
-            start_set_remote(&mut job, &campaign, &fields, &mut status);
             focus.clear();
         })
     }
