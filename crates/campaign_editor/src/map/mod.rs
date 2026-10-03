@@ -21,8 +21,6 @@ pub mod load;
 pub mod river;
 /// Where the cursor is, in terrain cells.
 pub mod pointer;
-/// What one cell is worth and how fast the party travels, as the GM sets them.
-pub mod scale;
 /// The bar saying how far a stretch of screen is.
 pub mod scalebar;
 /// The one conversion between terrain cells and world units.
@@ -47,7 +45,6 @@ impl Plugin for MapPlugin {
             .init_resource::<MapPointer>()
             .init_resource::<image::ImageAsset>()
             .init_resource::<PointerOverride>()
-            .init_resource::<scale::ScaleFields>()
             .add_systems(Startup, camera::spawn_camera)
             .add_systems(
                 Update,
@@ -60,14 +57,8 @@ impl Plugin for MapPlugin {
                         load::show_map_state.run_if(resource_exists_and_changed::<MapState>),
                         river::set_threshold.run_if(resource_added::<MapTerrain>),
                         scalebar::build_scale_bar.run_if(resource_added::<MapTerrain>),
-                        scale::build_scale_panel.run_if(
-                            resource_added::<MapTerrain>.and_then(resource_exists::<OpenCampaign>),
-                        ),
                         camera::place_camera.run_if(resource_exists::<Backdrop>),
                     ),
-                    (scale::commit_scale, scale::land_campaign_scale)
-                        .chain()
-                        .run_if(resource_exists::<OpenCampaign>),
                     camera::drive_camera.run_if(
                         resource_exists::<Backdrop>
                             .and_then(not(pointer_is_over_ui))

@@ -30,7 +30,8 @@ With the select tool in hand, Enter opens the selected entry's dungeon and Backs
 back to the world map (`features/keys.rs`).
 Distances are measured at campaign scale (#10):
 `campaign::measure` says what one cell is worth and rounds every figure, `map/scalebar.rs`
-draws the bar, `map/scale.rs` is where the GM sets the scale, and
+draws the bar — the world map's scale is `campaign.ron`'s, edited by hand since the panel
+that set it was dropped (2026-10-03) — and
 `features/ruler.rs` owns the measure tool. Dungeons are authored on a square tile grid (#8):
 `campaign::grid` and `campaign::brush` own the grid and the four brushes,
 `campaign_editor/src/document.rs` holds the open document and the parked ones, and
@@ -168,6 +169,8 @@ campaign's own unit is, and a cell of a dungeon this build creates is exactly fi
 (`DEFAULT_METRES_PER_CELL` is 1.524). Every other document uses `campaign.ron`'s
 `units_per_cell` and `unit` — which before #10 were read by nothing at all, so the world
 map silently measured one unit per cell.
+A combat map is always five feet to the cell (`measure::worth_of_combat_map`), whatever
+scale its stored grid carries.
 
 **The editor shows no travel time** (2026-10-03): the pace slider is gone and the ruler
 measures at `ruler::NO_PACE`, so every duration `campaign::measure` could give is absent.

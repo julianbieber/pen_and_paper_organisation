@@ -31,7 +31,6 @@ use crate::map::backdrop::{Backdrop, RetiredBackdrop};
 use crate::map::chunks::{ChunkCoord, FeatureClaims, MapChunks, PaintedCells};
 use crate::map::image::{BackdropImage, ImageAsset};
 use crate::map::load::{CombatTileset, DungeonTileset, MapAssets, MapState, MapTerrain};
-use crate::map::scale::ScaleFields;
 use crate::notes::references::References;
 use crate::notes::watch::NotesWatch;
 use crate::notes::NoteJob;
@@ -159,7 +158,6 @@ fn close_campaign(world: &mut World) {
     world.insert_resource(FeatureClaims::default());
     world.insert_resource(PaintedCells::default());
     world.insert_resource(ImageAsset::default());
-    world.insert_resource(ScaleFields::default());
     world.insert_resource(Selection::default());
     world.insert_resource(Dragging::default());
     world.insert_resource(Drafting::default());
