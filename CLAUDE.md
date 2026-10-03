@@ -109,7 +109,7 @@ tokens beside its document — which is what keeps them while it is parked — a
 `features/token.rs` owns the placing, the drag, the token panel and the three token pens. A
 bare name is numbered one more than the highest number that name carries on the board, a
 name typed with its own number is placed as typed, and names are unique on a board. A combat
-map offers *Select* and *Token* beside *Paint*: the token tool only places, and the select
+map offers *Select* and *Token* beside the brushes: the token tool only places, and the select
 tool selects and drags.
 Nothing about dungeons changes for the GM, and the dungeon's generated strip stays
 generated. The plan, with its settled decisions and the assumptions it makes on its own, is at
@@ -251,7 +251,15 @@ elsewhere tears any of it down on its own.
 that actually change and each of them once. That is what makes it a single press of undo
 however many cells it covers, and what makes its inverse exact. The four brushes and the
 tile vocabulary live in `campaign` and are tested without a GPU; `features/paint.rs` owns
-only the gesture.
+only the gesture. While the button is held the stroke is drawn as a `StrokePreview` laid
+over the chunks by `map::chunks::draw_stroke_preview` — never over the document — so
+painting follows the mouse without an edit per frame (2026-10-03).
+
+**The tool strip is grouped** (2026-10-03): on a combat map, labelled rows for the tools,
+the brushes and the tiles by kind. There is no *Paint* button; choosing a brush is choosing
+the paint tool. The camera zooms in to `camera::CLOSEST_CELLS_ACROSS` cells across, not one
+chunk, and a backdrop smaller than the window can still be panned, with the camera kept
+over it.
 
 Tiles are written **run-length encoded**: one variant name per cell would put a middling
 grid over `MAX_WORLD_BYTES`, and a document that paints happily and can never be saved is

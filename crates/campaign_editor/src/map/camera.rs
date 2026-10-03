@@ -37,6 +37,12 @@ pub const MAX_RESIDENT_CHUNKS: f32 = 256.0;
 
 const ZOOM_STEP: f32 = 1.2;
 
+/// Cells across the window at the closest zoom.
+///
+/// Close enough to read a single combat token, and independent of the chunk size, which
+/// is wider than a whole combat map.
+pub const CLOSEST_CELLS_ACROSS: f32 = 8.0;
+
 /// The one camera the map is seen through.
 #[derive(Component, Default, Clone)]
 pub struct MapCamera;
@@ -176,21 +182,21 @@ pub fn viewport_of(camera: &Camera) -> Option<Vec2> {
 
 fn hold(centre: f32, low: f32, high: f32, half: f32) -> f32 {
     if high - low <= half * 2.0 {
-        return (low + high) / 2.0;
+        return centre.clamp(low, high);
     }
     centre.clamp(low + half, high - half)
 }
 
 /// The closest and furthest the camera may zoom, in world units to the logical pixel.
 ///
-/// The closest shows one chunk across the window; the furthest is whichever is nearer of
-/// the whole terrain and the [`MAX_RESIDENT_CHUNKS`] budget. Comes back the right way
+/// The closest shows [`CLOSEST_CELLS_ACROSS`] cells across the window; the furthest is
+/// whichever is nearer of the whole terrain and the [`MAX_RESIDENT_CHUNKS`] budget. Comes back the right way
 /// round on a terrain smaller than a chunk, where the two bounds cross over.
 pub fn zoom_bounds(view: MapView, viewport: Vec2) -> (f32, f32) {
     let viewport = viewport.max(Vec2::ONE);
     let chunk = view.chunk_size();
 
-    let closest = chunk / viewport.x;
+    let closest = CLOSEST_CELLS_ACROSS * view.cell_size / viewport.x;
     let budget = chunk * (MAX_RESIDENT_CHUNKS / (viewport.x * viewport.y)).sqrt();
     let extent = view.extent_with_margin(margin_cells(view));
     let whole = (extent.width() / viewport.x).max(extent.height() / viewport.y);
@@ -219,6 +225,17 @@ mod tests {
         }
     }
 
+    // A combat map is narrower than a chunk, so a closest zoom tied to the chunk left it
+    // almost no room to zoom in at all; it must reach a handful of cells across.
+    #[test]
+    fn a_small_map_zooms_in_to_a_handful_of_cells() {
+        let viewport = Vec2::new(1600.0, 900.0);
+        let view = MapView::new(30, 30, 8.0);
+        let (low, high) = zoom_bounds(view, viewport);
+        assert!((low * viewport.x / view.cell_size - CLOSEST_CELLS_ACROSS).abs() < 1e-3);
+        assert!(high / low > 3.0, "{low}..{high} leaves no room to zoom");
+    }
+
     // A zero extent must not divide anything into a NaN that then reaches a clamp.
     #[test]
     fn a_terrain_with_no_extent_still_yields_usable_bounds() {
@@ -226,11 +243,12 @@ mod tests {
         assert!(low <= high && low.is_finite() && high.is_finite());
     }
 
-    // When the view is larger than the terrain plus its margin there is no clamp that
-    // satisfies it, so the map is centred instead of jumping to an edge.
+    // When the view is larger than the map plus its margin the map can still be moved
+    // around the screen, but the camera never leaves it, so it cannot be lost off screen.
     #[test]
-    fn a_view_wider_than_the_terrain_is_centred_rather_than_clamped() {
-        assert_eq!(hold(500.0, -100.0, 100.0, 400.0), 0.0);
+    fn a_view_wider_than_the_map_can_be_panned_but_not_off_it() {
+        assert_eq!(hold(50.0, -100.0, 100.0, 400.0), 50.0);
+        assert_eq!(hold(500.0, -100.0, 100.0, 400.0), 100.0);
         assert_eq!(hold(0.0, 0.0, 1000.0, 100.0), 100.0);
         assert_eq!(hold(500.0, 0.0, 1000.0, 100.0), 500.0);
     }

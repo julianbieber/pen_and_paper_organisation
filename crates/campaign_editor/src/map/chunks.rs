@@ -354,6 +354,69 @@ fn rewrite<T: TileVocabulary>(
     }
 }
 
+/// Lays the stroke in hand over the chunks it touches, on top of the grid's own tiles.
+///
+/// Rewrites every chunk the previous preview or this one covers from the grid, then paints
+/// the preview's cells over it — so a cell the stroke has left goes back to what the grid
+/// holds, and a released stroke, which empties the preview, leaves the chunks showing the
+/// edit it became. Does nothing on the terrain.
+pub fn draw_stroke_preview(
+    backdrop: Res<Backdrop>,
+    doc: Option<Res<WorldDoc>>,
+    combat: Option<Res<CombatMaps>>,
+    chunks: Res<MapChunks>,
+    preview: Res<crate::features::paint::StrokePreview>,
+    mut drawn: Local<Vec<(u32, u32)>>,
+    mut resident: Query<(&ChunkCoord, &mut TilemapChunkTileData), With<ChunkCache>>,
+) {
+    let side = CHUNK_CELLS;
+    let mut touched: Vec<ChunkCoord> = Vec::new();
+    for (x, y) in drawn.iter().copied().chain(preview.cells.iter().map(|&(x, y, _)| (x, y))) {
+        let coord = ChunkCoord {
+            x: (x / side) as i32,
+            y: (y / side) as i32,
+        };
+        if !touched.contains(&coord) {
+            touched.push(coord);
+        }
+    }
+    *drawn = preview.cells.iter().map(|&(x, y, _)| (x, y)).collect();
+
+    match backdrop.source {
+        BackdropSource::Terrain => return,
+        BackdropSource::Grid => {
+            if let Some(grid) = doc.as_ref().and_then(|doc| doc.document.world().grid()) {
+                rewrite(grid, &touched, &chunks, &mut resident);
+            }
+        }
+        BackdropSource::Combat => {
+            if let Some(map) = combat.as_ref().and_then(|combat| combat.on_screen()) {
+                rewrite(map.content().grid(), &touched, &chunks, &mut resident);
+            }
+        }
+    }
+
+    for &(x, y, index) in &preview.cells {
+        let coord = ChunkCoord {
+            x: (x / side) as i32,
+            y: (y / side) as i32,
+        };
+        let Some(entity) = chunks.live.get(&coord) else {
+            continue;
+        };
+        let Ok((_, mut data)) = resident.get_mut(*entity) else {
+            continue;
+        };
+        let slot = ((side - 1 - y % side) * side + x % side) as usize;
+        if let Some(cell) = data.0.get_mut(slot) {
+            *cell = Some(TileData {
+                tileset_index: index,
+                ..default()
+            });
+        }
+    }
+}
+
 /// The cells the last stroke changed, so the redraw need not guess which chunks moved.
 ///
 /// An undo or a redo names no cells, so it sets `everything` instead, which rewrites every

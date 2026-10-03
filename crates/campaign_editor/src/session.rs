@@ -17,7 +17,7 @@ use crate::features::combat::{CombatFields, CombatIntent};
 use crate::features::dungeon::DungeonIntent;
 use crate::features::draw::Drafting;
 use crate::features::image::{CalibrationDistance, ImageFields, ImportJob, ImportRequest, Placing};
-use crate::features::paint::Stroking;
+use crate::features::paint::{StrokePreview, Stroking};
 use crate::features::prompt::{Asking, Question};
 use crate::features::ruler::Ruler;
 use crate::features::select::{Dragging, Selection};
@@ -154,6 +154,7 @@ fn close_campaign(world: &mut World) {
     world.insert_resource(Dragging::default());
     world.insert_resource(Drafting::default());
     world.insert_resource(Stroking::default());
+    world.insert_resource(StrokePreview::default());
     world.insert_resource(Placing::default());
     world.insert_resource(ImportRequest::default());
     world.insert_resource(ImportJob::default());

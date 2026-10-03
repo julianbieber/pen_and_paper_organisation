@@ -67,6 +67,7 @@ impl Plugin for FeaturesPlugin {
         app.init_resource::<tool::ActiveTool>()
             .init_resource::<draw::Drafting>()
             .init_resource::<paint::Stroking>()
+            .init_resource::<paint::StrokePreview>()
             .init_resource::<image::Placing>()
             .init_resource::<image::ImportRequest>()
             .init_resource::<image::ImportJob>()
@@ -138,6 +139,7 @@ impl Plugin for FeaturesPlugin {
                         )
                             .run_if(authoring_is_live.and_then(crate::combat::a_combat_map_is_on_screen)),
                         ),
+                        paint::preview_stroke,
                     )
                         .chain(),
                     (

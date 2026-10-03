@@ -76,6 +76,10 @@ impl Plugin for MapPlugin {
                         .run_if(
                             chunks::cells_were_painted.and_then(resource_exists::<Backdrop>),
                         ),
+                    chunks::draw_stroke_preview.run_if(
+                        resource_changed::<crate::features::paint::StrokePreview>
+                            .and_then(resource_exists::<Backdrop>),
+                    ),
                 )
                     .chain()
                     .in_set(EditorSet::Map)

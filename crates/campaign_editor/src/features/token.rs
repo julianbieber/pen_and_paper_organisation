@@ -25,7 +25,9 @@ use campaign::token::{MAX_TOKEN_SIZE, MIN_TOKEN_SIZE};
 use crate::combat::CombatMaps;
 use crate::features::PointerOverUi;
 use crate::features::paint::cell_of;
-use crate::features::pens::{TOKEN_LABEL_PIXELS, TokenPens};
+use crate::features::pens::{
+    TOKEN_LABEL_PIXELS, TOKEN_LABEL_SHARE, TOKEN_LABEL_WIDTH_SHARE, TOKEN_LETTER_ASPECT, TokenPens,
+};
 use crate::features::tool::ActiveTool;
 use crate::map::backdrop::Backdrop;
 use crate::map::camera::MapCamera;
@@ -319,6 +321,10 @@ pub fn draw_tokens(
             .and_then(|drag| tokens.dragged(&drag.name, drag.grabbed, drag.latest, extent));
         let (x, y) = dragged.unwrap_or((token.x(), token.y()));
         let side = f32::from(token.size()) * view.cell_size;
+        let letters = token.name().chars().count().max(1) as f32;
+        let lettering = lettering
+            .min(side * TOKEN_LABEL_SHARE)
+            .min(side * TOKEN_LABEL_WIDTH_SHARE / (letters * TOKEN_LETTER_ASPECT));
         let centre = view.cell_corner_to_world(x as f32, y as f32) + Vec2::new(side / 2.0, -side / 2.0);
         let selected = gesture.selected.as_deref() == Some(token.name());
         let colour = if selected { Color::from(css::GOLD) } else { Color::WHITE };
