@@ -1,5 +1,4 @@
-//! Syncing the open campaign with its remote from inside the editor, and the button that
-//! asks for it.
+//! Syncing the open campaign with its remote from inside the editor.
 //!
 //! One job slot for every git process this starts — a sync, reading `origin`, setting
 //! it — so no two ever touch the campaign directory at once. Authoring is paused while a
@@ -7,13 +6,8 @@
 //! the save and a reload that would replace it; the map keeps drawing throughout.
 
 use bevy::ecs::system::SystemParam;
-use bevy::feathers::controls::FeathersButton;
-use bevy::feathers::theme::ThemedText;
-use bevy::input_focus::InputFocus;
 use bevy::prelude::*;
 use bevy::tasks::{IoTaskPool, Task, block_on, futures_lite::future};
-use bevy::ui::InteractionDisabled;
-use bevy::ui_widgets::Activate;
 use campaign::repo::{self, GitError, RemoteOutcome, Repo, Synced};
 use campaign::SystemGit;
 
@@ -25,15 +19,7 @@ use crate::map::camera::MapCamera;
 use crate::map::load::MapTerrain;
 use crate::map::view::MapView;
 use crate::notes::NoteJob;
-use crate::{CampaignChrome, EditorSet, OpenCampaign, StatusMessage};
-
-/// The button that starts a sync.
-#[derive(Component, Default, Clone)]
-pub struct SyncButton;
-
-/// The panel's root.
-#[derive(Component, Default, Clone)]
-pub struct SyncPanel;
+use crate::{EditorSet, OpenCampaign, StatusMessage};
 
 enum GitWork {
     Sync(Result<Synced, GitError>),
@@ -92,11 +78,8 @@ impl Plugin for SyncPlugin {
         app.init_resource::<SyncJob>()
             .add_systems(
                 Update,
-                (
-                    build_sync_panel.run_if(resource_added::<WorldDoc>),
-                    read_origin.run_if(resource_exists::<OpenCampaign>),
-                    show_sync_panel.run_if(resource_exists_and_changed::<SyncJob>),
-                )
+                read_origin
+                    .run_if(resource_exists::<OpenCampaign>)
                     .after(EditorSet::Authoring),
             );
     }
@@ -105,7 +88,7 @@ impl Plugin for SyncPlugin {
 /// Whether a git job is running, without marking the resource changed.
 ///
 /// A `ResMut` here would mark [`SyncJob`] changed every frame a job is in flight, which
-/// would defeat [`show_sync_panel`]'s change-driven redraw, for the reason
+/// would make "changed" useless as the signal that a job landed, for the reason
 /// [`crate::notes::a_note_job_is_running`] is written the same way.
 pub fn a_git_job_is_running(job: Res<SyncJob>) -> bool {
     job.busy()
@@ -239,8 +222,7 @@ impl AuthoringReset<'_> {
 ///
 /// Polls through `bypass_change_detection`, as
 /// [`crate::notes::finish_note_job`] does, so a job in flight does not mark [`SyncJob`]
-/// changed every frame; [`SyncJob::set_changed`] is called once it lands, which is what
-/// wakes [`show_sync_panel`]. When a sync's reload replaces the document on screen, it
+/// changed every frame; it is marked changed once, when the job lands. When a sync's reload replaces the document on screen, it
 /// clears the same authoring state [`crate::features::dungeon::switch_document`] clears
 /// on a document switch — a reload replaces the document just as thoroughly. While a combat
 /// map is on screen the backdrop is left as it is, and is set from the reloaded document
@@ -332,70 +314,6 @@ fn remote_label(remote: &RemoteOutcome) -> &'static str {
         RemoteOutcome::Pushed => "pushed",
         RemoteOutcome::Conflict { .. } => "conflict",
         RemoteOutcome::Refused { .. } => "refused",
-    }
-}
-
-fn build_sync_panel(mut commands: Commands) {
-    commands.spawn_scene(panel());
-}
-
-fn show_sync_panel(
-    mut commands: Commands,
-    job: Res<SyncJob>,
-    sync_buttons: Query<(Entity, Has<InteractionDisabled>), With<SyncButton>>,
-) {
-    toggle(&mut commands, sync_buttons.iter(), job.busy());
-}
-
-fn toggle(commands: &mut Commands, buttons: impl Iterator<Item = (Entity, bool)>, wanted: bool) {
-    for (entity, disabled) in buttons {
-        if disabled == wanted {
-            continue;
-        }
-        if wanted {
-            commands.entity(entity).insert(InteractionDisabled);
-        } else {
-            commands.entity(entity).remove::<InteractionDisabled>();
-        }
-    }
-}
-
-fn panel() -> impl Scene {
-    bsn! {
-        Node {
-            position_type: PositionType::Absolute,
-            top: px(52),
-            left: percent(50),
-            flex_direction: FlexDirection::Row,
-            align_items: AlignItems::Center,
-            column_gap: px(8),
-        }
-        UiTransform { translation: {Val2::new(Val::Percent(-50.0), Val::ZERO)} }
-        CampaignChrome
-        SyncPanel
-        Children [
-            sync_button()
-        ]
-    }
-}
-
-fn sync_button() -> impl Scene {
-    bsn! {
-        @FeathersButton {
-            @caption: bsn! { Text("Sync") ThemedText },
-        }
-        SyncButton
-        on(|_: On<Activate>,
-            mut job: ResMut<SyncJob>,
-            mut doc: ResMut<WorldDoc>,
-            campaign: Res<OpenCampaign>,
-            notes: Res<NoteJob>,
-            asking: Res<Asking>,
-            mut status: ResMut<StatusMessage>,
-            mut focus: ResMut<InputFocus>| {
-            start_sync(&mut job, &mut doc, &campaign, &notes, &asking, &mut status);
-            focus.clear();
-        })
     }
 }
 

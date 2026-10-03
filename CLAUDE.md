@@ -67,7 +67,7 @@ both go through the unsaved guard in `features/prompt.rs`, `crates/campaign_edit
 holds the one teardown list every resource and root a campaign brings is named on, and the
 window title comes from `campaign::title`.
 A campaign syncs with its remote in one action (#30): `campaign::repo::Repo::sync` is the
-whole git sequence, `crates/campaign_editor/src/sync.rs` is the one job slot, the *Sync* button
+whole git sequence, `crates/campaign_editor/src/sync.rs` is the one job slot
 and the reload, and `WorldDoc::reload_from_disk` in `crates/campaign_editor/src/document.rs`
 replaces a document a pull touched.
 A campaign arrives from a remote through the dialog's *Clone* form (#31):
@@ -408,8 +408,9 @@ offset is unavailable in a multithreaded process on Linux. `stamp_of_ident` and
 campaign directory at once. Authoring is paused while one runs — the save has to land
 before a pull could replace what it saved — but the map keeps drawing, since only
 `authoring_is_live` is gated on it, not the camera or the chunk stream.
-The map shows only a *Sync* button (2026-10-03): the Remote field and *Set remote* were
-dropped, so `origin` is set with `pnp-ctl remote <url>` or with git itself.
+The map shows no sync controls (2026-10-03): the *Sync* button, the Remote field and *Set
+remote* were dropped, so a sync is `pnp-ctl sync` or git itself, and `origin` is set with
+`pnp-ctl remote <url>` or git.
 
 **A document a pull touched is replaced, not edited.** `WorldDoc::reload_from_disk` in
 `crates/campaign_editor/src/document.rs` loads it fresh and clears its undo history — an
