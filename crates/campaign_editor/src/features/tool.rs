@@ -13,7 +13,7 @@ use bevy::prelude::*;
 use bevy::ui_widgets::Activate;
 use campaign::brush::Brush;
 use campaign::draft::DraftShape;
-use campaign::feature::{FeatureKind, Rank};
+use campaign::feature::FeatureKind;
 use campaign::tiles::{CombatTile, DungeonTile};
 
 use crate::combat::CombatMaps;
@@ -237,7 +237,7 @@ pub const POLYGON_KINDS: [FeatureKind; 3] = [
     FeatureKind::Settlement,
 ];
 
-/// The word for a kind in the strip and the property panel.
+/// The word for a kind in the tool strip.
 pub fn kind_label(kind: FeatureKind) -> &'static str {
     match kind {
         FeatureKind::Settlement => "settlement",
@@ -248,15 +248,6 @@ pub fn kind_label(kind: FeatureKind) -> &'static str {
         FeatureKind::Landcover => "landcover",
         FeatureKind::Territory => "territory",
         FeatureKind::Poi => "POI",
-    }
-}
-
-/// The word for a settlement's rank in the property panel.
-pub fn rank_label(rank: Rank) -> &'static str {
-    match rank {
-        Rank::Hamlet => "hamlet",
-        Rank::Town => "town",
-        Rank::City => "city",
     }
 }
 

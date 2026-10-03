@@ -357,8 +357,8 @@ fn a_forest_field_is_read_by_name() {
     );
 }
 
-// A cell a settlement or a road claims is drawn as that tile and stays so whatever the
-// river threshold does, while standing water under a feature is still water.
+// A road is drawn as road whatever the river threshold does, as a bridge, while standing
+// water under a feature is still water.
 #[test]
 fn a_claimed_cell_keeps_its_tile_across_threshold_moves() {
     let terrain = watered_terrain();
@@ -377,7 +377,7 @@ fn a_claimed_cell_keeps_its_tile_across_threshold_moves() {
             slot: slot(0, 3),
             kind: TileKind::City,
         },
-    ]);
+    ], f32::MAX);
     chunk.apply_threshold(10.0);
 
     let kind = |slot: u32| chunk.tiles[slot as usize].expect("on the terrain").kind;
@@ -389,8 +389,37 @@ fn a_claimed_cell_keeps_its_tile_across_threshold_moves() {
     assert_eq!(kind(slot(0, 3)), TileKind::Water);
 }
 
-// The threshold is the one runtime control, and moving it must not read the terrain
-// again — so what is kept beside a chunk has to be enough on its own.
+// A river keeps running through a city: the city's cells are still channels wherever
+// the threshold makes them one, and city wherever it does not.
+#[test]
+fn a_river_runs_through_a_city() {
+    let terrain = watered_terrain();
+    let ramp = HeightRamp::of(&terrain).expect("height field");
+    let mut scratch = ChunkScratch::default();
+
+    let side = tiles::CHUNK_CELLS;
+    let channel = ((side - 1 - 3) * side + 5) as usize;
+    let quiet = ((side - 1 - 3) * side + 4) as usize;
+    let city = [channel, quiet].map(|slot| ClaimedCell {
+        slot: slot as u32,
+        kind: TileKind::City,
+    });
+
+    let mut chunk = tiles::chunk_tiles(&terrain, ramp, 0, 0, 10.0, &mut scratch);
+    chunk.claim(&city, 10.0);
+    let kind = |chunk: &tiles::ChunkTiles, slot: usize| chunk.tiles[slot].expect("on the terrain").kind;
+    assert_eq!(kind(&chunk, channel), TileKind::River, "claimed while already a river");
+    assert_eq!(kind(&chunk, quiet), TileKind::City);
+
+    let mut chunk = tiles::chunk_tiles(&terrain, ramp, 0, 0, f32::MAX, &mut scratch);
+    chunk.claim(&city, f32::MAX);
+    assert_eq!(kind(&chunk, channel), TileKind::City);
+    chunk.apply_threshold(10.0);
+    assert_eq!(kind(&chunk, channel), TileKind::River, "and once the threshold reaches it");
+}
+
+// Moving the threshold must not read the terrain again — so what is kept beside a chunk
+// has to be enough on its own.
 #[test]
 fn moving_the_threshold_rechooses_tiles_without_the_terrain() {
     let terrain = watered_terrain();
@@ -416,7 +445,7 @@ fn moving_the_threshold_rechooses_tiles_without_the_terrain() {
 }
 
 // Most of a map does not change when the threshold moves, and skipping those chunks is
-// what makes dragging the slider affordable.
+// what keeps a move cheap.
 #[test]
 fn a_chunk_whose_accumulation_misses_both_thresholds_is_skipped() {
     let terrain = watered_terrain();

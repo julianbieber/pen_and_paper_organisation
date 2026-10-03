@@ -27,8 +27,6 @@ pub mod draw;
 pub mod dungeon;
 /// Undo, redo, save, delete and escape.
 pub mod keys;
-/// The selected feature's label, kind, rank, reveal scale, parent and note link.
-pub mod panel;
 /// Placing the picture a document is drawn over, and importing one into the campaign.
 pub mod image;
 /// Turning a brush stroke on a dungeon's grid into one Edit.
@@ -81,9 +79,7 @@ impl Plugin for FeaturesPlugin {
             .init_resource::<select::Selection>()
             .init_resource::<select::Dragging>()
             .init_resource::<prompt::Asking>()
-            .init_resource::<panel::PendingLabel>()
             .init_resource::<ruler::Ruler>()
-            .init_resource::<ruler::TravelSpeed>()
             .init_resource::<token::TokenFields>()
             .init_resource::<token::TokenGesture>()
             .init_resource::<token::TokenIntent>()
@@ -98,7 +94,6 @@ impl Plugin for FeaturesPlugin {
                     doc::show_world_state.run_if(resource_exists_and_changed::<WorldState>),
                     (
                         tool::build_tool_strip,
-                        panel::build_property_panel,
                         prompt::build_prompt,
                         image::build_image_panel,
                         ruler::build_ruler_readout,
@@ -106,8 +101,6 @@ impl Plugin for FeaturesPlugin {
                         token::build_token_panel,
                     )
                         .run_if(resource_added::<WorldDoc>),
-                    crate::notes::panel::build_notes_panel
-                        .run_if(resource_added::<OpenCampaign>),
                     crate::notes::finish_note_job
                         .run_if(resource_exists::<WorldDoc>.and_then(
                             crate::notes::a_note_job_is_running,
@@ -134,7 +127,6 @@ impl Plugin for FeaturesPlugin {
                                 .run_if(paint::the_paint_tool_is_active.and_then(paint::a_grid_is_open)),
                             image::place_image,
                             keys::authoring_keys,
-                            panel::commit_label,
                             ruler::run_ruler.run_if(ruler::the_measure_tool_is_active),
                         )
                             .run_if(authoring_is_live.and_then(crate::combat::the_map_is_on_screen)),
@@ -173,14 +165,6 @@ impl Plugin for FeaturesPlugin {
                         .chain(),
                     select::reconcile_selection.run_if(resource_exists::<WorldDoc>),
                     (
-                        panel::show_properties.run_if(
-                            resource_exists::<WorldDoc>.and_then(
-                                resource_changed::<select::Selection>
-                                    .or_else(resource_changed::<WorldDoc>)
-                                    .or_else(resource_changed::<ruler::TravelSpeed>)
-                                    .or_else(resource_changed::<OpenCampaign>),
-                            ),
-                        ),
                         (image::show_image_panel, image::land_opacity)
                             .chain()
                             .run_if(resource_exists::<WorldDoc>),
@@ -214,24 +198,6 @@ impl Plugin for FeaturesPlugin {
                         ),
                     )
                         .chain(),
-                    panel::show_note_buttons.run_if(
-                        resource_exists::<WorldDoc>.and_then(
-                            resource_changed::<select::Selection>
-                                .or_else(resource_changed::<WorldDoc>)
-                                .or_else(resource_changed::<crate::notes::NoteJob>)
-                                .or_else(resource_changed::<crate::notes::ZkState>),
-                        ),
-                    ),
-                    crate::notes::panel::show_new_note_buttons.run_if(
-                        resource_changed::<crate::notes::NoteJob>
-                            .or_else(resource_changed::<crate::notes::ZkState>)
-                            .or_else(resource_changed::<crate::notes::NoteTitle>),
-                    ),
-                    crate::notes::references::show_references.run_if(
-                        resource_changed::<crate::notes::references::References>
-                            .or_else(resource_changed::<crate::notes::ZkState>)
-                            .or_else(resource_added::<OpenCampaign>),
-                    ),
                     prompt::guard_close.run_if(resource_exists::<WorldDoc>),
                     prompt::show_prompt.run_if(resource_exists_and_changed::<prompt::Asking>),
                     pens::size_pens.run_if(resource_exists::<crate::map::load::MapAssets>),

@@ -21,10 +21,9 @@ use crate::features::combat::{CombatFields, CombatIntent};
 use crate::features::dungeon::DungeonIntent;
 use crate::features::draw::Drafting;
 use crate::features::image::{CalibrationDistance, ImageFields, ImportJob, ImportRequest, Placing};
-use crate::features::panel::PendingLabel;
 use crate::features::paint::Stroking;
 use crate::features::prompt::{Asking, Question};
-use crate::features::ruler::{Ruler, TravelSpeed};
+use crate::features::ruler::Ruler;
 use crate::features::select::{Dragging, Selection};
 use crate::features::token::{TokenFields, TokenGesture, TokenIntent};
 use crate::features::tool::ActiveTool;
@@ -35,7 +34,7 @@ use crate::map::load::{CombatTileset, DungeonTileset, MapAssets, MapState, MapTe
 use crate::map::scale::ScaleFields;
 use crate::notes::references::References;
 use crate::notes::watch::NotesWatch;
-use crate::notes::{NoteJob, NoteTitle};
+use crate::notes::NoteJob;
 use crate::sync::{SyncFields, SyncJob};
 use crate::{CampaignChrome, EditorSet, OpenCampaign, StatusMessage};
 
@@ -177,12 +176,9 @@ fn close_campaign(world: &mut World) {
     world.insert_resource(TokenGesture::default());
     world.insert_resource(TokenFields::default());
     world.insert_resource(TokenIntent::default());
-    world.insert_resource(PendingLabel::default());
     world.insert_resource(Asking::default());
     world.insert_resource(Ruler::default());
-    world.insert_resource(TravelSpeed::default());
     world.insert_resource(NoteJob::default());
-    world.insert_resource(NoteTitle::default());
     world.insert_resource(References::default());
     world.insert_resource(RecentList::default());
     world.insert_resource(CampaignClose::default());

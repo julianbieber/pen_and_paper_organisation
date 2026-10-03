@@ -17,8 +17,8 @@ pub mod chunks;
 pub mod image;
 /// Turning an opened campaign into a map that can be drawn, or a reason it cannot.
 pub mod load;
-/// The one runtime control over what counts as a river.
-pub mod panel;
+/// What counts as a river on the terrain.
+pub mod river;
 /// Where the cursor is, in terrain cells.
 pub mod pointer;
 /// What one cell is worth and how fast the party travels, as the GM sets them.
@@ -31,7 +31,7 @@ pub mod view;
 use crate::{EditorSet, OpenCampaign};
 use backdrop::Backdrop;
 use load::{MapAssets, MapState, MapTerrain};
-use panel::RiverThreshold;
+use river::RiverThreshold;
 use pointer::{MapPointer, PointerOverride};
 
 /// Everything that turns an opened campaign into a map on screen.
@@ -58,16 +58,13 @@ impl Plugin for MapPlugin {
                     (
                         load::watch_tileset.run_if(resource_exists::<MapAssets>),
                         load::show_map_state.run_if(resource_exists_and_changed::<MapState>),
-                        panel::build_map_panel.run_if(resource_added::<MapTerrain>),
-                        panel::show_map_panel.run_if(resource_exists_and_changed::<Backdrop>),
+                        river::set_threshold.run_if(resource_added::<MapTerrain>),
                         scalebar::build_scale_bar.run_if(resource_added::<MapTerrain>),
                         scale::build_scale_panel.run_if(
                             resource_added::<MapTerrain>.and_then(resource_exists::<OpenCampaign>),
                         ),
                         camera::place_camera.run_if(resource_exists::<Backdrop>),
                     ),
-                    panel::land_threshold,
-                    scale::land_speed,
                     (scale::commit_scale, scale::land_campaign_scale)
                         .chain()
                         .run_if(resource_exists::<OpenCampaign>),

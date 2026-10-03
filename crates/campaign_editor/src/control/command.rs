@@ -30,7 +30,6 @@ use crate::combat::CombatMaps;
 use crate::dialog;
 use crate::features::PointerOverUi;
 use crate::document::{WorldDoc, WorldOutcome, WorldState};
-use crate::features::panel::PendingLabel;
 use crate::features::draw::Drafting;
 use crate::features::combat::{CombatFields, CombatIntent};
 use crate::features::dungeon::DungeonIntent;
@@ -152,22 +151,15 @@ pub(super) enum Command {
     /// lands on no system is indistinguishable from one that was never delivered and a
     /// scripted run cannot see the screen.
     Observe(Topic),
-    /// Names the selected feature, by typing into the label field and letting go.
+    /// Names the selected feature.
     ///
     /// Exists because a place note is titled from its feature's label, so without this
-    /// there is no scripted way to reach the Create button at all.
+    /// there is no scripted way to make one at all.
+    SetLabel(String),
+    /// Makes one note through [`notes::start`], and waits for it to land.
     ///
-    /// Writes [`PendingLabel`] and waits, rather than applying the [`Edit`] itself: the
-    /// panel holds a typed label and commits it when the field is left, so an edit applied
-    /// behind it is overwritten by the empty text the panel is still holding. Going
-    /// through the field is both what a GM does and the only thing that survives.
-    SetLabel { label: String, started: bool },
-    /// Makes one note, by the route the GM's own button takes, and waits for it to land.
-    ///
-    /// A place takes both its title and its subject from the selection, exactly as the
-    /// Create button does — a verb that could name either would let a script make a place
-    /// note a GM could not. Every other kind names its title, which is what the notes
-    /// panel would have typed.
+    /// A place takes both its title and its subject from the selection, so a place note is
+    /// always linked to the feature it is titled after. Every other kind names its title.
     Note {
         kind: NoteKind,
         title: String,
@@ -322,7 +314,7 @@ impl Command {
             Self::Drag { .. } => "drag",
             Self::Key { .. } => "key",
             Self::Observe(_) => "observe",
-            Self::SetLabel { .. } => "label",
+            Self::SetLabel(_) => "label",
             Self::Note { .. } => "note",
             Self::Import { .. } => "import-image",
             Self::Calibrate => "calibrate",
@@ -547,10 +539,7 @@ impl Command {
                 if label.is_empty() {
                     return Err("label needs a name".to_owned());
                 }
-                Ok(Self::SetLabel {
-                    label,
-                    started: false,
-                })
+                Ok(Self::SetLabel(label))
             }
             "note" => {
                 let name = *rest
@@ -899,28 +888,12 @@ impl Command {
                 _ => Poll::Done(observe(world, topic)),
             },
 
-            Self::SetLabel { label, started } => {
-                let Some(id) = world.get_resource::<Selection>().and_then(Selection::only) else {
-                    return Poll::Failed("exactly one feature must be selected".into());
-                };
-                if !*started {
-                    let Some(mut pending) = world.get_resource_mut::<PendingLabel>() else {
-                        return Poll::Failed("no campaign is open".into());
-                    };
-                    pending.feature = Some(id);
-                    pending.text.clone_from(label);
-                    *started = true;
-                    return Poll::Running;
-                }
-                let named = world
-                    .get_resource::<WorldDoc>()
-                    .and_then(|doc| doc.document.world().feature(id))
-                    .is_some_and(|feature| feature.label == *label);
-                if named {
-                    Poll::Done(json!({ "id": id.0 }))
-                } else {
-                    Poll::Running
-                }
+            Self::SetLabel(label) => {
+                let label = label.clone();
+                author(world, move |id| Edit::SetLabel {
+                    id,
+                    label: label.clone(),
+                })
             }
 
             Self::Note {
@@ -1382,11 +1355,12 @@ fn measure_topic(world: &mut World) -> Value {
     let finished = world
         .get_resource::<crate::features::ruler::Ruler>()
         .map(|ruler| ruler.is_finished());
-    let pace = world
-        .get_resource::<crate::features::ruler::TravelSpeed>()
-        .map(|speed| speed.units_per_day)
-        .unwrap_or_default();
-    let measured = campaign::measure::measure_of(&path, false, &worth, pace);
+    let measured = campaign::measure::measure_of(
+        &path,
+        false,
+        &worth,
+        crate::features::ruler::NO_PACE,
+    );
 
     json!({
         "open": true,
@@ -1398,7 +1372,6 @@ fn measure_topic(world: &mut World) -> Value {
         "straight": measured
             .and_then(|measured| measured.straight)
             .map(|leg| leg.distance),
-        "days": measured.and_then(|measured| measured.path.days),
     })
 }
 

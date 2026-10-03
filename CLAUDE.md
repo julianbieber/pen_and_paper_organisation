@@ -18,14 +18,19 @@ campaign. The terrain draws as a tile map (#2): `campaign::tiles` decides every 
 opens up as the map zooms in (#5): `campaign::style`, `campaign::lod` and `campaign::label`
 decide it, `campaign_editor/src/features/render.rs` draws it. Notes are made from templates
 and linked to features (#6): `campaign::notebook` owns the whole `zk` dependency,
-`campaign_editor/src/notes` runs it off the frame. Selecting a place shows what references
+`campaign_editor/src/notes` runs it off the frame. Selecting a place asks what references
 it (#7): the same module builds the tag and the `zk list`, `notes/references.rs` caches an
 answer per tag behind one query at a time, and `notes/watch.rs` drops the cache when the
-notebook changes underneath us. A row shows the words around the tag in the note's own
-text, through a second, matching `zk list` (#19), rather than the note's opening line.
+notebook changes underneath us. Each answer carries the words around the tag in the note's
+own text, through a second, matching `zk list` (#19), rather than the note's opening line.
+**There is no selection panel and no notes panel** (2026-10-03): both were dropped until
+something replaces them, so a feature's label, kind, rank, reveal scale, parent and note
+are set only through `pnp-ctl`, and the reference answers reach only the control socket.
+With the select tool in hand, Enter opens the selected entry's dungeon and Backspace goes
+back to the world map (`features/keys.rs`).
 Distances are measured at campaign scale (#10):
 `campaign::measure` says what one cell is worth and rounds every figure, `map/scalebar.rs`
-draws the bar, `map/scale.rs` is where the GM sets the scale and the party's pace, and
+draws the bar, `map/scale.rs` is where the GM sets the scale, and
 `features/ruler.rs` owns the measure tool. Dungeons are authored on a square tile grid (#8):
 `campaign::grid` and `campaign::brush` own the grid and the four brushes,
 `campaign_editor/src/document.rs` holds the open document and the parked ones, and
@@ -153,7 +158,7 @@ extending `Edit`.
 ## What one cell is worth
 
 **`campaign::measure` answers it, and every figure a GM reads comes from there** (#10):
-the scale bar, the ruler, the selection panel's length line and image calibration are all
+the scale bar, the ruler and image calibration are all
 handed the same `CellWorth`, so a distance typed into a calibration and one measured with
 the ruler cannot disagree. `campaign_editor/src/map/scalebar.rs` owns a node's width,
 `features/ruler.rs` owns the clicks, and neither chooses a figure.
@@ -164,10 +169,11 @@ campaign's own unit is, and a cell of a dungeon this build creates is exactly fi
 `units_per_cell` and `unit` — which before #10 were read by nothing at all, so the world
 map silently measured one unit per cell.
 
-**A dungeon carries no travel time.** A pace in days says nothing about a corridor, so
-`CellWorth::travelled` is false there and every duration is absent rather than absurd.
-That means changing `campaign.ron`'s unit does *not* change a figure inside a dungeon,
-which amends #10's fourth acceptance criterion.
+**The editor shows no travel time** (2026-10-03): the pace slider is gone and the ruler
+measures at `ruler::NO_PACE`, so every duration `campaign::measure` could give is absent.
+`campaign::measure` still computes durations for a pace it is handed. Changing
+`campaign.ron`'s unit does *not* change a figure inside a dungeon, which amends #10's
+fourth acceptance criterion.
 
 **The bar changes unit as the map zooms.** A figure below one steps down to a smaller unit
 of the same family, so a kilometre campaign zoomed into a city reads in metres. That needs
@@ -470,8 +476,10 @@ Everything is fallible. `water()` is `None` on a terrain with no solve, every lo
 returns `Option`, and **a terrain with only a height field and no water must still
 render.** A terrain with no height field is the one case worth refusing outright.
 
-Rivers are `accumulation` above a threshold — that threshold is the one control deciding
-whether the map reads as a drainage basin or a puddle, so it is adjustable at runtime.
+Rivers are `accumulation` above a threshold — `map::river` fixes it at
+`THRESHOLD_FRACTION` of the highest accumulation the terrain reaches; the slider that
+moved it was dropped (2026-10-03). A river runs through a city's claimed cells and is
+drawn over them; a road is drawn over a river, as a bridge.
 Compare with `>`, never `WaterView::channel_at`, which is `>=`: `accumulation` answers
 `0.0` off the edge of the terrain, so `>=` at a threshold of zero makes everything a river.
 

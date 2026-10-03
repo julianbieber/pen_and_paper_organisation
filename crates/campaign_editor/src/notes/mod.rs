@@ -1,11 +1,9 @@
 //! Notes from the editor: the one note in flight, whether `zk` is there at all, the rule
-//! saying which note buttons can be pressed, and what references the selected place.
+//! saying when a note may be made, and what references the selected place.
 //!
-//! Every route that starts a note — the property panel's Create button, the notes panel's
-//! three, the control socket's verb — goes through [`start`], for the reason
+//! Every route that starts a note goes through [`start`], for the reason
 //! [`doc::apply`](crate::document::apply) exists: a refusal that says nothing is
-//! indistinguishable from a press that was never noticed, and three callers deciding
-//! separately when a note may be made is three answers to one question.
+//! indistinguishable from a request that was never noticed.
 //!
 //! There is one job slot for *making* a note, and no queue. A second Create while one is
 //! running is refused rather than held, because two notes for one feature would leave the
@@ -13,9 +11,8 @@
 //! [`references`] holds a slot of its own, so a query nothing asked for can never stand
 //! between the GM and a note.
 //!
-//! Whether `zk` is installed is asked once a session and kept in [`ZkState`], so a button
-//! can say notes are unavailable *before* it is pressed. Discovering it after the press
-//! would satisfy nobody: the criterion is that the buttons explain themselves.
+//! Whether `zk` is installed is asked once a session and kept in [`ZkState`], so a refusal
+//! can say notes are unavailable without waiting on a subprocess.
 
 use std::path::PathBuf;
 
@@ -26,11 +23,8 @@ use campaign::feature::FeatureId;
 use campaign::notebook::{NewNote, NoteError, NoteKind, Notebook, SystemRunner, zk_is_installed};
 
 use crate::document::{self as doc, WorldDoc};
-use crate::features::select::Selection;
 use crate::{OpenCampaign, StatusMessage};
 
-/// The panel that creates the notes no feature holds.
-pub mod panel;
 /// What references the selected place, and the rows that show it.
 pub mod references;
 /// Noticing that the notebook changed underneath us.
@@ -38,7 +32,7 @@ pub mod watch;
 
 /// What the note being made is for.
 ///
-/// Carried on the job rather than read from the [`Selection`] when it lands, because the
+/// Carried on the job rather than read from the [`Selection`](crate::features::select::Selection) when it lands, because the
 /// GM may have selected something else in the meantime — and a
 /// [`FeatureId`] is never reused, so an id that has gone stays gone rather than naming
 /// somebody else's feature.
@@ -59,8 +53,8 @@ impl NoteJob {
     /// Whether a note is being made. Nothing may start another while this is true.
     ///
     /// Derived from the task rather than stored beside it: a flag and a task that
-    /// disagreed would either poll a job that is gone or leave every note button disabled
-    /// for the life of the process.
+    /// disagreed would either poll a job that is gone or refuse every note for the life of
+    /// the process.
     pub fn busy(&self) -> bool {
         self.task.is_some()
     }
@@ -68,8 +62,8 @@ impl NoteJob {
 
 /// Whether `zk` answers, asked once.
 ///
-/// `answered` is what the buttons read; until it is true the honest state is "not known
-/// yet", which is not the same as available, so nothing is pressable.
+/// Until `answered` is true the honest state is "not known yet", which is not the same as
+/// available, so every note is refused.
 #[derive(Resource, Default)]
 pub struct ZkState {
     probe: Option<Task<bool>>,
@@ -90,14 +84,6 @@ impl ZkState {
     }
 }
 
-/// What has been typed into the notes panel's title field.
-///
-/// A resource rather than read off the field at the press, the way the open dialog keeps
-/// its paths: a note title never lands on the undo stack, so unlike a feature's label
-/// there is nothing to hold it back for.
-#[derive(Resource, Default)]
-pub struct NoteTitle(pub String);
-
 /// Everything that makes a note.
 pub struct NotesPlugin;
 
@@ -105,7 +91,6 @@ impl Plugin for NotesPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<NoteJob>()
             .init_resource::<ZkState>()
-            .init_resource::<NoteTitle>()
             .init_resource::<references::References>()
             .add_systems(
                 Update,
@@ -124,8 +109,7 @@ fn zk_has_not_answered(state: Res<ZkState>) -> bool {
 /// Whether a note job is running, without marking the resource changed.
 ///
 /// A `ResMut` here would mark [`NoteJob`] changed every frame a job is in flight, which
-/// would both defeat the change-driven panel updates and make "changed" useless as the
-/// signal that a note landed.
+/// would make "changed" useless as the signal that a note landed.
 pub fn a_note_job_is_running(job: Res<NoteJob>) -> bool {
     job.busy()
 }
@@ -189,8 +173,7 @@ pub fn start(
 
 /// Why a note cannot be started right now, or `None` when one can.
 ///
-/// Shared by [`start`] and by the systems that disable the buttons, so what a button says
-/// and what a press does cannot come apart.
+/// Shared by [`start`] and by anything that has to say in advance whether one could be.
 pub fn refusal(job: &NoteJob, zk: &ZkState, title: &str) -> Option<String> {
     if let Some(reason) = zk.refusal() {
         return Some(reason.to_owned());
@@ -204,25 +187,10 @@ pub fn refusal(job: &NoteJob, zk: &ZkState, title: &str) -> Option<String> {
     None
 }
 
-/// Open `path` in the GM's editor, saying why if it cannot be.
-///
-/// Never takes the job slot: `zk edit` runs an editor, which does not return until the
-/// note is closed, so it is started and forgotten.
-pub fn open(campaign: &OpenCampaign, status: &mut StatusMessage, path: &str) {
-    let notebook = Notebook::of(campaign.0.root());
-    match notebook.open(&SystemRunner, path) {
-        Ok(()) => status.say(format!("opened {path}")),
-        Err(error) => {
-            warn!("{error}");
-            status.say(error.to_string());
-        }
-    }
-}
-
 /// Lands the note `zk` made, onto the feature that asked for it.
 ///
-/// Runs ahead of everything that reads the document, so a landed note reaches the panel,
-/// the selection and the map on the frame it arrived rather than the frame after.
+/// Runs ahead of everything that reads the document, so a landed note reaches the
+/// selection and the map on the frame it arrived rather than the frame after.
 ///
 /// The created path is said on every branch, including the one that succeeds: undo takes
 /// the link back but not the file, so this message is the only record the GM has of where
@@ -278,7 +246,7 @@ pub fn finish_note_job(
     }
 }
 
-/// Marks the job changed once it has emptied, so the buttons come back.
+/// Marks the job changed once it has emptied, so a reader waiting on it sees it land.
 ///
 /// Split from [`finish_note_job`] because that one polls through
 /// `bypass_change_detection` — the point of which is that a job in flight does not mark
@@ -289,11 +257,4 @@ pub fn note_job_settled(mut job: ResMut<NoteJob>, mut was_busy: Local<bool>) {
         *was_busy = busy;
         job.set_changed();
     }
-}
-
-/// The feature the selection holds, when it holds exactly one.
-pub fn selected(doc: &WorldDoc, selection: &Selection) -> Option<(FeatureId, campaign::Feature)> {
-    let id = selection.only()?;
-    let feature = doc.document.world().feature(id)?;
-    Some((id, feature.clone()))
 }

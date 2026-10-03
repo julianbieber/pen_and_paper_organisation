@@ -31,35 +31,8 @@ const MEASURE_Z: f32 = FEATURE_Z + 0.3;
 /// button cannot grow the path without bound.
 pub const MAX_MEASURE_POINTS: usize = 512;
 
-/// How fast the party travels, in the document's own unit per day.
-///
-/// Session state: a pace is how the GM is playing today, not something a campaign
-/// directory carries between machines. Landed from the slider in
-/// [`map::scale`](crate::map::scale).
-#[derive(Resource, Debug, Clone, Copy)]
-pub struct TravelSpeed {
-    pub units_per_day: f64,
-}
-
-/// Where the travel-speed slider starts.
-pub const DEFAULT_UNITS_PER_DAY: f64 = 30.0;
-
-/// The slowest pace the slider offers.
-pub const MIN_UNITS_PER_DAY: f64 = 20.0;
-
-/// The fastest pace the slider offers.
-///
-/// The range is bounded away from zero, so a pace is always a pace and no figure derived
-/// from one is ever divided by nothing.
-pub const MAX_UNITS_PER_DAY: f64 = 40.0;
-
-impl Default for TravelSpeed {
-    fn default() -> Self {
-        Self {
-            units_per_day: DEFAULT_UNITS_PER_DAY,
-        }
-    }
-}
+/// The pace the ruler measures at: none, so a measurement carries no durations.
+pub const NO_PACE: f64 = 0.0;
 
 /// The measurement in hand.
 ///
@@ -154,13 +127,12 @@ pub fn draw_ruler(
     backdrop: Res<Backdrop>,
     doc: Res<WorldDoc>,
     open: Res<OpenCampaign>,
-    speed: Res<TravelSpeed>,
     mut pens: MeasurePens,
     mut readouts: Query<&mut Text, With<RulerReadout>>,
 ) {
     let path = ruler.path(pointer.cell);
     let worth = measure::worth_of(doc.document.world(), open.0.manifest());
-    let measured = measure::measure_of(&path, false, &worth, speed.units_per_day);
+    let measured = measure::measure_of(&path, false, &worth, NO_PACE);
 
     if let Some(measured) = measured {
         let view = backdrop.view;
@@ -225,17 +197,11 @@ fn readout_text(measured: Option<&measure::Measurement>, worth: &CellWorth) -> S
         return "click two places to measure".to_owned();
     };
     let mut shown = measure::figure(measured.path.distance, worth.unit());
-    if let Some(days) = measured.path.days {
-        shown.push_str(&format!(" ({})", measure::duration(days)));
-    }
     if let Some(straight) = measured.straight {
         shown.push_str(&format!(
             "  |  {} direct",
             measure::figure(straight.distance, worth.unit())
         ));
-        if let Some(days) = straight.days {
-            shown.push_str(&format!(" ({})", measure::duration(days)));
-        }
     }
     shown
 }

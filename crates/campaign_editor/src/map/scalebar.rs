@@ -116,7 +116,7 @@ fn bar() -> impl Scene {
     bsn! {
         Node {
             position_type: PositionType::Absolute,
-            bottom: px(96),
+            bottom: px(130),
             left: px(12),
             display: Display::None,
             flex_direction: FlexDirection::Column,

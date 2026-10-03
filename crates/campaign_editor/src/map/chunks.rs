@@ -22,7 +22,7 @@ use crate::document::WorldDoc;
 use crate::map::backdrop::{Backdrop, BackdropSource};
 use crate::map::camera::{MapCamera, viewport_of};
 use crate::map::load::{CombatTileset, DungeonTileset, MapAssets, MapTerrain};
-use crate::map::panel::RiverThreshold;
+use crate::map::river::RiverThreshold;
 
 /// Chunks filled per frame, so a fast pan costs frames rather than one long hitch.
 pub const CHUNKS_PER_FRAME: usize = 8;
@@ -182,7 +182,7 @@ pub fn stream_chunks(
                     threshold.accumulation,
                     scratch,
                 );
-                filled.claim(claims.0.in_chunk(coord.x, coord.y));
+                filled.claim(claims.0.in_chunk(coord.x, coord.y), threshold.accumulation);
                 (to_tile_data(&filled), ChunkCache::Terrain(filled))
             }
             BackdropSource::Grid => {
@@ -293,7 +293,7 @@ pub fn reclaim_cells(
             threshold.accumulation,
             scratch,
         );
-        filled.claim(claims.0.in_chunk(x, y));
+        filled.claim(claims.0.in_chunk(x, y), threshold.accumulation);
         data.0 = to_tile_data(&filled);
         *cache = ChunkCache::Terrain(filled);
     }
@@ -513,7 +513,7 @@ mod tests {
     }
 
     // Most of a map does not change when the threshold moves, and skipping those
-    // chunks is what makes dragging the slider affordable at all.
+    // chunks is what keeps a move cheap.
     #[test]
     fn a_chunk_the_threshold_cannot_reach_is_left_alone() {
         let (mut app, entity) = app_with(chunk_with(&[1.0, 2.0, 3.0, 4.0]));

@@ -558,9 +558,11 @@ impl ChunkTiles {
 
     /// Draw the cells `claims` holds for this chunk as the tile each one is claimed for.
     ///
-    /// A claimed cell is never a river afterwards, whatever the threshold; standing water
-    /// is left as it is, since a feature drawn over the sea does not drain it.
-    pub fn claim(&mut self, claims: &[ClaimedCell]) {
+    /// A river keeps running through a city, so a city cell is still a river wherever the
+    /// threshold makes it one; a road cell is road whatever the threshold, the way a
+    /// bridge is. Standing water is left as it is under either, since a feature drawn
+    /// over the sea does not drain it.
+    pub fn claim(&mut self, claims: &[ClaimedCell], threshold: f32) {
         for claimed in claims {
             let slot = claimed.slot as usize;
             let Some(Some(cell)) = self.cells.get_mut(slot) else {
@@ -571,9 +573,15 @@ impl ChunkTiles {
             }
             cell.dry = claimed.kind;
             cell.dry_shade = cell.shade;
-            cell.river_accumulation = None;
+            if claimed.kind != TileKind::City {
+                cell.river_accumulation = None;
+            }
+            let kind = match cell.river_accumulation {
+                Some(accumulation) if accumulation > threshold => TileKind::River,
+                _ => claimed.kind,
+            };
             self.tiles[slot] = Some(MapTile {
-                kind: claimed.kind,
+                kind,
                 shade: cell.shade,
             });
         }
