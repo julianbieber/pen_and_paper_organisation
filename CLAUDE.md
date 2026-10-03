@@ -126,8 +126,9 @@ reads instead of re-deriving.
 ## The four rules everything else follows from
 
 **Terrain gives landform, water, forest and farmland. Everything else is a GM decision.**
-The imported terrain is height, a water solve and — when the export carries them — the
-`forest` and `farmland` density fields, read by name. A marsh, a border, a road, a city is
+The imported terrain is height, water and — when the export carries them — the `forest`
+and `farmland` density fields, read by name. Water is the export's own `water` field when
+it has one and the water solve's depth when it does not; nothing here derives a river. A marsh, a border, a road, a city is
 something the GM drew — a feature, not a field the terrain happened to carry. No colour is
 derived from moisture or temperature. A settlement polygon and a road polyline on the world
 map also claim the terrain cells under them for a city or a road tile (`campaign::claims`),
@@ -470,33 +471,39 @@ SSH passphrase or host-key question is not covered by this and can still hold it
 | `FieldView::value_at(x, y)` / `sample(x, y)` | a cell, or interpolated; categorical fields snap to nearest |
 | `terrain.water()` → `Option<WaterView>` | `is_water`, `depth_at`, `accumulation`, `channel_at(x, y, threshold)`, `flow_at`, `lakes` |
 
-**`Height`, the water solve, and the `forest` and `farmland` fields are read.** `FieldRole`
-is `Height`, `Moisture`, `Custom` — the crate states a `Custom` field never resolves by
-role, so those two are found with `terrain.field(name)`. Either may be missing; that cell
-simply has no forest or farmland. No other field is read.
+**`Height` and the `water`, `forest` and `farmland` fields are read**, and the water
+solve's depth only on a terrain with no `water` field. `FieldRole` is `Height`,
+`Moisture`, `Custom` — the crate states a `Custom` field never resolves by role, so those
+three are found with `terrain.field(name)`. Any may be missing; that cell simply has no
+forest or farmland, and a terrain with neither a `water` field nor a solve has no water.
+No other field is read.
+
+**A raster's row zero is its bottom.** `watershed` stores rows south first and its editor
+flips them on screen; a document's row zero is its top. `tiles::raster_row` turns one into
+the other and every terrain read goes through it — reading a raster row as a document row
+draws the whole map upside down against the terrain editor (2026-10-03).
+
+**The `water` field is banded** (Veyrath's `water.wesl` says so): 0 is dry land, below
+`SEA_LEVEL` (0.5) a river or lake, and from it up the sea. All water draws as one tile. A
+river runs through a city's claimed cells and is drawn over them; a road is drawn over a
+river or lake, as a bridge, but never over the sea. The solve's depth cannot tell a river
+from the sea, so on a terrain without the field no road crosses water. The accumulation
+threshold and the river tile were dropped (2026-10-03): rivers are authored in the
+terrain, not derived from flow.
 
 Everything is fallible. `water()` is `None` on a terrain with no solve, every lookup
 returns `Option`, and **a terrain with only a height field and no water must still
 render.** A terrain with no height field is the one case worth refusing outright.
 
-Rivers are `accumulation` above a threshold — `map::river` fixes it at
-`THRESHOLD_FRACTION` of the highest accumulation the terrain reaches; the slider that
-moved it was dropped (2026-10-03). A river runs through a city's claimed cells and is
-drawn over them; a road is drawn over a river, as a bridge.
-Compare with `>`, never `WaterView::channel_at`, which is `>=`: `accumulation` answers
-`0.0` off the edge of the terrain, so `>=` at a threshold of zero makes everything a river.
-
 Worked example: `~/fun_repos/watershed/crates/watershed/examples/load_terrain.rs`.
 
 ## How the terrain is drawn
 
-**Hand-drawn pixel-art tiles, not a procedural ramp.** Water first, then a river above the
-threshold, then snow and mountain at `SNOW_LINE` and `MOUNTAIN_LINE` of the height ramp,
+**Hand-drawn pixel-art tiles, not a procedural ramp.** Water first, then snow and mountain at `SNOW_LINE` and `MOUNTAIN_LINE` of the height ramp,
 then forest and farmland where their density passes `DENSITY_THRESHOLD` (0.5), forest
 first, and grass otherwise. Relief comes from a per-tile hillshade **tint** rather than
 from tiles of its own — so slope costs no art — and forest and farmland are tinted darker
-the denser they are. A city or road a feature claims overrides any land or river tile but
-never standing water.
+the denser they are. A city or road a feature claims overrides any land tile.
 
 The renderer is bevy's own `bevy_sprite_render::tilemap_chunk`: one `TilemapChunk` entity
 per `CHUNK_CELLS`-square block of terrain cells, one draw call each, streamed so only what
@@ -528,12 +535,13 @@ straight into the array texture the tilemap material wants, via
 The strip's columns are listed on `TileKind` in `crates/campaign/src/tiles.rs`, which is
 also the only place a tile number is written. **A redraw that reorders the strip renders
 happily and wrongly**, so the order is the contract: grass, farmland, forest, mountain,
-snow, water, river, city, road — `TILE_COUNT` is 9.
+snow, water, city, road — `TILE_COUNT` is 8.
 
 **Every decision lives in `crates/campaign`** — which tile, which cells a chunk covers,
 where the terrain's rows land — and is tested without a GPU. `crates/campaign_editor/map`
-owns only ECS and pixels. A terrain's rows run top to bottom and a tilemap chunk's run
+owns only ECS and pixels. A document's rows run top to bottom and a tilemap chunk's run
 bottom to top; that flip is written once, in `map::view`, and everything goes through it.
+The raster flip is a different one and lives in `tiles::raster_row`.
 
 ## How features are styled
 

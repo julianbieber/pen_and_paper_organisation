@@ -17,8 +17,6 @@ pub mod chunks;
 pub mod image;
 /// Turning an opened campaign into a map that can be drawn, or a reason it cannot.
 pub mod load;
-/// What counts as a river on the terrain.
-pub mod river;
 /// Where the cursor is, in terrain cells.
 pub mod pointer;
 /// The bar saying how far a stretch of screen is.
@@ -29,7 +27,6 @@ pub mod view;
 use crate::{EditorSet, OpenCampaign};
 use backdrop::Backdrop;
 use load::{MapAssets, MapState, MapTerrain};
-use river::RiverThreshold;
 use pointer::{MapPointer, PointerOverride};
 
 /// Everything that turns an opened campaign into a map on screen.
@@ -38,8 +35,7 @@ pub struct MapPlugin;
 impl Plugin for MapPlugin {
     fn build(&self, app: &mut App) {
         load::embed_strips(app);
-        app.init_resource::<RiverThreshold>()
-            .init_resource::<chunks::MapChunks>()
+        app.init_resource::<chunks::MapChunks>()
             .init_resource::<chunks::PaintedCells>()
             .init_resource::<chunks::FeatureClaims>()
             .init_resource::<MapPointer>()
@@ -55,7 +51,6 @@ impl Plugin for MapPlugin {
                     (
                         load::watch_tileset.run_if(resource_exists::<MapAssets>),
                         load::show_map_state.run_if(resource_exists_and_changed::<MapState>),
-                        river::set_threshold.run_if(resource_added::<MapTerrain>),
                         scalebar::build_scale_bar.run_if(resource_added::<MapTerrain>),
                         camera::place_camera.run_if(resource_exists::<Backdrop>),
                     ),
@@ -76,10 +71,6 @@ impl Plugin for MapPlugin {
                     chunks::stream_chunks
                         .run_if(resource_exists::<Backdrop>.and_then(load::tileset_is_ready)),
                     image::sync_backdrop_image.run_if(image::a_document_is_open),
-                    chunks::refill_chunks.run_if(
-                        resource_changed::<RiverThreshold>
-                            .and_then(backdrop::backdrop_is_the_terrain),
-                    ),
                     (chunks::repaint_grid_chunks, chunks::clear_painted_cells)
                         .chain()
                         .run_if(

@@ -38,12 +38,19 @@ pub const FOREST_FIELD: &str = "forest";
 /// The terrain field whose density decides farmland, read by name.
 pub const FARMLAND_FIELD: &str = "farmland";
 
+/// The terrain field saying where water lies, read by name: 0 is dry land, up to
+/// [`SEA_LEVEL`] a river or lake, and from it upward the sea.
+pub const WATER_FIELD: &str = "water";
+
+/// Where the `water` field's sea band starts.
+pub const SEA_LEVEL: f32 = 0.5;
+
 /// Tiles the strip holds.
 ///
 /// Every index [`TileKind::index`] can produce is below this, and every index below it
 /// is one [`TileKind::all`] lists — so the strip has no tile that cannot be drawn and no
 /// drawable tile missing from it.
-pub const TILE_COUNT: u16 = 9;
+pub const TILE_COUNT: u16 = 8;
 
 /// Cells along one edge of a chunk.
 pub const CHUNK_CELLS: u32 = 64;
@@ -71,7 +78,6 @@ pub enum TileKind {
     Mountain,
     Snow,
     Water,
-    River,
     City,
     Road,
 }
@@ -88,9 +94,8 @@ impl TileKind {
             Self::Mountain => 3,
             Self::Snow => 4,
             Self::Water => 5,
-            Self::River => 6,
-            Self::City => 7,
-            Self::Road => 8,
+            Self::City => 6,
+            Self::Road => 7,
         }
     }
 
@@ -106,7 +111,6 @@ impl TileKind {
             Self::Mountain,
             Self::Snow,
             Self::Water,
-            Self::River,
             Self::City,
             Self::Road,
         ]
@@ -361,16 +365,49 @@ impl HeightRamp {
     }
 }
 
+/// Whether, and how, water lies on a cell.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Wet {
+    #[default]
+    Dry,
+    /// A river or a lake, which a road may cross.
+    Fresh,
+    /// The sea, or water whose kind the terrain does not say.
+    Sea,
+}
+
+impl Wet {
+    /// What the `water` field's value says, or `None` where it is not a number.
+    pub fn of_field(value: f32) -> Option<Self> {
+        if !value.is_finite() {
+            return None;
+        }
+        Some(if value <= 0.0 {
+            Self::Dry
+        } else if value < SEA_LEVEL {
+            Self::Fresh
+        } else {
+            Self::Sea
+        })
+    }
+
+    /// What the water solve's depth says. It cannot tell a river from the sea, so any
+    /// depth is [`Wet::Sea`] and no road crosses it.
+    pub fn of_depth(depth: f32) -> Self {
+        if depth > 0.0 { Self::Sea } else { Self::Dry }
+    }
+
+    /// Whether any water lies here.
+    pub fn is_water(self) -> bool {
+        self != Self::Dry
+    }
+}
+
 /// Everything about one cell that decides what is drawn there.
-///
-/// `depth` is `Some` exactly when the water solve says water stands on the cell, so
-/// `depth.is_some()` is the water test — `watershed` defines `is_water` as a positive
-/// depth, and reading it back from the depth avoids asking twice.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct CellFacts {
     pub height: f32,
-    pub depth: Option<f32>,
-    pub accumulation: f32,
+    pub wet: Wet,
     /// The `forest` field's density here, or 0 on a terrain without one.
     pub forest: f32,
     /// The `farmland` field's density here, or 0 on a terrain without one.
@@ -382,9 +419,9 @@ pub struct CellFacts {
 }
 
 impl CellFacts {
-    /// Whether water stands on the cell.
+    /// Whether water lies on the cell.
     pub fn is_water(self) -> bool {
-        self.depth.is_some()
+        self.wet.is_water()
     }
 }
 
@@ -397,13 +434,12 @@ pub struct MapTile {
     pub shade: f32,
 }
 
-/// What the cell is drawn as when nothing is a river.
+/// What the terrain draws the cell as.
 ///
 /// Water first, then snow and mountain by height, then forest and farmland where their
-/// density passes [`DENSITY_THRESHOLD`], forest first, and grass otherwise. Never returns
-/// [`TileKind::River`], so a threshold move can choose between this and a river without
-/// reading the terrain again, and never a tile only a feature can claim.
-pub fn dry_kind(facts: CellFacts, ramp: HeightRamp) -> TileKind {
+/// density passes [`DENSITY_THRESHOLD`], forest first, and grass otherwise. Never a tile
+/// only a feature can claim.
+pub fn classify(facts: CellFacts, ramp: HeightRamp) -> TileKind {
     if facts.is_water() {
         return TileKind::Water;
     }
@@ -423,27 +459,14 @@ pub fn dry_kind(facts: CellFacts, ramp: HeightRamp) -> TileKind {
     TileKind::Grass
 }
 
-/// What the cell is drawn as, given what currently counts as a river.
-///
-/// A channel wins over everything but standing water, so the drainage stays readable
-/// through the woods and the mountains. The comparison is strictly greater, so a
-/// threshold of zero does not turn every cell — including every read off the edge of the
-/// terrain, which `watershed` reports as zero accumulation — into a river.
-pub fn classify(facts: CellFacts, ramp: HeightRamp, threshold: f32) -> TileKind {
-    if !facts.is_water() && facts.accumulation > threshold {
-        return TileKind::River;
-    }
-    dry_kind(facts, ramp)
-}
-
 /// How brightly the cell is lit, as a multiplier on the tile's own colours.
 ///
 /// Light comes from the north-west at a fixed angle; a slope facing it is brightened
 /// and one facing away darkened, by at most [`SHADE_STRENGTH`]. The rise is measured
 /// against the ramp's own relief step, so a terrain shades the same whether its heights
-/// are metres or kilometres. Standing water is never shaded — it has no slope to catch
-/// the light, and shading it would make the sea look like hills — and neither is
-/// anything on a ramp with no width.
+/// are metres or kilometres. Water is never shaded — it has no slope to catch the light,
+/// and shading it would make the sea look like hills — and neither is anything on a ramp
+/// with no width.
 pub fn shade(facts: CellFacts, ramp: HeightRamp) -> f32 {
     let step = ramp.relief_step();
     if facts.is_water() || step <= 0.0 {
@@ -487,103 +510,48 @@ fn lit(shade: f32) -> f32 {
     shade.clamp(1.0 - SHADE_STRENGTH, 1.0 + SHADE_STRENGTH)
 }
 
-/// What is kept beside a chunk so a threshold move need not read the terrain again.
+/// What a feature's claim needs to know about a cell after it has been drawn.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct CellCache {
-    /// The tile this cell takes when it is not a river.
-    pub dry: TileKind,
-    /// The shade [`CellCache::dry`] is drawn at, its density tint included.
-    pub dry_shade: f32,
-    /// The shade a river here is drawn at: the hillshade alone.
+    pub wet: Wet,
+    /// The hillshade alone, without a density tint.
     pub shade: f32,
-    /// The accumulation a threshold is compared against, or `None` on a cell that can
-    /// never be a river — standing water, or a cell a feature claimed, whatever the
-    /// threshold does.
-    pub river_accumulation: Option<f32>,
 }
 
-/// One chunk's worth of drawn cells, and enough beside them to re-choose their tiles.
+/// One chunk's worth of drawn cells.
 ///
 /// Both vectors are `CHUNK_CELLS * CHUNK_CELLS` long and indexed `row * CHUNK_CELLS +
-/// column` with **row zero at the bottom** — the tilemap's order, not the terrain's.
+/// column` with **row zero at the bottom** — the tilemap's order, not the document's.
 /// `None` is a cell outside the terrain, which is left undrawn so a terrain whose
 /// extent is not a whole number of chunks has a ragged edge rather than a wrapped one.
 #[derive(Debug, Clone)]
 pub struct ChunkTiles {
     pub tiles: Vec<Option<MapTile>>,
     pub cells: Vec<Option<CellCache>>,
-    /// The lowest and highest accumulation on this chunk's land, or `None` when it has
-    /// none — the test for whether a threshold move can change anything here.
-    pub land_accumulation: Option<(f32, f32)>,
 }
 
 impl ChunkTiles {
-    /// Whether moving the threshold from `from` to `to` can change any tile here.
-    ///
-    /// False for a chunk whose land accumulation lies entirely above or entirely below
-    /// both thresholds, which is most of a map most of the time.
-    pub fn affected_by(&self, from: f32, to: f32) -> bool {
-        let Some((low, high)) = self.land_accumulation else {
-            return false;
-        };
-        let (near, far) = if from <= to { (from, to) } else { (to, from) };
-        low <= far && high > near
-    }
-
-    /// Re-choose every tile against a new threshold, without touching the terrain.
-    ///
-    /// Returns whether anything actually changed, so an unchanged chunk is not marked
-    /// dirty and re-uploaded.
-    pub fn apply_threshold(&mut self, threshold: f32) -> bool {
-        let mut changed = false;
-        for (tile, cell) in self.tiles.iter_mut().zip(self.cells.iter()) {
-            let Some(cell) = cell else { continue };
-            let next = match cell.river_accumulation {
-                Some(accumulation) if accumulation > threshold => MapTile {
-                    kind: TileKind::River,
-                    shade: cell.shade,
-                },
-                _ => MapTile {
-                    kind: cell.dry,
-                    shade: cell.dry_shade,
-                },
-            };
-            if *tile != Some(next) {
-                *tile = Some(next);
-                changed = true;
-            }
-        }
-        changed
-    }
-
     /// Draw the cells `claims` holds for this chunk as the tile each one is claimed for.
     ///
-    /// A river keeps running through a city, so a city cell is still a river wherever the
-    /// threshold makes it one; a road cell is road whatever the threshold, the way a
-    /// bridge is. Standing water is left as it is under either, since a feature drawn
-    /// over the sea does not drain it.
-    pub fn claim(&mut self, claims: &[ClaimedCell], threshold: f32) {
+    /// Water runs through a city and is drawn over it. A road is drawn over a river or a
+    /// lake, the way a bridge is, but never over the sea.
+    pub fn claim(&mut self, claims: &[ClaimedCell]) {
         for claimed in claims {
             let slot = claimed.slot as usize;
-            let Some(Some(cell)) = self.cells.get_mut(slot) else {
+            let Some(Some(cell)) = self.cells.get(slot) else {
                 continue;
             };
-            if cell.dry == TileKind::Water {
-                continue;
-            }
-            cell.dry = claimed.kind;
-            cell.dry_shade = cell.shade;
-            if claimed.kind != TileKind::City {
-                cell.river_accumulation = None;
-            }
-            let kind = match cell.river_accumulation {
-                Some(accumulation) if accumulation > threshold => TileKind::River,
-                _ => claimed.kind,
+            let covers = match cell.wet {
+                Wet::Dry => true,
+                Wet::Fresh => claimed.kind == TileKind::Road,
+                Wet::Sea => false,
             };
-            self.tiles[slot] = Some(MapTile {
-                kind,
-                shade: cell.shade,
-            });
+            if covers {
+                self.tiles[slot] = Some(MapTile {
+                    kind: claimed.kind,
+                    shade: cell.shade,
+                });
+            }
         }
     }
 }
@@ -602,8 +570,6 @@ pub struct ClaimedCell {
 #[derive(Debug, Default)]
 pub struct ChunkScratch {
     height: Vec<f32>,
-    depth: Vec<f32>,
-    accumulation: Vec<f32>,
     inside: Vec<bool>,
 }
 
@@ -614,10 +580,6 @@ impl ChunkScratch {
         let cells = (APRON * APRON) as usize;
         self.height.clear();
         self.height.resize(cells, 0.0);
-        self.depth.clear();
-        self.depth.resize(cells, 0.0);
-        self.accumulation.clear();
-        self.accumulation.resize(cells, 0.0);
         self.inside.clear();
         self.inside.resize(cells, false);
     }
@@ -636,20 +598,31 @@ impl ChunkScratch {
     }
 }
 
+/// The raster row `watershed` stores a document row in.
+///
+/// A document's rows run top to bottom, north first, and a raster's row zero is its
+/// bottom — so document row `y` is raster row `height - 1 - y`. Every terrain read goes
+/// through this, and nothing else in the workspace flips a terrain row.
+pub fn raster_row(y: u32, height: u32) -> u32 {
+    height - 1 - y
+}
+
 /// The tiles of the chunk at `chunk_x, chunk_y`, in tilemap order.
 ///
-/// Reads the chunk's cells and the one-cell ring around them out of the terrain once,
-/// so no cell is asked for five times over. The terrain's rows run top to bottom and a
-/// chunk's run bottom to top, so this is where — and the only place where — a row is
-/// flipped. A chunk entirely off the terrain comes back all `None` rather than as an
-/// error; chunk coordinates are signed and a camera panned past the origin reaches
-/// them. The `forest` and `farmland` fields are read by name when the terrain has them.
+/// Reads the chunk's heights and the one-cell ring around them out of the terrain once,
+/// so no cell is asked for five times over. A document's rows run top to bottom and a
+/// chunk's run bottom to top, so this is where a document row is flipped into a chunk;
+/// the read from the terrain goes through [`raster_row`]. A chunk entirely off the
+/// terrain comes back all `None` rather than as an error; chunk coordinates are signed
+/// and a camera panned past the origin reaches them.
+///
+/// Water is the `water` field when the terrain has one and the water solve's depth when
+/// it does not. The `forest` and `farmland` fields are read by name when present.
 pub fn chunk_tiles(
     terrain: &Terrain,
     ramp: HeightRamp,
     chunk_x: i32,
     chunk_y: i32,
-    threshold: f32,
     scratch: &mut ChunkScratch,
 ) -> ChunkTiles {
     scratch.reset();
@@ -662,7 +635,9 @@ pub fn chunk_tiles(
     let field = terrain.field_with_role(FieldRole::Height);
     let forest = terrain.field(FOREST_FIELD);
     let farmland = terrain.field(FARMLAND_FIELD);
-    let water = terrain.water();
+    let water_field = terrain.field(WATER_FIELD);
+    let solve = terrain.water();
+    let raster = |x: i64, y: i64| (x as u32, raster_row(y as u32, terrain.height()));
 
     for row in -1..=side {
         for column in -1..=side {
@@ -670,21 +645,16 @@ pub fn chunk_tiles(
             if x < 0 || y < 0 || x >= width || y >= height_extent {
                 continue;
             }
-            let (x, y) = (x as u32, y as u32);
+            let (x, y) = raster(x, y);
             let index = ChunkScratch::at(row, column);
             scratch.inside[index] = true;
             scratch.height[index] = field.and_then(|f| f.value_at(x, y)).unwrap_or(0.0);
-            if let Some(water) = water {
-                scratch.depth[index] = water.depth_at(x, y).unwrap_or(0.0);
-                scratch.accumulation[index] = water.accumulation(x, y);
-            }
         }
     }
 
     let cells = (CHUNK_CELLS * CHUNK_CELLS) as usize;
-    let tiles = vec![None; cells];
+    let mut tiles = vec![None; cells];
     let mut caches = vec![None; cells];
-    let mut land_accumulation: Option<(f32, f32)> = None;
 
     for row in 0..side {
         for column in 0..side {
@@ -692,12 +662,9 @@ pub fn chunk_tiles(
             if !scratch.inside[index] {
                 continue;
             }
-            let (x, y) = ((origin_x + column) as u32, (origin_y + row) as u32);
+            let (x, y) = raster(origin_x + column, origin_y + row);
 
             let own = scratch.height[index];
-            let depth = scratch.depth[index];
-            let accumulation = scratch.accumulation[index];
-
             let east = scratch.height_at(row, column + 1, own);
             let west = scratch.height_at(row, column - 1, own);
             let north = scratch.height_at(row - 1, column, own);
@@ -706,10 +673,16 @@ pub fn chunk_tiles(
             let density = |view: Option<watershed::FieldView>| {
                 view.and_then(|f| f.value_at(x, y)).unwrap_or(0.0)
             };
+            let wet = match water_field {
+                Some(view) => view.value_at(x, y).and_then(Wet::of_field).unwrap_or_default(),
+                None => solve
+                    .and_then(|solve| solve.depth_at(x, y))
+                    .map(Wet::of_depth)
+                    .unwrap_or_default(),
+            };
             let facts = CellFacts {
                 height: own,
-                depth: (depth > 0.0).then_some(depth),
-                accumulation,
+                wet,
                 forest: density(forest),
                 farmland: density(farmland),
                 dz_east: (east - west) / 2.0,
@@ -717,63 +690,20 @@ pub fn chunk_tiles(
             };
 
             let hill = shade(facts, ramp);
-            let dry = dry_kind(facts, ramp);
-            let cache = CellCache {
-                dry,
-                dry_shade: lit(hill * density_tint(dry, facts)),
-                shade: hill,
-                river_accumulation: (!facts.is_water()).then_some(accumulation),
-            };
-            if cache.river_accumulation.is_some() {
-                land_accumulation = Some(match land_accumulation {
-                    Some((low, high)) => (low.min(accumulation), high.max(accumulation)),
-                    None => (accumulation, accumulation),
-                });
-            }
-
+            let kind = classify(facts, ramp);
             let slot = ((side - 1 - row) * side + column) as usize;
-            caches[slot] = Some(cache);
+            caches[slot] = Some(CellCache { wet, shade: hill });
+            tiles[slot] = Some(MapTile {
+                kind,
+                shade: lit(hill * density_tint(kind, facts)),
+            });
         }
     }
 
-    let mut chunk = ChunkTiles {
+    ChunkTiles {
         tiles,
         cells: caches,
-        land_accumulation,
-    };
-    chunk.apply_threshold(threshold);
-    chunk
-}
-
-/// The highest accumulation the terrain reaches, estimated from a strided sample.
-///
-/// Accumulation counts everything draining through a cell, so its size follows the
-/// terrain's and a compiled-in threshold range would be all-river on one terrain and
-/// all-dry on the next. Sampled rather than scanned: a terrain several thousand cells
-/// on a side has tens of millions of cells, and this runs while a window is open.
-/// `None` when the terrain has no water solve.
-pub fn accumulation_ceiling(terrain: &Terrain) -> Option<f32> {
-    const TARGET_SAMPLES: u32 = 256;
-
-    let water = terrain.water()?;
-    let (width, height) = (terrain.width(), terrain.height());
-    if width == 0 || height == 0 {
-        return None;
     }
-
-    let stride_x = (width / TARGET_SAMPLES).max(1);
-    let stride_y = (height / TARGET_SAMPLES).max(1);
-    let mut ceiling = 0.0f32;
-    let mut y = 0;
-    while y < height {
-        let mut x = 0;
-        while x < width {
-            ceiling = ceiling.max(water.accumulation(x, y));
-            x += stride_x;
-        }
-        y += stride_y;
-    }
-    Some(ceiling)
 }
 
 /// The grid tiles of the chunk at `chunk_x, chunk_y`, in tilemap order.

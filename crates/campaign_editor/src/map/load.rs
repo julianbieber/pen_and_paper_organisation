@@ -145,9 +145,6 @@ pub struct MapTerrain {
     pub width: u32,
     pub height: u32,
     pub ramp: HeightRamp,
-    /// The highest accumulation the terrain reaches, which is what the threshold
-    /// control spans. Zero on a terrain with no water solve.
-    pub accumulation_high: f32,
 }
 
 /// Reads the tileset sidecars, asks for the terrain and combat strips as array textures,
@@ -222,7 +219,6 @@ pub fn open_map(
         width: terrain.width(),
         height: terrain.height(),
         ramp,
-        accumulation_high: tiles::accumulation_ceiling(terrain).unwrap_or(0.0),
     });
     commands.insert_resource(Backdrop::terrain_after(
         terrain.width(),
