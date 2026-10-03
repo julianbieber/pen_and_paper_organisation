@@ -119,6 +119,10 @@ pub(super) enum Command {
         rename: Option<String>,
         started: bool,
     },
+    /// Types a roll into a token's row of the initiative list, or empties it with `None`.
+    Initiative { name: String, roll: Option<i32> },
+    /// Presses a token's row of the initiative list, selecting it on the map.
+    SelectToken(String),
     /// Sets the selected feature's rank, or clears it.
     ///
     /// Goes through the same [`Edit`] the panel's buttons build, so a scripted run cannot
@@ -306,6 +310,8 @@ impl Command {
                 TokenIntent::Delete => "delete-token",
                 _ => "clear-tokens",
             },
+            Self::Initiative { .. } => "initiative",
+            Self::SelectToken(_) => "select-token",
             Self::SetRank(_) => "rank",
             Self::SetReveal(_) => "reveal",
             Self::Zoom(_) => "zoom",
@@ -459,6 +465,28 @@ impl Command {
                 rename: None,
                 started: false,
             }),
+            "initiative" => {
+                let word = rest.first().ok_or("initiative needs a roll and a token's name")?;
+                let roll = match *word {
+                    "none" | "clear" => None,
+                    word => Some(
+                        word.parse()
+                            .map_err(|_| format!("{word} is not an initiative roll"))?,
+                    ),
+                };
+                let name = title_after(line, word);
+                if name.is_empty() {
+                    return Err("initiative needs a token's name".to_owned());
+                }
+                Ok(Self::Initiative { name, roll })
+            }
+            "select-token" => {
+                let name = title_after(line, "");
+                if name.is_empty() {
+                    return Err("select-token needs a token's name".to_owned());
+                }
+                Ok(Self::SelectToken(name))
+            }
             "rank" => Ok(Self::SetRank(match *rest.first().ok_or("rank needs a name")? {
                 "none" | "clear" => None,
                 word => Some(rank(word)?),
@@ -769,6 +797,35 @@ impl Command {
                     return Poll::Failed("no campaign is open".into());
                 };
                 fields.name.clone_from(name);
+                Poll::Done(json!({}))
+            }
+
+            Self::Initiative { name, roll } => {
+                let Some(mut maps) = world.get_resource_mut::<CombatMaps>() else {
+                    return Poll::Failed("no campaign is open".into());
+                };
+                let Some((tokens, _)) = maps.tokens_on_screen_mut() else {
+                    return Poll::Failed("no combat map is on screen".into());
+                };
+                match tokens.set_initiative(name, *roll) {
+                    Ok(_) => Poll::Done(json!({})),
+                    Err(problem) => Poll::Failed(problem.to_string()),
+                }
+            }
+
+            Self::SelectToken(name) => {
+                let known = world
+                    .get_resource::<CombatMaps>()
+                    .and_then(CombatMaps::tokens_on_screen)
+                    .is_some_and(|(tokens, _)| tokens.get(name).is_some());
+                if !known {
+                    return Poll::Failed(format!("no token on the map is called {name}"));
+                }
+                let Some(mut gesture) = world.get_resource_mut::<TokenGesture>() else {
+                    return Poll::Failed("no campaign is open".into());
+                };
+                gesture.drag = None;
+                gesture.selected = Some(name.clone());
                 Poll::Done(json!({}))
             }
 
@@ -1617,14 +1674,20 @@ fn tokens_topic(world: &World) -> Value {
                         "x": token.x(),
                         "y": token.y(),
                         "size": token.size(),
+                        "initiative": token.initiative(),
                     })
                 })
                 .collect()
         })
         .unwrap_or_default();
+    let order: Vec<&str> = maps
+        .tokens_on_screen()
+        .map(|(tokens, _)| tokens.in_initiative_order().into_iter().map(|token| token.name()).collect())
+        .unwrap_or_default();
     let gesture = world.get_resource::<TokenGesture>();
     let fields = world.get_resource::<TokenFields>();
     json!({
+        "order": order,
         "open": true,
         "on_screen": maps.on_screen().map(|document| document.content().name()),
         "tokens": tokens,
@@ -1770,6 +1833,9 @@ mod tests {
             ("rename-token chief", "rename-token"),
             ("delete-token", "delete-token"),
             ("clear-tokens", "clear-tokens"),
+            ("initiative 17 orc1", "initiative"),
+            ("initiative none Sir Bedivere", "initiative"),
+            ("select-token orc1", "select-token"),
             ("observe tokens", "observe"),
             ("rank city", "rank"),
             ("reveal here", "reveal"),
@@ -1802,7 +1868,7 @@ mod tests {
             "", "fly", "tool wobble", "kind wobble", "at 1", "at x y", "key wobble", "note",
             "note wobble", "note place Riverford", "label", "remote", "clone", "clone /tmp/origin",
             "open-combat", "token-size", "token-size 0", "token-size 5", "token-size big",
-            "rename-token",
+            "rename-token", "initiative", "initiative 3", "initiative d20 orc1", "select-token",
         ] {
             assert!(Command::parse(line).is_err(), "{line:?} should be refused");
         }

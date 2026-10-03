@@ -111,6 +111,12 @@ bare name is numbered one more than the highest number that name carries on the 
 name typed with its own number is placed as typed, and names are unique on a board. A combat
 map offers *Select* and *Token* beside the brushes: the token tool only places, and the select
 tool selects and drags.
+A token carries its initiative roll as session state too (2026-10-04):
+`Tokens::in_initiative_order` puts the highest roll first and the unrolled last, ties in
+placement order, and `features/initiative.rs` lists the tokens that way beside the *Combat
+maps* panel, a roll typed into each row and a press on a row selecting that token on the
+map. A row is kept while its token stays on the board, so a roll being typed keeps its
+focus as the row moves.
 Nothing about dungeons changes for the GM, and the dungeon's generated strip stays
 generated. The plan, with its settled decisions and the assumptions it makes on its own, is at
 `~/fun_repos/hobby-mimisbrunnr/notes/pen_and_paper_organisation/planning/combat_map/plan-2026-09-13-combat-map.md`.

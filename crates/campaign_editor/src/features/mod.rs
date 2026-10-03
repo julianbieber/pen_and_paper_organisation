@@ -37,6 +37,8 @@ pub mod pens;
 pub mod prompt;
 /// Drawing the features in view, the draft, the selection and its handles.
 pub mod render;
+/// The tokens on the combat map on screen in the order they act, and their rolls.
+pub mod initiative;
 /// The measurement in hand, and the figures shown for it.
 pub mod ruler;
 /// What is selected, and carrying a drag until it lands as one Edit.
@@ -100,6 +102,7 @@ impl Plugin for FeaturesPlugin {
                         ruler::build_ruler_readout,
                         combat::build_combat_panel,
                         token::build_token_panel,
+                        initiative::build_initiative_panel,
                     )
                         .run_if(resource_added::<WorldDoc>),
                     crate::notes::finish_note_job
@@ -183,6 +186,9 @@ impl Plugin for FeaturesPlugin {
                                     .or_else(resource_changed::<token::TokenFields>)
                                     .or_else(resource_changed::<token::TokenGesture>),
                             ),
+                        ),
+                        (initiative::show_initiative, initiative::seed_initiative_rolls).run_if(
+                            any_with_component::<initiative::InitiativePanel>,
                         ),
                     ),
                     (

@@ -54,6 +54,10 @@ pub enum TokenProblem {
     /// A base whose next number does not fit in a `u32`.
     #[error("there is no number left to give another {base}")]
     OutOfNumbers { base: String },
+
+    /// An initiative roll that is not a whole number.
+    #[error("{typed:?} is not an initiative roll; type a whole number")]
+    BadInitiative { typed: String },
 }
 
 /// One named token, anchored on its top-left cell and covering `size × size` cells.
@@ -63,6 +67,7 @@ pub struct Token {
     x: u32,
     y: u32,
     size: u8,
+    initiative: Option<i32>,
 }
 
 impl Token {
@@ -84,6 +89,11 @@ impl Token {
     /// The cells along each side it covers.
     pub fn size(&self) -> u8 {
         self.size
+    }
+
+    /// The initiative it rolled, or `None` before it has rolled.
+    pub fn initiative(&self) -> Option<i32> {
+        self.initiative
     }
 
     /// Whether it covers the cell `(x, y)`.
@@ -154,6 +164,21 @@ pub fn next_name<'a>(typed: &str, taken: impl IntoIterator<Item = &'a str>) -> R
     }
 }
 
+/// The initiative roll `typed` names: `None` when it is empty or only whitespace, the
+/// whole number it holds otherwise.
+///
+/// Refuses [`TokenProblem::BadInitiative`] for anything else.
+pub fn initiative_of(typed: &str) -> Result<Option<i32>, TokenProblem> {
+    let typed = typed.trim();
+    if typed.is_empty() {
+        return Ok(None);
+    }
+    typed
+        .parse()
+        .map(Some)
+        .map_err(|_| TokenProblem::BadInitiative { typed: typed.to_owned() })
+}
+
 /// The top-left cell of a token `size` cells a side pressed at the cell `at`, on a map
 /// `width` by `height` cells.
 ///
@@ -203,7 +228,13 @@ impl Tokens {
         }
         let name = next_name(typed, self.tokens.iter().map(Token::name))?;
         let (x, y) = anchor(at, size, width, height);
-        self.tokens.push(Token { name, x, y, size });
+        self.tokens.push(Token {
+            name,
+            x,
+            y,
+            size,
+            initiative: None,
+        });
         Ok(self.tokens.last().expect("a token was just pushed"))
     }
 
@@ -259,6 +290,28 @@ impl Tokens {
         let token = self.find_mut(from).expect("the token was just found");
         to.clone_into(&mut token.name);
         Ok(token.name.clone())
+    }
+
+    /// Set the initiative the token called `name` rolled, or forget it with `None`, and say
+    /// whether it changed.
+    ///
+    /// Refuses [`TokenProblem::Unknown`], having changed nothing.
+    pub fn set_initiative(&mut self, name: &str, roll: Option<i32>) -> Result<bool, TokenProblem> {
+        let Some(token) = self.find_mut(name) else {
+            return Err(TokenProblem::Unknown { name: name.to_owned() });
+        };
+        let changed = token.initiative != roll;
+        token.initiative = roll;
+        Ok(changed)
+    }
+
+    /// Every token in the order it acts: the highest initiative first, then every token
+    /// that has not rolled. Tokens that tie, and tokens that have not rolled, keep the
+    /// order they were placed in.
+    pub fn in_initiative_order(&self) -> Vec<&Token> {
+        let mut order: Vec<&Token> = self.tokens.iter().collect();
+        order.sort_by_key(|token| std::cmp::Reverse(token.initiative.map(i64::from).unwrap_or(i64::MIN)));
+        order
     }
 
     /// Take the token called `name` off the map and hand it back.
