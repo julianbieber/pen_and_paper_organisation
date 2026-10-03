@@ -18,14 +18,20 @@ campaign. The terrain draws as a tile map (#2): `campaign::tiles` decides every 
 opens up as the map zooms in (#5): `campaign::style`, `campaign::lod` and `campaign::label`
 decide it, `campaign_editor/src/features/render.rs` draws it. Notes are made from templates
 and linked to features (#6): `campaign::notebook` owns the whole `zk` dependency,
-`campaign_editor/src/notes` runs it off the frame. Selecting a place shows what references
+`campaign_editor/src/notes` runs it off the frame. Selecting a place asks what references
 it (#7): the same module builds the tag and the `zk list`, `notes/references.rs` caches an
 answer per tag behind one query at a time, and `notes/watch.rs` drops the cache when the
-notebook changes underneath us. A row shows the words around the tag in the note's own
-text, through a second, matching `zk list` (#19), rather than the note's opening line.
+notebook changes underneath us. Each answer carries the words around the tag in the note's
+own text, through a second, matching `zk list` (#19), rather than the note's opening line.
+**There is no selection panel and no notes panel** (2026-10-03): both were dropped until
+something replaces them, so a feature's label, kind, rank, reveal scale, parent and note
+are set only through `pnp-ctl`, and the reference answers reach only the control socket.
+With the select tool in hand, Enter opens the selected entry's dungeon and Backspace goes
+back to the world map (`features/keys.rs`).
 Distances are measured at campaign scale (#10):
 `campaign::measure` says what one cell is worth and rounds every figure, `map/scalebar.rs`
-draws the bar, `map/scale.rs` is where the GM sets the scale and the party's pace, and
+draws the bar — the world map's scale is `campaign.ron`'s, edited by hand since the panel
+that set it was dropped (2026-10-03) — and
 `features/ruler.rs` owns the measure tool. Dungeons are authored on a square tile grid (#8):
 `campaign::grid` and `campaign::brush` own the grid and the four brushes,
 `campaign_editor/src/document.rs` holds the open document and the parked ones, and
@@ -56,12 +62,11 @@ path field in the dialog has a *Browse…* beside it (#28): `crates/campaign/src
 decides where a walk starts, what one directory lists (hidden directories dropped, capped
 at `MAX_LISTED`) and what "up" is, and `crates/campaign_editor/src/picker.rs` is the
 feathers sheet, reading every directory on the IO pool. A campaign can be closed and
-another opened without quitting `pnp` (#29): *Close campaign* and `pnp-ctl open`/`close`
-both go through the unsaved guard in `features/prompt.rs`, `crates/campaign_editor/src/session.rs`
+another opened without quitting `pnp` (#29): `pnp-ctl open`/`close` go through the unsaved guard in `features/prompt.rs`, `crates/campaign_editor/src/session.rs`
 holds the one teardown list every resource and root a campaign brings is named on, and the
 window title comes from `campaign::title`.
 A campaign syncs with its remote in one action (#30): `campaign::repo::Repo::sync` is the
-whole git sequence, `crates/campaign_editor/src/sync.rs` is the one job slot, the panel
+whole git sequence, `crates/campaign_editor/src/sync.rs` is the one job slot
 and the reload, and `WorldDoc::reload_from_disk` in `crates/campaign_editor/src/document.rs`
 replaces a document a pull touched.
 A campaign arrives from a remote through the dialog's *Clone* form (#31):
@@ -104,8 +109,14 @@ tokens beside its document — which is what keeps them while it is parked — a
 `features/token.rs` owns the placing, the drag, the token panel and the three token pens. A
 bare name is numbered one more than the highest number that name carries on the board, a
 name typed with its own number is placed as typed, and names are unique on a board. A combat
-map offers *Select* and *Token* beside *Paint*: the token tool only places, and the select
+map offers *Select* and *Token* beside the brushes: the token tool only places, and the select
 tool selects and drags.
+A token carries its initiative roll as session state too (2026-10-04):
+`Tokens::in_initiative_order` puts the highest roll first and the unrolled last, ties in
+placement order, and `features/initiative.rs` lists the tokens that way beside the *Combat
+maps* panel, a roll typed into each row and a press on a row selecting that token on the
+map. A row is kept while its token stays on the board, so a roll being typed keeps its
+focus as the row moves.
 Nothing about dungeons changes for the GM, and the dungeon's generated strip stays
 generated. The plan, with its settled decisions and the assumptions it makes on its own, is at
 `~/fun_repos/hobby-mimisbrunnr/notes/pen_and_paper_organisation/planning/combat_map/plan-2026-09-13-combat-map.md`.
@@ -119,12 +130,14 @@ reads instead of re-deriving.
 
 ## The four rules everything else follows from
 
-**Terrain gives landform and water. Everything else is a GM decision.** The imported
-terrain is height plus a water solve, and that is all it is relied on for. A forest, a
-marsh, a border, a road, a city is something the GM drew — a feature, not a field the
-terrain happened to carry. So the backdrop is deliberately neutral: no biome tinting, no
-colour derived from moisture or temperature, nothing that would fight the regions painted
-on top of it.
+**Terrain gives landform, water, forest and farmland. Everything else is a GM decision.**
+The imported terrain is height, water and — when the export carries them — the `forest`
+and `farmland` density fields, read by name. Water is the export's own `water` field when
+it has one and the water solve's depth when it does not; nothing here derives a river. A marsh, a border, a road, a city is
+something the GM drew — a feature, not a field the terrain happened to carry. No colour is
+derived from moisture or temperature. A settlement polygon and a road polyline on the world
+map also claim the terrain cells under them for a city or a road tile (`campaign::claims`),
+so the GM's own drawing is what puts a city on the backdrop.
 
 `watershed` also cannot re-bake from a loaded `Terrain` by design, so `terrain/` is
 immutable here and the authored content lives in separate files beside it. Nothing in this
@@ -152,7 +165,7 @@ extending `Edit`.
 ## What one cell is worth
 
 **`campaign::measure` answers it, and every figure a GM reads comes from there** (#10):
-the scale bar, the ruler, the selection panel's length line and image calibration are all
+the scale bar, the ruler and image calibration are all
 handed the same `CellWorth`, so a distance typed into a calibration and one measured with
 the ruler cannot disagree. `campaign_editor/src/map/scalebar.rs` owns a node's width,
 `features/ruler.rs` owns the clicks, and neither chooses a figure.
@@ -162,11 +175,14 @@ campaign's own unit is, and a cell of a dungeon this build creates is exactly fi
 (`DEFAULT_METRES_PER_CELL` is 1.524). Every other document uses `campaign.ron`'s
 `units_per_cell` and `unit` — which before #10 were read by nothing at all, so the world
 map silently measured one unit per cell.
+A combat map is always five feet to the cell (`measure::worth_of_combat_map`), whatever
+scale its stored grid carries.
 
-**A dungeon carries no travel time.** A pace in days says nothing about a corridor, so
-`CellWorth::travelled` is false there and every duration is absent rather than absurd.
-That means changing `campaign.ron`'s unit does *not* change a figure inside a dungeon,
-which amends #10's fourth acceptance criterion.
+**The editor shows no travel time** (2026-10-03): the pace slider is gone and the ruler
+measures at `ruler::NO_PACE`, so every duration `campaign::measure` could give is absent.
+`campaign::measure` still computes durations for a pace it is handed. Changing
+`campaign.ron`'s unit does *not* change a figure inside a dungeon, which amends #10's
+fourth acceptance criterion.
 
 **The bar changes unit as the map zooms.** A figure below one steps down to a smaller unit
 of the same family, so a kilometre campaign zoomed into a city reads in metres. That needs
@@ -211,7 +227,7 @@ checkable without a window and there is always exactly one place to come back to
 
 **A combat map is not a `World`.** It lives in `CombatMaps`, not `WorldDoc`, and is drawn on
 `BackdropSource::Combat`, the third backdrop. It sits over whatever `WorldDoc` has on screen
-— the world map or a dungeon — which is untouched until *Back to map* returns to it, so
+— the world map or a dungeon — which is untouched until *Back* returns to it, so
 every system that draws or authors the world document checks `CombatMaps` first, and
 entering or leaving a dungeon is refused while a combat map is on screen.
 
@@ -241,7 +257,15 @@ elsewhere tears any of it down on its own.
 that actually change and each of them once. That is what makes it a single press of undo
 however many cells it covers, and what makes its inverse exact. The four brushes and the
 tile vocabulary live in `campaign` and are tested without a GPU; `features/paint.rs` owns
-only the gesture.
+only the gesture. While the button is held the stroke is drawn as a `StrokePreview` laid
+over the chunks by `map::chunks::draw_stroke_preview` — never over the document — so
+painting follows the mouse without an edit per frame (2026-10-03).
+
+**The tool strip is grouped** (2026-10-03): on a combat map, labelled rows for the tools,
+the brushes and the tiles by kind. There is no *Paint* button; choosing a brush is choosing
+the paint tool. The camera zooms in to `camera::CLOSEST_CELLS_ACROSS` cells across, not one
+chunk, and a backdrop smaller than the window can still be panned, with the camera kept
+over it.
 
 Tiles are written **run-length encoded**: one variant name per cell would put a middling
 grid over `MAX_WORLD_BYTES`, and a document that paints happily and can never be saved is
@@ -397,6 +421,11 @@ offset is unavailable in a multithreaded process on Linux. `stamp_of_ident` and
 campaign directory at once. Authoring is paused while one runs — the save has to land
 before a pull could replace what it saved — but the map keeps drawing, since only
 `authoring_is_live` is gated on it, not the camera or the chunk stream.
+The *Close campaign* button was dropped too (2026-10-03): a campaign is closed with
+`pnp-ctl close` or by quitting.
+The map shows no sync controls (2026-10-03): the *Sync* button, the Remote field and *Set
+remote* were dropped, so a sync is `pnp-ctl sync` or git itself, and `origin` is set with
+`pnp-ctl remote <url>` or git.
 
 **A document a pull touched is replaced, not edited.** `WorldDoc::reload_from_disk` in
 `crates/campaign_editor/src/document.rs` loads it fresh and clears its undo history — an
@@ -460,27 +489,39 @@ SSH passphrase or host-key question is not covered by this and can still hold it
 | `FieldView::value_at(x, y)` / `sample(x, y)` | a cell, or interpolated; categorical fields snap to nearest |
 | `terrain.water()` → `Option<WaterView>` | `is_water`, `depth_at`, `accumulation`, `channel_at(x, y, threshold)`, `flow_at`, `lakes` |
 
-**Only `Height` and the water solve are read.** `FieldRole` is `Height`, `Moisture`,
-`Custom` — there is no biome or temperature role, and the crate states a `Custom` field
-never resolves by role. A terrain may carry such fields; this tool does not colour by
-them, because that is the GM's decision to draw (see the first rule above).
+**`Height` and the `water`, `forest` and `farmland` fields are read**, and the water
+solve's depth only on a terrain with no `water` field. `FieldRole` is `Height`,
+`Moisture`, `Custom` — the crate states a `Custom` field never resolves by role, so those
+three are found with `terrain.field(name)`. Any may be missing; that cell simply has no
+forest or farmland, and a terrain with neither a `water` field nor a solve has no water.
+No other field is read.
+
+**A raster's row zero is its bottom.** `watershed` stores rows south first and its editor
+flips them on screen; a document's row zero is its top. `tiles::raster_row` turns one into
+the other and every terrain read goes through it — reading a raster row as a document row
+draws the whole map upside down against the terrain editor (2026-10-03).
+
+**The `water` field is banded** (Veyrath's `water.wesl` says so): 0 is dry land, below
+`SEA_LEVEL` (0.5) a river or lake, and from it up the sea. All water draws as one tile. A
+river runs through a city's claimed cells and is drawn over them; a road is drawn over a
+river or lake, as a bridge, but never over the sea. The solve's depth cannot tell a river
+from the sea, so on a terrain without the field no road crosses water. The accumulation
+threshold and the river tile were dropped (2026-10-03): rivers are authored in the
+terrain, not derived from flow.
 
 Everything is fallible. `water()` is `None` on a terrain with no solve, every lookup
 returns `Option`, and **a terrain with only a height field and no water must still
 render.** A terrain with no height field is the one case worth refusing outright.
 
-Rivers are `accumulation` above a threshold — that threshold is the one control deciding
-whether the map reads as a drainage basin or a puddle, so it is adjustable at runtime.
-Compare with `>`, never `WaterView::channel_at`, which is `>=`: `accumulation` answers
-`0.0` off the edge of the terrain, so `>=` at a threshold of zero makes everything a river.
-
 Worked example: `~/fun_repos/watershed/crates/watershed/examples/load_terrain.rs`.
 
 ## How the terrain is drawn
 
-**Hand-drawn pixel-art tiles, not a procedural ramp.** Height picks one of `LAND_BANDS`
-tiles, the water solve picks water, river and coastline tiles, and relief comes from a
-per-tile hillshade **tint** rather than from tiles of its own — so slope costs no art.
+**Hand-drawn pixel-art tiles, not a procedural ramp.** Water first, then snow and mountain at `SNOW_LINE` and `MOUNTAIN_LINE` of the height ramp,
+then forest and farmland where their density passes `DENSITY_THRESHOLD` (0.5), forest
+first, and grass otherwise. Relief comes from a per-tile hillshade **tint** rather than
+from tiles of its own — so slope costs no art — and forest and farmland are tinted darker
+the denser they are. A city or road a feature claims overrides any land tile.
 
 The renderer is bevy's own `bevy_sprite_render::tilemap_chunk`: one `TilemapChunk` entity
 per `CHUNK_CELLS`-square block of terrain cells, one draw call each, streamed so only what
@@ -501,24 +542,24 @@ map* with the reason rather than making the map unavailable.
 
 **The terrain tileset is drawn by hand in `bevy_sprite_editor`** (`~/fun_repos/bevy_sprite_editor`)
 and lives at `crates/campaign_editor/assets/terrain_tiles.png` with its
-`.atlas.json` sidecar. That tool only ever grows an atlas rightwards, so the file is a
-**single row** of square tiles, row-major over the whole image. Bevy loads that strip
+`.atlas.json` sidecar, 8x8 pixels to the tile. **Both strips are compiled into the binary**
+(`map::load::TERRAIN_STRIP`, `COMBAT_STRIP`, served from `embedded://pnp/`), so an
+installed `pnp` has its tiles wherever it runs; a redraw takes effect on the next build.
+That tool only ever grows an atlas rightwards, so the file is a **single row** of square tiles, row-major over the whole image. Bevy loads that strip
 straight into the array texture the tilemap material wants, via
 `ImageArrayLayout::GridCount { columns, rows: 1 }` — which walks tiles row-major, so
 **a tile's column is its array layer is its index**. Nothing here ever writes either file.
 
 The strip's columns are listed on `TileKind` in `crates/campaign/src/tiles.rs`, which is
 also the only place a tile number is written. **A redraw that reorders the strip renders
-happily and wrongly**, so the order is the contract: 6 land bands low to high, shallow
-water, deep water, river, then 15 coastline tiles indexed by which of a cell's four
-neighbours are water (N, E, S, W from the low bit). There is no tile for "no wet
-neighbour" — that cell is a band, not a coast — so the coastline tiles start at mask 1
-and `TILE_COUNT` is 24, not 25.
+happily and wrongly**, so the order is the contract: grass, farmland, forest, mountain,
+snow, water, city, road — `TILE_COUNT` is 8.
 
 **Every decision lives in `crates/campaign`** — which tile, which cells a chunk covers,
 where the terrain's rows land — and is tested without a GPU. `crates/campaign_editor/map`
-owns only ECS and pixels. A terrain's rows run top to bottom and a tilemap chunk's run
+owns only ECS and pixels. A document's rows run top to bottom and a tilemap chunk's run
 bottom to top; that flip is written once, in `map::view`, and everything goes through it.
+The raster flip is a different one and lives in `tiles::raster_row`.
 
 ## How features are styled
 

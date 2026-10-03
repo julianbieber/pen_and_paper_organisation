@@ -137,13 +137,21 @@ impl AtlasMeta {
                 source,
             }
         })?;
-        let meta: Self = serde_json::from_str(&text).map_err(|error| {
+        Self::parse(&text, &path, tiles)
+    }
+
+    /// A sidecar's text, checked exactly as [`AtlasMeta::read`] checks the file it
+    /// reads; `path` only names the sidecar in an error.
+    ///
+    /// For a strip compiled into the binary, which has text and no file.
+    pub fn parse(text: &str, path: &Path, tiles: u16) -> Result<Self, AtlasError> {
+        let meta: Self = serde_json::from_str(text).map_err(|error| {
             AtlasError::SidecarMalformed {
-                path: path.clone(),
+                path: path.to_path_buf(),
                 message: error.to_string(),
             }
         })?;
-        meta.check(&path, tiles)?;
+        meta.check(path, tiles)?;
         Ok(meta)
     }
 

@@ -1,5 +1,4 @@
-//! Syncing the open campaign with its remote from inside the editor, and the panel that
-//! asks for it.
+//! Syncing the open campaign with its remote from inside the editor.
 //!
 //! One job slot for every git process this starts — a sync, reading `origin`, setting
 //! it — so no two ever touch the campaign directory at once. Authoring is paused while a
@@ -7,14 +6,8 @@
 //! the save and a reload that would replace it; the map keeps drawing throughout.
 
 use bevy::ecs::system::SystemParam;
-use bevy::feathers::controls::{FeathersButton, FeathersTextInput, FeathersTextInputContainer};
-use bevy::feathers::theme::ThemedText;
-use bevy::input_focus::InputFocus;
 use bevy::prelude::*;
 use bevy::tasks::{IoTaskPool, Task, block_on, futures_lite::future};
-use bevy::text::{EditableText, TextEdit, TextEditChange};
-use bevy::ui::InteractionDisabled;
-use bevy::ui_widgets::Activate;
 use campaign::repo::{self, GitError, RemoteOutcome, Repo, Synced};
 use campaign::SystemGit;
 
@@ -26,23 +19,7 @@ use crate::map::camera::MapCamera;
 use crate::map::load::MapTerrain;
 use crate::map::view::MapView;
 use crate::notes::NoteJob;
-use crate::{CampaignChrome, EditorSet, OpenCampaign, StatusMessage};
-
-/// The field the campaign's remote is typed into.
-#[derive(Component, Default, Clone)]
-pub struct RemoteField;
-
-/// The button that starts a sync.
-#[derive(Component, Default, Clone)]
-pub struct SyncButton;
-
-/// The button that sets `origin` from [`SyncFields::remote`].
-#[derive(Component, Default, Clone)]
-pub struct SetRemoteButton;
-
-/// The panel's root.
-#[derive(Component, Default, Clone)]
-pub struct SyncPanel;
+use crate::{EditorSet, OpenCampaign, StatusMessage};
 
 enum GitWork {
     Sync(Result<Synced, GitError>),
@@ -93,27 +70,16 @@ impl SyncJob {
     }
 }
 
-/// What has been typed into the Remote field but not yet landed.
-#[derive(Resource, Debug, Default)]
-pub struct SyncFields {
-    pub remote: String,
-}
-
 /// Everything that syncs the open campaign with its remote.
 pub struct SyncPlugin;
 
 impl Plugin for SyncPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<SyncJob>()
-            .init_resource::<SyncFields>()
             .add_systems(
                 Update,
-                (
-                    build_sync_panel.run_if(resource_added::<WorldDoc>),
-                    read_origin.run_if(resource_exists::<OpenCampaign>),
-                    commit_remote.run_if(resource_exists::<OpenCampaign>),
-                    show_sync_panel.run_if(resource_exists_and_changed::<SyncJob>),
-                )
+                read_origin
+                    .run_if(resource_exists::<OpenCampaign>)
                     .after(EditorSet::Authoring),
             );
     }
@@ -122,7 +88,7 @@ impl Plugin for SyncPlugin {
 /// Whether a git job is running, without marking the resource changed.
 ///
 /// A `ResMut` here would mark [`SyncJob`] changed every frame a job is in flight, which
-/// would defeat [`show_sync_panel`]'s change-driven redraw, for the reason
+/// would make "changed" useless as the signal that a job landed, for the reason
 /// [`crate::notes::a_note_job_is_running`] is written the same way.
 pub fn a_git_job_is_running(job: Res<SyncJob>) -> bool {
     job.busy()
@@ -179,7 +145,7 @@ pub fn start_sync(
     true
 }
 
-/// Set `origin` to what [`SyncFields::remote`] holds.
+/// Set `origin` to `url`.
 ///
 /// Refuses while a job is running, once `origin` is already set — the issue's "sets
 /// `origin` when there is none" — or on [`repo::remote_refusal`]. Returns whether it
@@ -187,7 +153,7 @@ pub fn start_sync(
 pub fn start_set_remote(
     job: &mut SyncJob,
     campaign: &OpenCampaign,
-    fields: &SyncFields,
+    url: &str,
     status: &mut StatusMessage,
 ) -> bool {
     if job.busy() {
@@ -198,7 +164,7 @@ pub fn start_set_remote(
         status.say(format!("origin is already set to {origin}"));
         return false;
     }
-    let url = fields.remote.trim().to_owned();
+    let url = url.trim().to_owned();
     if let Some(reason) = repo::remote_refusal(&url) {
         status.say(reason);
         return false;
@@ -232,14 +198,13 @@ pub(crate) struct AuthoringReset<'w> {
     stroking: ResMut<'w, crate::features::paint::Stroking>,
     placing: ResMut<'w, crate::features::image::Placing>,
     ruler: ResMut<'w, crate::features::ruler::Ruler>,
-    pending: ResMut<'w, crate::features::panel::PendingLabel>,
     tokens: ResMut<'w, crate::features::token::TokenGesture>,
     asking: ResMut<'w, Asking>,
 }
 
 impl AuthoringReset<'_> {
     /// Clear the selection, cancel a drag and an image placement, abandon a draft and a
-    /// stroke, clear the measurement, the pending label and the token selection and drag, and
+    /// stroke, clear the measurement and the token selection and drag, and
     /// settle any question.
     pub(crate) fn clear(&mut self) {
         self.selection.clear();
@@ -248,8 +213,6 @@ impl AuthoringReset<'_> {
         self.stroking.abandon();
         self.placing.cancel();
         self.ruler.clear();
-        self.pending.feature = None;
-        self.pending.text.clear();
         self.tokens.clear();
         self.asking.settle();
     }
@@ -259,8 +222,7 @@ impl AuthoringReset<'_> {
 ///
 /// Polls through `bypass_change_detection`, as
 /// [`crate::notes::finish_note_job`] does, so a job in flight does not mark [`SyncJob`]
-/// changed every frame; [`SyncJob::set_changed`] is called once it lands, which is what
-/// wakes [`show_sync_panel`]. When a sync's reload replaces the document on screen, it
+/// changed every frame; it is marked changed once, when the job lands. When a sync's reload replaces the document on screen, it
 /// clears the same authoring state [`crate::features::dungeon::switch_document`] clears
 /// on a document switch — a reload replaces the document just as thoroughly. While a combat
 /// map is on screen the backdrop is left as it is, and is set from the reloaded document
@@ -274,8 +236,6 @@ pub fn land_git_job(
     mut reset: AuthoringReset,
     mut combat: Option<ResMut<crate::combat::CombatMaps>>,
     camera: Single<(&Transform, &Projection), With<MapCamera>>,
-    mut fields: Query<&mut EditableText, With<RemoteField>>,
-    mut sync_fields: ResMut<SyncFields>,
     mut status: ResMut<StatusMessage>,
 ) {
     let bypassed = job.bypass_change_detection();
@@ -333,17 +293,7 @@ pub fn land_git_job(
                 ..Default::default()
             });
         }
-        GitWork::RemoteRead(Ok(origin)) => {
-            if let Some(url) = &origin {
-                sync_fields.remote.clone_from(url);
-                for mut text in fields.iter_mut() {
-                    text.queue_edit(TextEdit::SelectAll);
-                    text.queue_edit(TextEdit::Backspace);
-                    text.queue_edit(TextEdit::Insert(url.as_str().into()));
-                }
-            }
-            job.origin = origin;
-        }
+        GitWork::RemoteRead(Ok(origin)) => job.origin = origin,
         GitWork::RemoteRead(Err(error)) => warn!("{error}"),
         GitWork::RemoteSet(url, Ok(())) => {
             status.say(format!("origin is now {url}"));
@@ -364,130 +314,6 @@ fn remote_label(remote: &RemoteOutcome) -> &'static str {
         RemoteOutcome::Pushed => "pushed",
         RemoteOutcome::Conflict { .. } => "conflict",
         RemoteOutcome::Refused { .. } => "refused",
-    }
-}
-
-fn commit_remote(
-    keys: Res<ButtonInput<KeyCode>>,
-    focus: Res<InputFocus>,
-    typed_in: Query<(), With<RemoteField>>,
-    mut job: ResMut<SyncJob>,
-    campaign: Res<OpenCampaign>,
-    fields: Res<SyncFields>,
-    mut status: ResMut<StatusMessage>,
-) {
-    if !keys.just_pressed(KeyCode::Enter) && !keys.just_pressed(KeyCode::NumpadEnter) {
-        return;
-    }
-    let Some(entity) = focus.get() else {
-        return;
-    };
-    if !typed_in.contains(entity) {
-        return;
-    }
-    start_set_remote(&mut job, &campaign, &fields, &mut status);
-}
-
-fn build_sync_panel(mut commands: Commands) {
-    commands.spawn_scene(panel());
-}
-
-fn show_sync_panel(
-    mut commands: Commands,
-    job: Res<SyncJob>,
-    sync_buttons: Query<(Entity, Has<InteractionDisabled>), With<SyncButton>>,
-    remote_buttons: Query<(Entity, Has<InteractionDisabled>), With<SetRemoteButton>>,
-) {
-    toggle(&mut commands, sync_buttons.iter(), job.busy());
-    toggle(&mut commands, remote_buttons.iter(), job.busy() || job.origin.is_some());
-}
-
-fn toggle(commands: &mut Commands, buttons: impl Iterator<Item = (Entity, bool)>, wanted: bool) {
-    for (entity, disabled) in buttons {
-        if disabled == wanted {
-            continue;
-        }
-        if wanted {
-            commands.entity(entity).insert(InteractionDisabled);
-        } else {
-            commands.entity(entity).remove::<InteractionDisabled>();
-        }
-    }
-}
-
-fn panel() -> impl Scene {
-    bsn! {
-        Node {
-            position_type: PositionType::Absolute,
-            top: px(52),
-            left: percent(50),
-            flex_direction: FlexDirection::Row,
-            align_items: AlignItems::Center,
-            column_gap: px(8),
-        }
-        UiTransform { translation: {Val2::new(Val::Percent(-50.0), Val::ZERO)} }
-        CampaignChrome
-        SyncPanel
-        Children [
-            sync_button(),
-            (Text("Remote") ThemedText),
-            (
-                @FeathersTextInputContainer
-                Node { width: px(220) }
-                Children [
-                    (
-                        @FeathersTextInput
-                        RemoteField
-                        on(|change: On<TextEditChange>,
-                            texts: Query<&EditableText>,
-                            mut fields: ResMut<SyncFields>| {
-                            if let Ok(text) = texts.get(change.event_target()) {
-                                fields.remote = text.value().to_string();
-                            }
-                        })
-                    )
-                ]
-            ),
-            set_remote_button()
-        ]
-    }
-}
-
-fn sync_button() -> impl Scene {
-    bsn! {
-        @FeathersButton {
-            @caption: bsn! { Text("Sync") ThemedText },
-        }
-        SyncButton
-        on(|_: On<Activate>,
-            mut job: ResMut<SyncJob>,
-            mut doc: ResMut<WorldDoc>,
-            campaign: Res<OpenCampaign>,
-            notes: Res<NoteJob>,
-            asking: Res<Asking>,
-            mut status: ResMut<StatusMessage>,
-            mut focus: ResMut<InputFocus>| {
-            start_sync(&mut job, &mut doc, &campaign, &notes, &asking, &mut status);
-            focus.clear();
-        })
-    }
-}
-
-fn set_remote_button() -> impl Scene {
-    bsn! {
-        @FeathersButton {
-            @caption: bsn! { Text("Set remote") ThemedText },
-        }
-        SetRemoteButton
-        on(|_: On<Activate>,
-            mut job: ResMut<SyncJob>,
-            campaign: Res<OpenCampaign>,
-            fields: Res<SyncFields>,
-            mut status: ResMut<StatusMessage>,
-            mut focus: ResMut<InputFocus>| {
-            start_set_remote(&mut job, &campaign, &fields, &mut status);
-            focus.clear();
-        })
     }
 }
 

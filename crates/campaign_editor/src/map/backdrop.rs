@@ -41,9 +41,8 @@ pub struct CameraBookmark {
 
 /// The generation a closed campaign's backdrop reached.
 ///
-/// [`place_camera`](crate::map::camera::place_camera),
-/// [`stream_chunks`](crate::map::chunks::stream_chunks) and
-/// [`refill_chunks`](crate::map::chunks::refill_chunks) each key a `Local` on
+/// [`place_camera`](crate::map::camera::place_camera) and
+/// [`stream_chunks`](crate::map::chunks::stream_chunks) each key a `Local` on
 /// [`Backdrop::generation`] to run their one-time work once per backdrop. Without this,
 /// a campaign opened after a close would build its terrain backdrop back at generation 0
 /// and be mistaken for one already handled, so the camera would never frame it.

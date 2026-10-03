@@ -487,7 +487,7 @@ pub struct DeclaredRow;
 /// What has been typed into the panel's two fields.
 ///
 /// Written on every keystroke by the fields themselves and read only when the GM presses
-/// Enter, which is the idiom the campaign dialog and the label field both use: a keystroke
+/// Enter, which is the idiom the campaign dialog and the scale field both use: a keystroke
 /// is not an instruction.
 #[derive(Resource, Debug, Default)]
 pub struct ImageFields {
@@ -497,10 +497,9 @@ pub struct ImageFields {
 
 /// Hangs the backdrop controls over the map, at the opacity the open document declares.
 ///
-/// The slider is spawned already showing the document's own value, for the reason the
-/// river panel spawns already showing the threshold: a control that started somewhere else
-/// and was corrected a frame later would land its spawn default on the document in
-/// between.
+/// The slider is spawned already showing the document's own value: a control that started
+/// somewhere else and was corrected a frame later would land its spawn default on the
+/// document in between.
 pub fn build_image_panel(mut commands: Commands, doc: Res<WorldDoc>) {
     let opacity = doc
         .document
@@ -566,8 +565,7 @@ fn show<F: bevy::ecs::query::QueryFilter>(nodes: &mut Query<&mut Node, F>, shown
 /// On release rather than on every change, which is the whole point: the slider moves every
 /// frame it is dragged, and an [`Edit`] per frame would fill an undo stack that holds a
 /// hundred and twenty-eight entries and discard everything the GM drew before it. It would
-/// also wake the property panel and a `zk` query once a frame, which watch the open
-/// document for changes. While the button is held the value is only shown.
+/// also wake a `zk` query once a frame, which watches the open document for changes. While the button is held the value is only shown.
 ///
 /// The condition is that the button is **not down**, rather than that it was just let go:
 /// the two agree for a drag, and only the first also lands a value the control socket

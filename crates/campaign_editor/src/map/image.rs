@@ -84,8 +84,7 @@ impl ImageAsset {
 /// to answer "have I said this yet" that this one does not.
 ///
 /// Writes [`ImageAsset`] only when something actually differs. An unconditional write marks
-/// the resource changed every frame, which is the failure the river threshold already has a
-/// test pinning.
+/// the resource changed every frame, and every reader of it would then run every frame.
 pub fn sync_backdrop_image(
     mut commands: Commands,
     open: Res<OpenCampaign>,

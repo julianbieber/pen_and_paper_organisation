@@ -17,12 +17,8 @@ pub mod chunks;
 pub mod image;
 /// Turning an opened campaign into a map that can be drawn, or a reason it cannot.
 pub mod load;
-/// The one runtime control over what counts as a river.
-pub mod panel;
 /// Where the cursor is, in terrain cells.
 pub mod pointer;
-/// What one cell is worth and how fast the party travels, as the GM sets them.
-pub mod scale;
 /// The bar saying how far a stretch of screen is.
 pub mod scalebar;
 /// The one conversion between terrain cells and world units.
@@ -30,8 +26,7 @@ pub mod view;
 
 use crate::{EditorSet, OpenCampaign};
 use backdrop::Backdrop;
-use load::{MapAssets, MapState, MapTerrain, TilesetRoot};
-use panel::RiverThreshold;
+use load::{MapAssets, MapState, MapTerrain};
 use pointer::{MapPointer, PointerOverride};
 
 /// Everything that turns an opened campaign into a map on screen.
@@ -39,14 +34,13 @@ pub struct MapPlugin;
 
 impl Plugin for MapPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<RiverThreshold>()
-            .init_resource::<chunks::MapChunks>()
+        load::embed_strips(app);
+        app.init_resource::<chunks::MapChunks>()
             .init_resource::<chunks::PaintedCells>()
+            .init_resource::<chunks::FeatureClaims>()
             .init_resource::<MapPointer>()
             .init_resource::<image::ImageAsset>()
             .init_resource::<PointerOverride>()
-            .init_resource::<scale::ScaleFields>()
-            .insert_resource(TilesetRoot(tileset_root()))
             .add_systems(Startup, camera::spawn_camera)
             .add_systems(
                 Update,
@@ -57,19 +51,9 @@ impl Plugin for MapPlugin {
                     (
                         load::watch_tileset.run_if(resource_exists::<MapAssets>),
                         load::show_map_state.run_if(resource_exists_and_changed::<MapState>),
-                        panel::build_map_panel.run_if(resource_added::<MapTerrain>),
-                        panel::show_map_panel.run_if(resource_exists_and_changed::<Backdrop>),
                         scalebar::build_scale_bar.run_if(resource_added::<MapTerrain>),
-                        scale::build_scale_panel.run_if(
-                            resource_added::<MapTerrain>.and_then(resource_exists::<OpenCampaign>),
-                        ),
                         camera::place_camera.run_if(resource_exists::<Backdrop>),
                     ),
-                    panel::land_threshold,
-                    scale::land_speed,
-                    (scale::commit_scale, scale::land_campaign_scale)
-                        .chain()
-                        .run_if(resource_exists::<OpenCampaign>),
                     camera::drive_camera.run_if(
                         resource_exists::<Backdrop>
                             .and_then(not(pointer_is_over_ui))
@@ -79,18 +63,23 @@ impl Plugin for MapPlugin {
                     scalebar::show_scale_bar.run_if(
                         resource_exists::<Backdrop>.and_then(resource_exists::<OpenCampaign>),
                     ),
+                    chunks::reclaim_cells.run_if(
+                        resource_exists_and_changed::<crate::document::WorldDoc>
+                            .and_then(resource_exists::<MapTerrain>)
+                            .and_then(backdrop::backdrop_is_the_terrain),
+                    ),
                     chunks::stream_chunks
                         .run_if(resource_exists::<Backdrop>.and_then(load::tileset_is_ready)),
                     image::sync_backdrop_image.run_if(image::a_document_is_open),
-                    chunks::refill_chunks.run_if(
-                        resource_changed::<RiverThreshold>
-                            .and_then(backdrop::backdrop_is_the_terrain),
-                    ),
                     (chunks::repaint_grid_chunks, chunks::clear_painted_cells)
                         .chain()
                         .run_if(
                             chunks::cells_were_painted.and_then(resource_exists::<Backdrop>),
                         ),
+                    chunks::draw_stroke_preview.run_if(
+                        resource_changed::<crate::features::paint::StrokePreview>
+                            .and_then(resource_exists::<Backdrop>),
+                    ),
                 )
                     .chain()
                     .in_set(EditorSet::Map)
@@ -116,8 +105,4 @@ pub fn pointer_is_over_ui(
         .values()
         .flat_map(|hits| hits.keys())
         .any(|entity| nodes.contains(*entity))
-}
-
-fn tileset_root() -> std::path::PathBuf {
-    bevy::asset::io::file::FileAssetReader::get_base_path().join("assets")
 }

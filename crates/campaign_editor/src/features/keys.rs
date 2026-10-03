@@ -1,9 +1,8 @@
-//! Undo, redo, save, delete and escape.
+//! Undo, redo, save, delete, escape, and entering and leaving a dungeon.
 //!
-//! Every one of these is refused while a text field has keyboard focus. The property
-//! panel's label field is on screen whenever something is selected, and raw key input
-//! ignores focus — so without the gate, typing a settlement's name would delete it on the
-//! first Delete, unwind the document on Ctrl+Z, and pop a draft vertex on every Backspace.
+//! Every one of these is refused while a text field has keyboard focus. Raw key input
+//! ignores focus — so without the gate, typing into any field would delete the selection
+//! on the first Delete and unwind the document on Ctrl+Z.
 
 use bevy::prelude::*;
 use campaign::edit::Edit;
@@ -17,7 +16,11 @@ use crate::features::select::{Dragging, Selection};
 use crate::session::CampaignClose;
 use crate::StatusMessage;
 
-/// Undo, redo, save, delete and escape.
+/// Undo, redo, save, delete, escape, and with the select tool in hand, Enter to open the
+/// selected entry's dungeon and Backspace to go back to the world map.
+///
+/// Enter and Backspace are read only under the select tool, because the drawing tools and
+/// the ruler finish and unwind with the same keys.
 ///
 /// A held drag is cancelled before any of them acts: undoing under one would rewind the
 /// world the drag's start position refers to, and its release would then move a vertex
@@ -37,8 +40,21 @@ pub fn authoring_keys(
     mut ruler: ResMut<crate::features::ruler::Ruler>,
     mut asking: ResMut<Asking>,
     mut painted: ResMut<crate::map::chunks::PaintedCells>,
+    active: Res<crate::features::tool::ActiveTool>,
+    mut intent: ResMut<crate::features::dungeon::DungeonIntent>,
     mut status: ResMut<StatusMessage>,
 ) {
+    if active.selecting() {
+        if keys.just_pressed(KeyCode::Enter) || keys.just_pressed(KeyCode::NumpadEnter) {
+            *intent = crate::features::dungeon::DungeonIntent::Enter;
+            return;
+        }
+        if keys.just_pressed(KeyCode::Backspace) && doc.in_a_dungeon() {
+            *intent = crate::features::dungeon::DungeonIntent::Leave;
+            return;
+        }
+    }
+
     let control = keys.pressed(KeyCode::ControlLeft) || keys.pressed(KeyCode::ControlRight);
     let shift = keys.pressed(KeyCode::ShiftLeft) || keys.pressed(KeyCode::ShiftRight);
 

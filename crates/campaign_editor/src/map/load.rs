@@ -16,17 +16,63 @@ use crate::OpenCampaign;
 use crate::StatusMessage;
 use crate::map::backdrop::{Backdrop, RetiredBackdrop};
 
-/// The tileset shipped with the tool, relative to the assets directory.
+/// A strip compiled into the binary: its PNG and its sidecar, under the base name both
+/// share in `crates/campaign_editor/assets`.
 ///
-/// One strip for every campaign: the backdrop is deliberately neutral, so there is
-/// nothing per-campaign about it. Edit it in place with `bevy_sprite_editor`.
-pub const TILESET_BASE: &str = "terrain_tiles";
+/// Compiled in rather than read from beside the executable, so an installed `pnp` has
+/// its tiles wherever it was installed to. A redraw in `bevy_sprite_editor` edits the
+/// files in that directory and takes effect on the next build.
+#[derive(Debug, Clone, Copy)]
+pub struct Strip {
+    pub base: &'static str,
+    pub png: &'static [u8],
+    pub sidecar: &'static str,
+}
 
-/// The combat tileset shipped with the tool, relative to the assets directory.
+/// The terrain strip: one for every campaign, so there is nothing per-campaign about it.
+pub const TERRAIN_STRIP: Strip = Strip {
+    base: "terrain_tiles",
+    png: include_bytes!("../../assets/terrain_tiles.png"),
+    sidecar: include_str!("../../assets/terrain_tiles.atlas.json"),
+};
+
+/// The combat strip, loaded exactly as [`TERRAIN_STRIP`] is; its columns are
+/// [`CombatTile`](campaign::CombatTile)'s variants in order.
+pub const COMBAT_STRIP: Strip = Strip {
+    base: "combat_tiles",
+    png: include_bytes!("../../assets/combat_tiles.png"),
+    sidecar: include_str!("../../assets/combat_tiles.atlas.json"),
+};
+
+impl Strip {
+    fn asset_path(self) -> String {
+        format!("embedded://pnp/{}.png", self.base)
+    }
+
+    fn meta(self, tiles: u16) -> Result<AtlasMeta, atlas::AtlasError> {
+        let base = std::path::Path::new(self.base);
+        AtlasMeta::parse(self.sidecar, &atlas::sidecar_path(base), tiles)
+    }
+}
+
+/// Registers both strips with the `embedded://` asset source.
 ///
-/// Drawn by hand in `bevy_sprite_editor` and loaded exactly as [`TILESET_BASE`] is; its
-/// columns are [`CombatTile`](campaign::CombatTile)'s variants in order.
-pub const COMBAT_TILESET_BASE: &str = "combat_tiles";
+/// Must be called after the asset plugin is added and before [`open_map`] first runs.
+pub fn embed_strips(app: &mut App) {
+    let registry = app
+        .world_mut()
+        .resource_mut::<bevy::asset::io::embedded::EmbeddedAssetRegistry>();
+    for strip in [TERRAIN_STRIP, COMBAT_STRIP] {
+        let file = format!("{}.png", strip.base);
+        registry.insert_asset(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("assets")
+                .join(&file),
+            &std::path::Path::new("pnp").join(file),
+            strip.png,
+        );
+    }
+}
 
 /// Whether there is a map, decided once.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -99,9 +145,6 @@ pub struct MapTerrain {
     pub width: u32,
     pub height: u32,
     pub ramp: HeightRamp,
-    /// The highest accumulation the terrain reaches, which is what the threshold
-    /// control spans. Zero on a terrain with no water solve.
-    pub accumulation_high: f32,
 }
 
 /// Reads the tileset sidecars, asks for the terrain and combat strips as array textures,
@@ -112,12 +155,10 @@ pub fn open_map(
     mut commands: Commands,
     open: Res<OpenCampaign>,
     assets: Res<AssetServer>,
-    tileset_root: Res<TilesetRoot>,
     mut images: ResMut<Assets<Image>>,
     retired: Option<Res<RetiredBackdrop>>,
 ) {
-    let base = tileset_root.0.join(TILESET_BASE);
-    let meta = match terrain_meta(&tileset_root.0) {
+    let meta = match terrain_meta() {
         Ok(meta) => meta,
         Err(error) => {
             commands.insert_resource(MapState::unavailable(error.to_string()));
@@ -127,7 +168,7 @@ pub fn open_map(
     if !meta.is_known_version() {
         warn!(
             "{} declares tileset format version {}; reading it as {}",
-            atlas::sidecar_path(&base).display(),
+            atlas::sidecar_path(std::path::Path::new(TERRAIN_STRIP.base)).display(),
             meta.version,
             atlas::SIDECAR_VERSION
         );
@@ -142,22 +183,21 @@ pub fn open_map(
         return;
     };
 
-    let tileset = load_strip(&assets, format!("{TILESET_BASE}.png"), meta.width_in_tiles);
+    let tileset = load_strip(&assets, TERRAIN_STRIP.asset_path(), meta.width_in_tiles);
 
-    let combat_base = tileset_root.0.join(COMBAT_TILESET_BASE);
-    let combat = match combat_meta(&tileset_root.0) {
+    let combat = match combat_meta() {
         Ok(combat) => {
             if !combat.is_known_version() {
                 warn!(
                     "{} declares tileset format version {}; reading it as {}",
-                    atlas::sidecar_path(&combat_base).display(),
+                    atlas::sidecar_path(std::path::Path::new(COMBAT_STRIP.base)).display(),
                     combat.version,
                     atlas::SIDECAR_VERSION
                 );
             }
             Ok(load_strip(
                 &assets,
-                format!("{COMBAT_TILESET_BASE}.png"),
+                COMBAT_STRIP.asset_path(),
                 combat.width_in_tiles,
             ))
         }
@@ -179,7 +219,6 @@ pub fn open_map(
         width: terrain.width(),
         height: terrain.height(),
         ramp,
-        accumulation_high: tiles::accumulation_ceiling(terrain).unwrap_or(0.0),
     });
     commands.insert_resource(Backdrop::terrain_after(
         terrain.width(),
@@ -243,12 +282,12 @@ fn channel(value: f32) -> u8 {
     (value.clamp(0.0, 1.0) * 255.0).round() as u8
 }
 
-fn terrain_meta(root: &std::path::Path) -> Result<AtlasMeta, atlas::AtlasError> {
-    AtlasMeta::read(&root.join(TILESET_BASE), tiles::TILE_COUNT)
+fn terrain_meta() -> Result<AtlasMeta, atlas::AtlasError> {
+    TERRAIN_STRIP.meta(tiles::TILE_COUNT)
 }
 
-fn combat_meta(root: &std::path::Path) -> Result<AtlasMeta, atlas::AtlasError> {
-    AtlasMeta::read(&root.join(COMBAT_TILESET_BASE), COMBAT_TILE_COUNT)
+fn combat_meta() -> Result<AtlasMeta, atlas::AtlasError> {
+    COMBAT_STRIP.meta(COMBAT_TILE_COUNT)
 }
 
 /// Why a combat map cannot be drawn through `tileset` yet, or `None` when it can.
@@ -268,11 +307,6 @@ pub fn combat_tileset_refusal(assets: &AssetServer, tileset: &CombatTileset) -> 
     }
     None
 }
-
-/// Where the tileset's files sit on disk, so the sidecar can be read beside the image
-/// the asset server loads.
-#[derive(Resource, Debug, Clone)]
-pub struct TilesetRoot(pub std::path::PathBuf);
 
 /// Turns a tileset the asset server could not load into a stated reason.
 ///
@@ -310,26 +344,17 @@ pub fn tileset_is_ready(assets: Option<Res<AssetServer>>, map: Option<Res<MapAss
 mod tests {
     use super::*;
 
-    // The terrain strip is still checked against TILE_COUNT now the reader is handed a count.
+    // The committed strips are art that gets redrawn: this pins that what is compiled in
+    // still reads against each vocabulary's count, and that each PNG is the size its
+    // sidecar says.
     #[test]
-    fn the_committed_terrain_strip_is_read_against_the_terrain_tile_count() {
-        let meta = terrain_meta(std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/assets")))
-            .expect("the committed terrain strip reads");
-        assert!(meta.width_in_tiles >= u32::from(tiles::TILE_COUNT));
-    }
-
-    // The combat strip is art that gets redrawn: this pins that what is committed still
-    // reads against the vocabulary's count, and that the PNG is the size its sidecar says.
-    #[test]
-    fn the_committed_combat_strip_is_read_against_the_combat_tile_count() {
-        let root = std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/assets"));
-        let meta = combat_meta(root).expect("the committed combat strip reads");
-        assert!(meta.width_in_tiles >= u32::from(COMBAT_TILE_COUNT));
-
-        let png = std::fs::read(root.join(format!("{COMBAT_TILESET_BASE}.png"))).expect("the strip is committed");
-        let width = u32::from_be_bytes(png[16..20].try_into().unwrap());
-        let height = u32::from_be_bytes(png[20..24].try_into().unwrap());
-        assert_eq!(width, meta.width_in_tiles * meta.tile_size);
-        assert_eq!(height, meta.height_in_tiles * meta.tile_size);
+    fn the_compiled_in_strips_read_against_their_tile_counts() {
+        for (strip, meta) in [(TERRAIN_STRIP, terrain_meta()), (COMBAT_STRIP, combat_meta())] {
+            let meta = meta.expect("the committed strip reads");
+            let width = u32::from_be_bytes(strip.png[16..20].try_into().unwrap());
+            let height = u32::from_be_bytes(strip.png[20..24].try_into().unwrap());
+            assert_eq!(width, meta.width_in_tiles * meta.tile_size, "{}", strip.base);
+            assert_eq!(height, meta.height_in_tiles * meta.tile_size, "{}", strip.base);
+        }
     }
 }

@@ -12,6 +12,7 @@ use bevy::camera::Projection;
 use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
 use bevy::sprite_render::{TileData, TilemapChunk, TilemapChunkTileData};
+use campaign::claims::Claims;
 use campaign::grid::{TileGrid, TileVocabulary};
 use campaign::tiles::{self, CHUNK_CELLS, ChunkScratch, ChunkTiles, MapTile};
 
@@ -21,7 +22,6 @@ use crate::document::WorldDoc;
 use crate::map::backdrop::{Backdrop, BackdropSource};
 use crate::map::camera::{MapCamera, viewport_of};
 use crate::map::load::{CombatTileset, DungeonTileset, MapAssets, MapTerrain};
-use crate::map::panel::RiverThreshold;
 
 /// Chunks filled per frame, so a fast pan costs frames rather than one long hitch.
 pub const CHUNKS_PER_FRAME: usize = 8;
@@ -50,17 +50,22 @@ pub struct MapChunks {
     scratch: ChunkScratch,
 }
 
-/// What a chunk keeps so that a change it can answer for need not be read again.
+/// Which backdrop a chunk was filled from.
 ///
-/// A terrain chunk keeps what it read, so moving the river threshold re-chooses its tiles
-/// without touching the terrain. A grid chunk keeps nothing: its cells are the document's,
-/// a paint stroke names exactly which of them changed, and a copy here would be a second
-/// answer to what the grid holds.
-#[derive(Component, Debug)]
+/// Neither keeps a copy of its cells: a terrain chunk is filled again from the terrain
+/// when a claim over it changes, and a grid chunk's cells are the document's.
+#[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ChunkCache {
-    Terrain(ChunkTiles),
+    Terrain,
     Grid,
 }
+
+/// The world map's settlements and roads, as the terrain cells they draw over.
+///
+/// Kept from the last world map on screen: a dungeon's edits cannot move a settlement,
+/// so it is neither cleared nor rebuilt while one is.
+#[derive(Resource, Debug, Default)]
+pub struct FeatureClaims(pub Claims);
 
 /// Makes the chunks the camera can see resident, and takes back the ones it cannot.
 ///
@@ -78,7 +83,7 @@ pub fn stream_chunks(
     assets: Res<MapAssets>,
     dungeon: Res<DungeonTileset>,
     combat_tileset: Option<Res<CombatTileset>>,
-    threshold: Res<RiverThreshold>,
+    claims: Res<FeatureClaims>,
     mut chunks: ResMut<MapChunks>,
     mut drawn: Local<Option<u32>>,
     camera: Single<(&Transform, &Projection, &Camera), With<MapCamera>>,
@@ -165,15 +170,15 @@ pub fn stream_chunks(
     for coord in missing.into_iter().take(CHUNKS_PER_FRAME) {
         let (data, cache) = match backdrop.source {
             BackdropSource::Terrain => {
-                let filled = tiles::chunk_tiles(
+                let mut filled = tiles::chunk_tiles(
                     open.0.terrain(),
                     terrain.ramp,
                     coord.x,
                     coord.y,
-                    threshold.accumulation,
                     scratch,
                 );
-                (to_tile_data(&filled), ChunkCache::Terrain(filled))
+                filled.claim(claims.0.in_chunk(coord.x, coord.y));
+                (to_tile_data(&filled), ChunkCache::Terrain)
             }
             BackdropSource::Grid => {
                 let Some(grid) = doc.as_ref().and_then(|doc| doc.document.world().grid()) else {
@@ -238,12 +243,59 @@ pub fn stream_chunks(
     }
 }
 
+/// Redraws the resident terrain chunks a world map edit moved a settlement or a road
+/// across.
+///
+/// Rebuilds the claims whenever the document changes and redraws only the chunks whose
+/// claimed cells differ, so an edit that moves nothing claimed redraws nothing. A dungeon
+/// on screen is left alone.
+pub fn reclaim_cells(
+    open: Res<OpenCampaign>,
+    doc: Res<WorldDoc>,
+    terrain: Res<MapTerrain>,
+    mut claims: ResMut<FeatureClaims>,
+    mut chunks: ResMut<MapChunks>,
+    mut resident: Query<(&mut TilemapChunkTileData, &mut ChunkCache)>,
+) {
+    let world = doc.document.world();
+    if world.grid().is_some() {
+        return;
+    }
+    let fresh = Claims::of(world, terrain.width, terrain.height);
+    let differing = fresh.chunks_differing_from(&claims.0);
+    if differing.is_empty() {
+        return;
+    }
+    claims.0 = fresh;
+
+    let MapChunks { live, scratch, .. } = &mut *chunks;
+    for (x, y) in differing {
+        let Some(entity) = live.get(&ChunkCoord { x, y }) else {
+            continue;
+        };
+        let Ok((mut data, cache)) = resident.get_mut(*entity) else {
+            continue;
+        };
+        if *cache != ChunkCache::Terrain {
+            continue;
+        }
+        let mut filled = tiles::chunk_tiles(
+            open.0.terrain(),
+            terrain.ramp,
+            x,
+            y,
+            scratch,
+        );
+        filled.claim(claims.0.in_chunk(x, y));
+        data.0 = to_tile_data(&filled);
+    }
+}
+
 /// Rewrites the cells a paint stroke touched, in the chunks they fall in, from the grid of
 /// whichever document the backdrop is.
 ///
 /// Without this a painted cell reaches the screen only once its chunk has left the view and
-/// come back: [`stream_chunks`] fills a chunk that is *missing*, and [`refill_chunks`]
-/// answers only for the river threshold. A stroke rewrites only the chunks its cells fall
+/// come back: [`stream_chunks`] fills a chunk that is *missing*. A stroke rewrites only the chunks its cells fall
 /// in; an undo or a redo rewrites every resident chunk. Does nothing on the terrain.
 pub fn repaint_grid_chunks(
     backdrop: Res<Backdrop>,
@@ -302,6 +354,69 @@ fn rewrite<T: TileVocabulary>(
     }
 }
 
+/// Lays the stroke in hand over the chunks it touches, on top of the grid's own tiles.
+///
+/// Rewrites every chunk the previous preview or this one covers from the grid, then paints
+/// the preview's cells over it — so a cell the stroke has left goes back to what the grid
+/// holds, and a released stroke, which empties the preview, leaves the chunks showing the
+/// edit it became. Does nothing on the terrain.
+pub fn draw_stroke_preview(
+    backdrop: Res<Backdrop>,
+    doc: Option<Res<WorldDoc>>,
+    combat: Option<Res<CombatMaps>>,
+    chunks: Res<MapChunks>,
+    preview: Res<crate::features::paint::StrokePreview>,
+    mut drawn: Local<Vec<(u32, u32)>>,
+    mut resident: Query<(&ChunkCoord, &mut TilemapChunkTileData), With<ChunkCache>>,
+) {
+    let side = CHUNK_CELLS;
+    let mut touched: Vec<ChunkCoord> = Vec::new();
+    for (x, y) in drawn.iter().copied().chain(preview.cells.iter().map(|&(x, y, _)| (x, y))) {
+        let coord = ChunkCoord {
+            x: (x / side) as i32,
+            y: (y / side) as i32,
+        };
+        if !touched.contains(&coord) {
+            touched.push(coord);
+        }
+    }
+    *drawn = preview.cells.iter().map(|&(x, y, _)| (x, y)).collect();
+
+    match backdrop.source {
+        BackdropSource::Terrain => return,
+        BackdropSource::Grid => {
+            if let Some(grid) = doc.as_ref().and_then(|doc| doc.document.world().grid()) {
+                rewrite(grid, &touched, &chunks, &mut resident);
+            }
+        }
+        BackdropSource::Combat => {
+            if let Some(map) = combat.as_ref().and_then(|combat| combat.on_screen()) {
+                rewrite(map.content().grid(), &touched, &chunks, &mut resident);
+            }
+        }
+    }
+
+    for &(x, y, index) in &preview.cells {
+        let coord = ChunkCoord {
+            x: (x / side) as i32,
+            y: (y / side) as i32,
+        };
+        let Some(entity) = chunks.live.get(&coord) else {
+            continue;
+        };
+        let Ok((_, mut data)) = resident.get_mut(*entity) else {
+            continue;
+        };
+        let slot = ((side - 1 - y % side) * side + x % side) as usize;
+        if let Some(cell) = data.0.get_mut(slot) {
+            *cell = Some(TileData {
+                tileset_index: index,
+                ..default()
+            });
+        }
+    }
+}
+
 /// The cells the last stroke changed, so the redraw need not guess which chunks moved.
 ///
 /// An undo or a redo names no cells, so it sets `everything` instead, which rewrites every
@@ -322,36 +437,6 @@ pub fn cells_were_painted(changes: Res<PaintedCells>) -> bool {
 pub fn clear_painted_cells(mut changes: ResMut<PaintedCells>) {
     changes.cells.clear();
     changes.everything = false;
-}
-
-/// Restates the resident chunks' tiles when the river threshold moves.
-///
-/// Reads nothing from the terrain: what a chunk kept when it was filled is enough to
-/// choose between a river and the tile the cell would otherwise have had.
-pub fn refill_chunks(
-    threshold: Res<RiverThreshold>,
-    backdrop: Res<Backdrop>,
-    mut last: Local<Option<(u32, f32)>>,
-    mut resident: Query<(&mut TilemapChunkTileData, &mut ChunkCache)>,
-) {
-    let now = threshold.accumulation;
-    let before = match *last {
-        Some((generation, before)) if generation == backdrop.generation => before,
-        _ => now,
-    };
-    *last = Some((backdrop.generation, now));
-
-    for (mut data, mut cache) in resident.iter_mut() {
-        let ChunkCache::Terrain(tiles) = &mut *cache else {
-            continue;
-        };
-        if !tiles.affected_by(before, now) {
-            continue;
-        }
-        if tiles.apply_threshold(now) {
-            data.0 = to_tile_data(tiles);
-        }
-    }
 }
 
 fn to_grid_data<T: TileVocabulary>(tiles: &[Option<T>]) -> Vec<Option<TileData>> {
@@ -378,91 +463,4 @@ fn to_tile_data(chunk: &ChunkTiles) -> Vec<Option<TileData>> {
             })
         })
         .collect()
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use campaign::tiles::{CellCache, TileKind};
-
-    fn chunk_with(accumulations: &[f32]) -> ChunkTiles {
-        let cells: Vec<Option<CellCache>> = accumulations
-            .iter()
-            .map(|accumulation| {
-                Some(CellCache {
-                    dry: TileKind::Land(2),
-                    shade: 1.0,
-                    river_accumulation: Some(*accumulation),
-                })
-            })
-            .collect();
-        let mut chunk = ChunkTiles {
-            tiles: vec![None; cells.len()],
-            cells,
-            land_accumulation: Some((
-                accumulations.iter().copied().fold(f32::MAX, f32::min),
-                accumulations.iter().copied().fold(f32::MIN, f32::max),
-            )),
-        };
-        chunk.apply_threshold(f32::MAX);
-        chunk
-    }
-
-    fn app_with(chunk: ChunkTiles) -> (App, Entity) {
-        let mut app = App::new();
-        app.insert_resource(RiverThreshold {
-            accumulation: f32::MAX,
-        })
-        .insert_resource(Backdrop::terrain(64, 64, 16.0))
-        .add_systems(Update, refill_chunks);
-        let data = TilemapChunkTileData(to_tile_data(&chunk));
-        let entity = app.world_mut().spawn((data, ChunkCache::Terrain(chunk))).id();
-        (app, entity)
-    }
-
-    fn rivers(app: &App, entity: Entity) -> usize {
-        app.world()
-            .entity(entity)
-            .get::<TilemapChunkTileData>()
-            .expect("the chunk keeps its tiles")
-            .0
-            .iter()
-            .filter(|tile| {
-                tile.is_some_and(|tile| tile.tileset_index == TileKind::River.index())
-            })
-            .count()
-    }
-
-    // The acceptance criterion the UI cannot be driven headlessly for: moving the
-    // threshold changes which cells are drawn as channels, without respawning a chunk.
-    #[test]
-    fn lowering_the_threshold_turns_more_cells_into_rivers() {
-        let (mut app, entity) = app_with(chunk_with(&[10.0, 100.0, 1000.0, 5000.0]));
-        app.update();
-        assert_eq!(rivers(&app, entity), 0, "nothing is a river at the top");
-
-        app.world_mut().resource_mut::<RiverThreshold>().accumulation = 500.0;
-        app.update();
-        assert_eq!(rivers(&app, entity), 2, "the two busiest cells become channels");
-
-        app.world_mut().resource_mut::<RiverThreshold>().accumulation = 50.0;
-        app.update();
-        assert_eq!(rivers(&app, entity), 3);
-    }
-
-    // Most of a map does not change when the threshold moves, and skipping those
-    // chunks is what makes dragging the slider affordable at all.
-    #[test]
-    fn a_chunk_the_threshold_cannot_reach_is_left_alone() {
-        let (mut app, entity) = app_with(chunk_with(&[1.0, 2.0, 3.0, 4.0]));
-        app.update();
-
-        app.world_mut().resource_mut::<RiverThreshold>().accumulation = 900.0;
-        app.update();
-        assert_eq!(rivers(&app, entity), 0);
-
-        app.world_mut().resource_mut::<RiverThreshold>().accumulation = 800.0;
-        app.update();
-        assert_eq!(rivers(&app, entity), 0, "still nothing, and nothing re-uploaded");
-    }
 }

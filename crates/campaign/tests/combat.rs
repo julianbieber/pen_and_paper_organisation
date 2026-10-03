@@ -10,7 +10,7 @@ use campaign::document::Document;
 use campaign::edit::EditError;
 use campaign::grid::{DEFAULT_METRES_PER_CELL, GridProblem, TileGrid, TileVocabulary};
 use campaign::layout;
-use campaign::measure::{DistanceUnit, worth_of_grid};
+use campaign::measure::{DistanceUnit, worth_of_combat_map};
 use campaign::slug::combat_map_name;
 use campaign::tiles::{COMBAT_TILE_COUNT, CombatTile, DungeonTile};
 use campaign::world::{World, WorldError};
@@ -161,10 +161,10 @@ fn the_room_brush_lays_combat_walls_around_combat_floor() {
     assert_eq!(map.grid().get(5, 5), Some(CombatTile::Grass));
 }
 
-// A combat map is measured in feet as a dungeon is, and a pace in days means nothing on it.
+// A combat map is always five feet to the cell, and a pace in days means nothing on it.
 #[test]
 fn a_combat_cell_is_five_feet_and_never_travelled() {
-    let worth = worth_of_grid(map().grid());
+    let worth = worth_of_combat_map();
     assert_eq!(worth.known_unit(), Some(DistanceUnit::Feet));
     assert!((worth.units_per_cell() - 5.0).abs() < 1e-6);
     assert!(!worth.travelled());

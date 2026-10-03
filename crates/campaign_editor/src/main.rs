@@ -53,8 +53,7 @@ pub struct StatusLine;
 #[derive(Component, Default, Clone)]
 pub struct DialogRoot;
 
-/// The root of a scene a campaign brings onto the screen — a panel, a toolbar, the
-/// close bar — so [`session::close_campaign`] can take it all off again without knowing
+/// The root of a scene a campaign brings onto the screen — a panel, a toolbar — so [`session::close_campaign`] can take it all off again without knowing
 /// what any of it is.
 #[derive(Component, Default, Clone)]
 pub struct CampaignChrome;

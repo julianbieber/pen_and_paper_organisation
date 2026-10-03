@@ -9,9 +9,10 @@
 //! would never be seen.
 //!
 //! One stroke is one [`Edit::PaintTiles`], applied on release, which is what makes a brush
-//! stroke a single press of undo however many cells it covered. Nothing is applied while
-//! the button is held, so a stroke also costs one change-detection wake rather than one a
-//! frame.
+//! stroke a single press of undo however many cells it covered. While the button is held
+//! the stroke is drawn as a [`StrokePreview`] — the cells it would change, laid over the
+//! chunks and never over the document — so painting answers the mouse as it moves without
+//! putting an edit per frame on the undo stack.
 
 use bevy::prelude::*;
 use campaign::brush::{self, Brush};
@@ -19,6 +20,7 @@ use campaign::edit::Edit;
 use campaign::feature::CellPoint;
 
 use crate::StatusMessage;
+use crate::combat::CombatMaps;
 use crate::document::{self, WorldDoc};
 use crate::features::PointerOverUi;
 use crate::features::tool::ActiveTool;
@@ -45,6 +47,84 @@ impl Stroking {
     pub fn abandon(&mut self) {
         self.path.clear();
     }
+
+    /// The path the stroke would paint if the button were let go over `at` now.
+    ///
+    /// Empty when no stroke is live. A brush that only reads the corners gets the first
+    /// cell and `at`; the freehand brush gets the path it has covered.
+    pub fn preview_path(&self, at: Option<(i64, i64)>, brush: Brush) -> Vec<(i64, i64)> {
+        let Some(&first) = self.path.first() else {
+            return Vec::new();
+        };
+        if brush.tracks_the_path() {
+            return self.path.clone();
+        }
+        vec![first, at.unwrap_or(first)]
+    }
+}
+
+/// The cells the stroke in hand would change, as the tile index each would take.
+///
+/// Written by [`preview_stroke`] only when it differs, so the chunks are redrawn when the
+/// stroke moves and not once a frame.
+#[derive(Resource, Debug, Default)]
+pub struct StrokePreview {
+    pub cells: Vec<(u32, u32, u16)>,
+    asked: Option<(usize, Option<(i64, i64)>, (i64, i64))>,
+}
+
+/// Works out what the stroke in hand would paint, on whichever grid is on screen.
+///
+/// Empty whenever no stroke is live, which is what clears the preview after a release,
+/// Escape or a document switch. Recomputed only when the stroke's path or the pointer's
+/// cell moved, so a flood fill is not run again every frame the mouse is still.
+pub fn preview_stroke(
+    pointer: Res<MapPointer>,
+    active: Res<ActiveTool>,
+    stroking: Res<Stroking>,
+    doc: Option<Res<WorldDoc>>,
+    combat: Option<Res<CombatMaps>>,
+    mut preview: ResMut<StrokePreview>,
+) {
+    let path = match (stroking.is_live() && active.painting(), pointer.cell.map(cell_of)) {
+        (true, at) => stroking.preview_path(at, active.brush),
+        (false, _) => Vec::new(),
+    };
+    let Some((&first, &last)) = path.first().zip(path.last()) else {
+        if !preview.cells.is_empty() || preview.asked.is_some() {
+            preview.cells.clear();
+            preview.asked = None;
+        }
+        return;
+    };
+    let asked = Some((path.len(), Some(first), last));
+    if preview.asked == asked {
+        return;
+    }
+
+    let cells = match combat.as_ref().and_then(|combat| combat.on_screen()) {
+        Some(map) => as_indices(brush::cells(map.content().grid(), active.brush, &path, active.combat_tile)),
+        None => match doc.as_ref().and_then(|doc| doc.document.world().grid()) {
+            Some(grid) => as_indices(brush::cells(grid, active.brush, &path, active.tile)),
+            None => Vec::new(),
+        },
+    };
+    let moved = preview.cells != cells;
+    let quiet = preview.bypass_change_detection();
+    quiet.asked = asked;
+    if moved {
+        quiet.cells = cells;
+        preview.set_changed();
+    }
+}
+
+fn as_indices<T: campaign::grid::TileVocabulary>(
+    changes: Vec<brush::TileChange<T>>,
+) -> Vec<(u32, u32, u16)> {
+    changes
+        .into_iter()
+        .map(|change| (change.x, change.y, change.tile.index()))
+        .collect()
 }
 
 /// Turns the left button on a dungeon's grid into one paint edit.
@@ -153,4 +233,79 @@ pub fn a_grid_is_open(doc: Option<Res<WorldDoc>>) -> bool {
 /// The whole cell a position in cells lies in, rounding each axis down.
 pub(crate) fn cell_of(cell: CellPoint) -> (i64, i64) {
     (cell.x.floor() as i64, cell.y.floor() as i64)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::features::tool::Tool;
+    use campaign::tiles::CombatTile;
+
+    fn app_painting(brush: Brush) -> App {
+        let mut app = App::new();
+        let mut maps = CombatMaps::default();
+        maps.open(
+            campaign::CombatMap::new("Ford", 10, 10).expect("a 10x10 map is valid"),
+            "ford.ron".to_owned(),
+            None,
+        );
+        app.insert_resource(maps)
+            .insert_resource(ActiveTool {
+                tool: Tool::Paint,
+                brush,
+                combat_tile: CombatTile::Dirt,
+                ..default()
+            })
+            .init_resource::<Stroking>()
+            .init_resource::<StrokePreview>()
+            .init_resource::<MapPointer>()
+            .add_systems(Update, preview_stroke);
+        app
+    }
+
+    fn point_at(app: &mut App, x: f32, y: f32) {
+        app.world_mut().resource_mut::<MapPointer>().cell = Some(CellPoint::new(x, y));
+    }
+
+    fn previewed(app: &App) -> Vec<(u32, u32)> {
+        let mut cells: Vec<(u32, u32)> = app
+            .world()
+            .resource::<StrokePreview>()
+            .cells
+            .iter()
+            .map(|&(x, y, _)| (x, y))
+            .collect();
+        cells.sort_unstable();
+        cells
+    }
+
+    // The point of the preview: a stroke shows on the map while the button is still down,
+    // and follows the pointer, rather than appearing only on release.
+    #[test]
+    fn a_held_stroke_is_previewed_as_the_pointer_moves() {
+        let mut app = app_painting(Brush::Rectangle);
+        app.world_mut().resource_mut::<Stroking>().path = vec![(1, 1)];
+        point_at(&mut app, 2.5, 1.5);
+        app.update();
+        assert_eq!(previewed(&app), vec![(1, 1), (2, 1)]);
+
+        point_at(&mut app, 2.5, 2.5);
+        app.update();
+        assert_eq!(previewed(&app), vec![(1, 1), (1, 2), (2, 1), (2, 2)]);
+    }
+
+    // Once the stroke is gone — released, or abandoned with Escape — the preview must go
+    // with it, or the map keeps showing tiles the document never got.
+    #[test]
+    fn the_preview_empties_when_the_stroke_ends() {
+        let mut app = app_painting(Brush::Freehand);
+        app.world_mut().resource_mut::<Stroking>().path = vec![(1, 1), (2, 1)];
+        point_at(&mut app, 2.5, 1.5);
+        app.update();
+        assert_eq!(previewed(&app).len(), 2);
+
+        app.world_mut().resource_mut::<Stroking>().abandon();
+        app.update();
+        assert!(previewed(&app).is_empty());
+    }
 }

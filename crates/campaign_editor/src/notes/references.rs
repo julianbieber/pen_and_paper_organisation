@@ -1,5 +1,5 @@
 //! What references the selected place: the tag the selection asks about, the one query in
-//! flight, the answers already had, and the rows that show them.
+//! flight, and the answers already had.
 //!
 //! The query holds its own slot rather than the one [`NoteJob`](crate::notes::NoteJob)
 //! uses, for the reason the `zk` probe does: a note the GM asked for must never queue
@@ -17,25 +17,15 @@
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
-use bevy::feathers::controls::FeathersButton;
-use bevy::feathers::theme::{ThemedText, ThemeBackgroundColor};
-use bevy::feathers::tokens;
-use bevy::input_focus::tab_navigation::TabIndex;
 use bevy::prelude::*;
 use bevy::tasks::{IoTaskPool, Task, block_on, futures_lite::future};
-use bevy::ui::InteractionDisabled;
-use bevy::ui_widgets::Activate;
 use campaign::feature::FeatureId;
 use campaign::notebook::{NoteError, NoteKind, Notebook, Reference, SystemRunner, tag_of};
 
 use crate::document::WorldDoc;
 use crate::features::select::Selection;
 use crate::notes::ZkState;
-use crate::{OpenCampaign, StatusMessage};
-
-/// How many references the panel has room for. A hard cap, not a page: what is past it
-/// is counted in the heading and reachable only through a note that is shown.
-pub const REFERENCE_ROWS: usize = 8;
+use crate::OpenCampaign;
 
 /// How long a tag must be the wanted one before it is worth a subprocess.
 pub const QUERY_SETTLE: Duration = Duration::from_millis(200);
@@ -46,20 +36,9 @@ pub enum Answer {
     /// The notes carrying the tag, newest first, without the subject's own.
     Found(Vec<Reference>),
     /// `zk` was asked and refused. Cached so a broken notebook is not re-asked every
-    /// frame, and carried as a message so the heading can say what happened rather than
-    /// showing an empty list that reads as "nothing references this".
+    /// frame, and carried as a message so a reader can say what happened rather than
+    /// reporting an empty list that reads as "nothing references this".
     Failed(String),
-}
-
-/// What the panel should show, decided once so no two branches can disagree.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum View<'a> {
-    Unavailable,
-    NothingSelected,
-    NoNoteYet,
-    Looking,
-    Failed(&'a str),
-    Found(&'a [Reference]),
 }
 
 struct InFlight {
@@ -98,28 +77,6 @@ impl References {
         self.cached.get(self.tag.as_deref()?)
     }
 
-    /// What the panel should show, given whether `zk` is there at all.
-    ///
-    /// One ordered decision rather than a branch per widget: written as independent
-    /// conditions, "nothing is selected" and "no answer yet" both hold at once and the
-    /// panel would settle on whichever was written last.
-    pub fn view<'a>(&'a self, zk: &ZkState) -> View<'a> {
-        if zk.refusal().is_some() {
-            return View::Unavailable;
-        }
-        if self.subject.is_none() {
-            return View::NothingSelected;
-        }
-        if self.tag.is_none() {
-            return View::NoNoteYet;
-        }
-        match self.answer() {
-            None => View::Looking,
-            Some(Answer::Failed(why)) => View::Failed(why),
-            Some(Answer::Found(found)) => View::Found(found),
-        }
-    }
-
     fn want(&mut self, subject: Option<FeatureId>, tag: Option<String>) {
         if self.subject == subject && self.tag == tag {
             return;
@@ -136,15 +93,6 @@ impl References {
     pub fn invalidate(&mut self) {
         self.cached.clear();
         self.generation = self.generation.wrapping_add(1);
-    }
-
-    /// Forget the wanted tag's answer, so it is asked again.
-    pub fn refresh(&mut self) {
-        if let Some(tag) = self.tag.clone() {
-            self.cached.remove(&tag);
-        }
-        self.generation = self.generation.wrapping_add(1);
-        self.wanted_since = Some(Instant::now() - QUERY_SETTLE);
     }
 
     fn worth_asking(&self) -> bool {
@@ -166,9 +114,8 @@ pub fn a_reference_query_has_work(references: Res<References>, zk: Res<ZkState>)
 
 /// Works out which tag the selection asks about.
 ///
-/// A feature's note is always a place note — the Create button is the only thing that
-/// makes one, and it always makes a place — so the kind is not read back out of the
-/// note's frontmatter. Nothing in this tool parses a note.
+/// A feature's note is always a place note — a note made for a feature is always made as
+/// a place — so the kind is not read back out of the note's frontmatter. Nothing in this tool parses a note.
 pub fn follow_selection(
     doc: Res<WorldDoc>,
     selection: Res<Selection>,
@@ -259,203 +206,4 @@ fn landed(references: &mut References) -> bool {
 
 fn slug_in(tag: &str) -> &str {
     tag.rsplit('/').next().unwrap_or(tag)
-}
-
-/// The panel's references section: a heading, [`REFERENCE_ROWS`] rows and Refresh.
-pub fn section() -> impl Scene {
-    bsn! {
-        Node {
-            display: Display::Flex,
-            flex_direction: FlexDirection::Column,
-            row_gap: px(4),
-        }
-        Children [
-            (Text("") ThemedText ReferencesHeading),
-            reference_row(0), reference_row(1), reference_row(2), reference_row(3),
-            reference_row(4), reference_row(5), reference_row(6), reference_row(7),
-            refresh_button()
-        ]
-    }
-}
-
-/// The heading above the reference rows.
-#[derive(Component, Default, Clone)]
-pub struct ReferencesHeading;
-
-/// One row of the references list, and the note it is currently showing.
-///
-/// The path is carried here rather than looked up by `slot` when the row is pressed: the
-/// cache can be dropped between the frame that filled the row and the press, and a press
-/// must open what the GM is looking at.
-#[derive(Component, Debug, Default, Clone)]
-pub struct ReferenceRow {
-    pub slot: usize,
-    pub path: Option<String>,
-}
-
-/// The button that asks the wanted tag again.
-#[derive(Component, Default, Clone)]
-pub struct RefreshReferencesButton;
-
-/// Fills the rows from the cache, and says when there is nothing to fill them from.
-///
-/// A row leaves the tab ring by its [`TabIndex`] going negative, not by being hidden:
-/// bevy gathers focusables on tab index alone and looks at neither `Visibility` nor
-/// `Node.display`, so eight blank rows would otherwise be eight tab stops that answer
-/// Enter. Writing the value rather than adding and removing the component also keeps the
-/// row in one archetype.
-pub fn show_references(
-    mut commands: Commands,
-    references: Res<References>,
-    zk: Res<ZkState>,
-    mut rows: Query<(Entity, &mut ReferenceRow, &Children, Has<InteractionDisabled>)>,
-    mut refreshes: Query<
-        (Entity, Has<InteractionDisabled>),
-        (With<RefreshReferencesButton>, Without<ReferenceRow>),
-    >,
-    mut headings: Query<&mut Text, With<ReferencesHeading>>,
-    mut captions: Query<&mut Text, Without<ReferencesHeading>>,
-    mut indices: Query<&mut TabIndex>,
-) {
-    let view = references.view(&zk);
-    let found: &[Reference] = match view {
-        View::Found(found) => found,
-        _ => &[],
-    };
-    let keep = matches!(view, View::Looking);
-
-    for mut text in headings.iter_mut() {
-        let shown = heading(view, references.tag.as_deref());
-        if text.0 != shown {
-            text.0 = shown;
-        }
-    }
-
-    for (entity, mut row, children, disabled) in rows.iter_mut() {
-        if keep && row.path.is_some() {
-            set_pressable(&mut commands, &mut indices, entity, disabled, false);
-            continue;
-        }
-        let note = found.get(row.slot);
-        let path = note.map(|note| note.path.clone());
-        if row.path != path {
-            row.path = path;
-        }
-        for child in children.iter() {
-            if let Ok(mut text) = captions.get_mut(child) {
-                let shown = note.map(caption).unwrap_or_default();
-                if text.0 != shown {
-                    text.0 = shown;
-                }
-            }
-        }
-        set_pressable(&mut commands, &mut indices, entity, disabled, note.is_some());
-    }
-
-    let refreshable = matches!(view, View::Found(_) | View::Failed(_));
-    for (entity, disabled) in refreshes.iter_mut() {
-        if disabled == refreshable {
-            if refreshable {
-                commands.entity(entity).remove::<InteractionDisabled>();
-            } else {
-                commands.entity(entity).insert(InteractionDisabled);
-            }
-        }
-    }
-}
-
-fn heading(view: View<'_>, tag: Option<&str>) -> String {
-    match view {
-        View::Unavailable => "zk is not installed, so notes are unavailable".to_owned(),
-        View::NothingSelected => "nothing selected".to_owned(),
-        View::NoNoteYet => "no note yet — Create note makes one".to_owned(),
-        View::Looking => format!("looking for {}…", tag.unwrap_or("references")),
-        View::Failed(why) => format!("the query failed: {why}"),
-        View::Found([]) => format!("nothing references {}", tag.unwrap_or("this")),
-        View::Found(found) => {
-            let tag = tag.unwrap_or("this");
-            match found.len().checked_sub(REFERENCE_ROWS) {
-                Some(hidden) if hidden > 0 => format!(
-                    "{} notes reference {tag} — {hidden} not shown",
-                    found.len()
-                ),
-                _ => format!("{} referencing {tag}", found.len()),
-            }
-        }
-    }
-}
-
-fn caption(note: &Reference) -> String {
-    let title = if note.title.is_empty() {
-        note.path.as_str()
-    } else {
-        note.title.as_str()
-    };
-    let excerpt: String = note.excerpt.chars().take(EXCERPT_CHARS).collect();
-    if excerpt.is_empty() {
-        title.to_owned()
-    } else {
-        format!("{title} — {excerpt}")
-    }
-}
-
-const EXCERPT_CHARS: usize = 120;
-
-fn set_pressable(
-    commands: &mut Commands,
-    indices: &mut Query<&mut TabIndex>,
-    entity: Entity,
-    disabled: bool,
-    pressable: bool,
-) {
-    if disabled == pressable {
-        if pressable {
-            commands.entity(entity).remove::<InteractionDisabled>();
-        } else {
-            commands.entity(entity).insert(InteractionDisabled);
-        }
-    }
-    if let Ok(mut index) = indices.get_mut(entity) {
-        let wanted = if pressable { 0 } else { -1 };
-        if index.0 != wanted {
-            index.0 = wanted;
-        }
-    }
-}
-
-fn reference_row(slot: usize) -> impl Scene {
-    bsn! {
-        @FeathersButton {
-            @caption: bsn! { Text("") ThemedText },
-        }
-        ReferenceRow { slot: {slot}, path: {None} }
-        InteractionDisabled
-        TabIndex(-1)
-        ThemeBackgroundColor(tokens::WINDOW_BG)
-        on(|activate: On<Activate>,
-            rows: Query<&ReferenceRow>,
-            campaign: Res<OpenCampaign>,
-            mut status: ResMut<StatusMessage>| {
-            let Ok(row) = rows.get(activate.event_target()) else {
-                return;
-            };
-            let Some(path) = row.path.as_deref() else {
-                return;
-            };
-            crate::notes::open(&campaign, &mut status, path);
-        })
-    }
-}
-
-fn refresh_button() -> impl Scene {
-    bsn! {
-        @FeathersButton {
-            @caption: bsn! { Text("Refresh") ThemedText },
-        }
-        RefreshReferencesButton
-        InteractionDisabled
-        on(|_activate: On<Activate>, mut references: ResMut<References>| {
-            references.refresh();
-        })
-    }
 }

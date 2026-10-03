@@ -185,8 +185,7 @@ pub fn worth_of(world: &World, manifest: &CampaignManifest) -> CellWorth {
 /// What one cell of a document drawn on `grid` is worth: feet off the grid's own scale,
 /// and never travelled.
 ///
-/// The answer [`worth_of`] gives a dungeon, for a document that is a grid and nothing
-/// else — a combat map.
+/// The answer [`worth_of`] gives a dungeon.
 pub fn worth_of_grid<T: TileVocabulary>(grid: &TileGrid<T>) -> CellWorth {
     CellWorth {
         units_per_cell: f64::from(grid.metres_per_cell()) / METRES_PER_FOOT,
@@ -194,6 +193,19 @@ pub fn worth_of_grid<T: TileVocabulary>(grid: &TileGrid<T>) -> CellWorth {
         travelled: false,
     }
 }
+
+/// What one cell of a combat map is worth: always [`COMBAT_FEET_PER_CELL`] feet, whatever
+/// scale its stored grid carries, and never travelled.
+pub fn worth_of_combat_map() -> CellWorth {
+    CellWorth {
+        units_per_cell: COMBAT_FEET_PER_CELL,
+        unit: DistanceUnit::Feet.label().to_owned(),
+        travelled: false,
+    }
+}
+
+/// Feet across one cell of a combat map.
+pub const COMBAT_FEET_PER_CELL: f64 = 5.0;
 
 /// How far apart two cell positions are, in cells.
 pub fn distance(from: CellPoint, to: CellPoint) -> f32 {

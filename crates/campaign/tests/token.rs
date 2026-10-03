@@ -2,7 +2,7 @@
 //! which one a cell picks, and what is refused — all without a window.
 
 use campaign::token::{
-    MAX_TOKEN_NAME_CHARS, MAX_TOKENS, TokenProblem, Tokens, anchor, name_refusal, next_name,
+    MAX_TOKEN_NAME_CHARS, MAX_TOKENS, TokenProblem, Tokens, anchor, initiative_of, name_refusal, next_name,
 };
 
 const EXTENT: (u32, u32) = (12, 12);
@@ -189,4 +189,54 @@ fn a_full_board_refuses_another_token() {
     assert_eq!(tokens.place("orc", 1, (0, 0), EXTENT).unwrap_err(), TokenProblem::Full);
     tokens.clear();
     assert!(tokens.is_empty());
+}
+
+fn order(tokens: &Tokens) -> Vec<&str> {
+    tokens.in_initiative_order().into_iter().map(|token| token.name()).collect()
+}
+
+// The initiative list reads highest first, and a token that has not rolled waits at the end
+// rather than acting as though it rolled the lowest number.
+#[test]
+fn initiative_orders_the_highest_roll_first_and_the_unrolled_last() {
+    let mut tokens = Tokens::default();
+    for x in [1, 4, 7, 10] {
+        place(&mut tokens, "orc", (x, 1));
+    }
+    tokens.set_initiative("orc2", Some(-3)).unwrap();
+    tokens.set_initiative("orc3", Some(17)).unwrap();
+    tokens.set_initiative("orc4", Some(17)).unwrap();
+    assert_eq!(order(&tokens), ["orc3", "orc4", "orc2", "orc1"]);
+}
+
+// A roll is the token's own, so renaming it keeps its place in the order.
+#[test]
+fn a_renamed_token_keeps_its_initiative() {
+    let mut tokens = Tokens::default();
+    place(&mut tokens, "orc", (1, 1));
+    tokens.set_initiative("orc1", Some(12)).unwrap();
+    tokens.rename("orc1", "Grukk").unwrap();
+    assert_eq!(tokens.get("Grukk").unwrap().initiative(), Some(12));
+}
+
+// Clearing the field forgets the roll; anything but a whole number is refused rather than
+// read as zero.
+#[test]
+fn an_initiative_field_reads_empty_as_unrolled_and_refuses_words() {
+    assert_eq!(initiative_of("  "), Ok(None));
+    assert_eq!(initiative_of(" -2 "), Ok(Some(-2)));
+    assert_eq!(
+        initiative_of("d20"),
+        Err(TokenProblem::BadInitiative { typed: "d20".to_owned() })
+    );
+}
+
+// Setting the roll of a name nothing carries is refused rather than silently ignored.
+#[test]
+fn setting_the_initiative_of_an_unknown_token_is_refused() {
+    let mut tokens = Tokens::default();
+    assert_eq!(
+        tokens.set_initiative("orc1", Some(3)),
+        Err(TokenProblem::Unknown { name: "orc1".to_owned() })
+    );
 }

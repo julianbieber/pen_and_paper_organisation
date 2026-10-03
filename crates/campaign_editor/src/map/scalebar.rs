@@ -99,7 +99,7 @@ fn scale_bar_of(
     };
     let viewport = viewport_of(camera)?;
     let worth = match combat.and_then(CombatMaps::on_screen) {
-        Some(map) => measure::worth_of_grid(map.content().grid()),
+        Some(_) => measure::worth_of_combat_map(),
         None => measure::worth_of(doc?.document.world(), open.0.manifest()),
     };
     let cells_per_pixel = orthographic.scale / backdrop.view.cell_size;
@@ -116,7 +116,7 @@ fn bar() -> impl Scene {
     bsn! {
         Node {
             position_type: PositionType::Absolute,
-            bottom: px(96),
+            bottom: px(40),
             left: px(12),
             display: Display::None,
             flex_direction: FlexDirection::Column,

@@ -13,6 +13,8 @@ pub mod brush;
 pub mod browse;
 /// Opening and creating a campaign directory, and why either failed.
 pub mod campaign;
+/// Which terrain cells a settlement or a road draws as its own tile.
+pub mod claims;
 /// A combat map: a grid of combat tiles and nothing else, and every reason one is refused.
 pub mod combat;
 /// A value under authorship: its undo and redo stacks, and whether it is unsaved.

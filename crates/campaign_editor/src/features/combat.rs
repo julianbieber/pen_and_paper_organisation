@@ -63,7 +63,7 @@ pub fn a_combat_switch_was_asked_for(intent: Res<CombatIntent>) -> bool {
     *intent != CombatIntent::Nothing
 }
 
-/// What has been typed into the *New combat map* form.
+/// What has been typed into the *New* form.
 ///
 /// An empty field means the default: [`DEFAULT_COMBAT_NAME`] for the name and
 /// [`DEFAULT_COMBAT_CELLS`] for either side, so one press with nothing typed opens a map.
@@ -83,7 +83,7 @@ pub enum FieldKind {
     Height,
 }
 
-/// A text input in the *New combat map* form.
+/// A text input in the *New* form.
 #[derive(Component, Debug, Default, Clone, Copy, PartialEq)]
 pub struct CombatField {
     pub kind: FieldKind,
@@ -113,7 +113,7 @@ pub struct StoredRow {
 #[derive(Component, Default, Clone)]
 pub struct StoredList;
 
-/// The *Back to map* button.
+/// The *Back* button.
 #[derive(Component, Default, Clone)]
 pub struct LeaveCombatButton;
 
@@ -124,7 +124,7 @@ pub fn build_combat_panel(mut commands: Commands) {
 
 /// Lists the open combat maps in the panel, marking the unsaved one and the one on screen,
 /// lists the stored combat maps that are not open by name, hides the empty rows, and
-/// enables *Back to map* only while a combat map is on screen.
+/// enables *Back* only while a combat map is on screen.
 pub fn show_combat_panel(
     mut commands: Commands,
     maps: Res<CombatMaps>,
@@ -510,32 +510,40 @@ fn panel() -> impl Scene {
         Node {
             position_type: PositionType::Absolute,
             top: px(96),
-            left: percent(50),
+            right: px(12),
             display: Display::Flex,
             flex_direction: FlexDirection::Column,
-            row_gap: px(6),
-            padding: px(8),
+            row_gap: px(4),
+            padding: px(6),
+            width: px(PANEL_WIDTH),
         }
-        UiTransform { translation: {Val2::new(Val::Percent(-50.0), Val::ZERO)} }
         ThemeBackgroundColor(tokens::WINDOW_BG)
         CampaignChrome
         CombatPanel
         Children [
-            (Text("Combat maps") ThemedText),
+            small_text("Combat maps"),
+            field(FieldKind::Name, PANEL_WIDTH - 12.0),
             (
                 Node {
                     display: Display::Flex,
                     flex_direction: FlexDirection::Row,
                     align_items: AlignItems::Center,
-                    column_gap: px(6),
+                    column_gap: px(4),
                 }
                 Children [
-                    (Text({format!("Name ({DEFAULT_COMBAT_NAME})")}) ThemedText),
-                    field(FieldKind::Name, 140.0),
-                    (Text({format!("W ({DEFAULT_COMBAT_CELLS})")}) ThemedText),
-                    field(FieldKind::Width, 48.0),
-                    (Text({format!("H ({DEFAULT_COMBAT_CELLS})")}) ThemedText),
-                    field(FieldKind::Height, 48.0),
+                    small_text("W"),
+                    field(FieldKind::Width, 36.0),
+                    small_text("H"),
+                    field(FieldKind::Height, 36.0)
+                ]
+            ),
+            (
+                Node {
+                    display: Display::Flex,
+                    flex_direction: FlexDirection::Row,
+                    column_gap: px(4),
+                }
+                Children [
                     new_button(),
                     leave_button()
                 ]
@@ -543,11 +551,8 @@ fn panel() -> impl Scene {
             (
                 Node {
                     display: Display::Flex,
-                    flex_direction: FlexDirection::Row,
-                    flex_wrap: FlexWrap::Wrap,
-                    column_gap: px(6),
-                    row_gap: px(4),
-                    max_width: px(560),
+                    flex_direction: FlexDirection::Column,
+                    row_gap: px(2),
                 }
                 Children [
                     combat_row(0),
@@ -563,16 +568,12 @@ fn panel() -> impl Scene {
             (
                 Node {
                     display: Display::None,
-                    flex_direction: FlexDirection::Row,
-                    flex_wrap: FlexWrap::Wrap,
-                    align_items: AlignItems::Center,
-                    column_gap: px(6),
-                    row_gap: px(4),
-                    max_width: px(560),
+                    flex_direction: FlexDirection::Column,
+                    row_gap: px(2),
                 }
                 StoredList
                 Children [
-                    (Text("Stored") ThemedText),
+                    small_text("Stored"),
                     stored_row(0),
                     stored_row(1),
                     stored_row(2),
@@ -592,6 +593,18 @@ fn panel() -> impl Scene {
                 ]
             )
         ]
+    }
+}
+
+const PANEL_WIDTH: f32 = 150.0;
+
+const SMALL_TEXT: f32 = 12.0;
+
+fn small_text(text: &'static str) -> impl Scene {
+    bsn! {
+        Text({text})
+        TextFont { font_size: {bevy::text::FontSize::Px(SMALL_TEXT)} }
+        ThemedText
     }
 }
 
@@ -624,7 +637,7 @@ fn field(kind: FieldKind, width: f32) -> impl Scene {
 fn new_button() -> impl Scene {
     bsn! {
         @FeathersButton {
-            @caption: bsn! { Text("New combat map") ThemedText },
+            @caption: bsn! { Text("New") ThemedText },
         }
         on(|_: On<Activate>, mut intent: ResMut<CombatIntent>, mut focus: ResMut<InputFocus>| {
             *intent = CombatIntent::New;
@@ -636,7 +649,7 @@ fn new_button() -> impl Scene {
 fn leave_button() -> impl Scene {
     bsn! {
         @FeathersButton {
-            @caption: bsn! { Text("Back to map") ThemedText },
+            @caption: bsn! { Text("Back") ThemedText },
         }
         LeaveCombatButton
         InteractionDisabled

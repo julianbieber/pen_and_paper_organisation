@@ -49,13 +49,23 @@ pub const MEASURE_WIDTH_PIXELS: f32 = 2.5;
 pub const TOKEN_RING_PIXELS: f32 = 2.5;
 
 /// The width of the dark lettering under a token's name, in logical pixels.
-pub const TOKEN_SHADOW_PIXELS: f32 = 3.5;
+pub const TOKEN_SHADOW_PIXELS: f32 = 2.5;
 
 /// The width of a token's name, in logical pixels.
-pub const TOKEN_LABEL_WIDTH_PIXELS: f32 = 1.5;
+pub const TOKEN_LABEL_WIDTH_PIXELS: f32 = 1.0;
 
-/// How tall a token's name is drawn, in logical pixels, whatever the zoom.
-pub const TOKEN_LABEL_PIXELS: f32 = 13.0;
+/// How tall a token's name is drawn, in logical pixels, at most.
+pub const TOKEN_LABEL_PIXELS: f32 = 8.0;
+
+/// The most of a token's side its name may be tall, so a name never outgrows its token
+/// when the map is zoomed out.
+pub const TOKEN_LABEL_SHARE: f32 = 0.3;
+
+/// The most of a token's side its name may be wide.
+pub const TOKEN_LABEL_WIDTH_SHARE: f32 = 0.9;
+
+/// How wide one letter of a token's name is drawn, as a share of its height.
+pub const TOKEN_LETTER_ASPECT: f32 = 0.7;
 
 /// The widest a river is drawn, in logical pixels.
 ///
