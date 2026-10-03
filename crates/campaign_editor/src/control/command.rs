@@ -82,7 +82,7 @@ pub(super) enum Command {
     Brush(Brush),
     /// Chooses the tile a stroke lays.
     Tile(DungeonTile),
-    /// Presses the panel's Open dungeon or Back to map button and waits for the switch.
+    /// Asks to open the selected dungeon or go back to the world map, as Enter and Backspace do, and waits for the switch.
     ///
     /// Goes through [`DungeonIntent`] rather than reaching into the documents, so a
     /// scripted run cannot switch in a way a GM could not — and so the same clearing of the
@@ -95,11 +95,11 @@ pub(super) enum Command {
     },
     /// Chooses the tile a stroke lays on a combat map.
     CombatTile(CombatTile),
-    /// Presses the *Combat maps* panel's New combat map, one of its open or stored rows, or
-    /// Back to map, and waits for the switch.
+    /// Presses the *Combat maps* panel's New, one of its open or stored rows, or
+    /// Back, and waits for the switch.
     ///
     /// Goes through [`CombatIntent`] for the reason [`Command::Switch`] goes through
-    /// [`DungeonIntent`]. `fields` is what the New combat map form holds, written first.
+    /// [`DungeonIntent`]. `fields` is what the *Combat maps* form holds, written first.
     CombatSwitch {
         asks: CombatIntent,
         fields: Option<CombatFields>,

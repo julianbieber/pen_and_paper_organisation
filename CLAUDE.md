@@ -222,7 +222,7 @@ checkable without a window and there is always exactly one place to come back to
 
 **A combat map is not a `World`.** It lives in `CombatMaps`, not `WorldDoc`, and is drawn on
 `BackdropSource::Combat`, the third backdrop. It sits over whatever `WorldDoc` has on screen
-— the world map or a dungeon — which is untouched until *Back to map* returns to it, so
+— the world map or a dungeon — which is untouched until *Back* returns to it, so
 every system that draws or authors the world document checks `CombatMaps` first, and
 entering or leaving a dungeon is refused while a combat map is on screen.
 
