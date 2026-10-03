@@ -12,6 +12,7 @@ use bevy::camera::Projection;
 use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
 use bevy::sprite_render::{TileData, TilemapChunk, TilemapChunkTileData};
+use campaign::claims::Claims;
 use campaign::grid::{TileGrid, TileVocabulary};
 use campaign::tiles::{self, CHUNK_CELLS, ChunkScratch, ChunkTiles, MapTile};
 
@@ -62,6 +63,13 @@ pub enum ChunkCache {
     Grid,
 }
 
+/// The world map's settlements and roads, as the terrain cells they draw over.
+///
+/// Kept from the last world map on screen: a dungeon's edits cannot move a settlement,
+/// so it is neither cleared nor rebuilt while one is.
+#[derive(Resource, Debug, Default)]
+pub struct FeatureClaims(pub Claims);
+
 /// Makes the chunks the camera can see resident, and takes back the ones it cannot.
 ///
 /// Gives up every resident chunk when the backdrop changes under it. That is done here,
@@ -79,6 +87,7 @@ pub fn stream_chunks(
     dungeon: Res<DungeonTileset>,
     combat_tileset: Option<Res<CombatTileset>>,
     threshold: Res<RiverThreshold>,
+    claims: Res<FeatureClaims>,
     mut chunks: ResMut<MapChunks>,
     mut drawn: Local<Option<u32>>,
     camera: Single<(&Transform, &Projection, &Camera), With<MapCamera>>,
@@ -165,7 +174,7 @@ pub fn stream_chunks(
     for coord in missing.into_iter().take(CHUNKS_PER_FRAME) {
         let (data, cache) = match backdrop.source {
             BackdropSource::Terrain => {
-                let filled = tiles::chunk_tiles(
+                let mut filled = tiles::chunk_tiles(
                     open.0.terrain(),
                     terrain.ramp,
                     coord.x,
@@ -173,6 +182,7 @@ pub fn stream_chunks(
                     threshold.accumulation,
                     scratch,
                 );
+                filled.claim(claims.0.in_chunk(coord.x, coord.y));
                 (to_tile_data(&filled), ChunkCache::Terrain(filled))
             }
             BackdropSource::Grid => {
@@ -235,6 +245,57 @@ pub fn stream_chunks(
                 live.insert(coord, entity);
             }
         }
+    }
+}
+
+/// Redraws the resident terrain chunks a world map edit moved a settlement or a road
+/// across.
+///
+/// Rebuilds the claims whenever the document changes and redraws only the chunks whose
+/// claimed cells differ, so an edit that moves nothing claimed redraws nothing. A dungeon
+/// on screen is left alone.
+pub fn reclaim_cells(
+    open: Res<OpenCampaign>,
+    doc: Res<WorldDoc>,
+    terrain: Res<MapTerrain>,
+    threshold: Res<RiverThreshold>,
+    mut claims: ResMut<FeatureClaims>,
+    mut chunks: ResMut<MapChunks>,
+    mut resident: Query<(&mut TilemapChunkTileData, &mut ChunkCache)>,
+) {
+    let world = doc.document.world();
+    if world.grid().is_some() {
+        return;
+    }
+    let fresh = Claims::of(world, terrain.width, terrain.height);
+    let differing = fresh.chunks_differing_from(&claims.0);
+    if differing.is_empty() {
+        return;
+    }
+    claims.0 = fresh;
+
+    let MapChunks { live, scratch, .. } = &mut *chunks;
+    for (x, y) in differing {
+        let Some(entity) = live.get(&ChunkCoord { x, y }) else {
+            continue;
+        };
+        let Ok((mut data, mut cache)) = resident.get_mut(*entity) else {
+            continue;
+        };
+        if !matches!(*cache, ChunkCache::Terrain(_)) {
+            continue;
+        }
+        let mut filled = tiles::chunk_tiles(
+            open.0.terrain(),
+            terrain.ramp,
+            x,
+            y,
+            threshold.accumulation,
+            scratch,
+        );
+        filled.claim(claims.0.in_chunk(x, y));
+        data.0 = to_tile_data(&filled);
+        *cache = ChunkCache::Terrain(filled);
     }
 }
 
@@ -390,7 +451,8 @@ mod tests {
             .iter()
             .map(|accumulation| {
                 Some(CellCache {
-                    dry: TileKind::Land(2),
+                    dry: TileKind::Grass,
+                    dry_shade: 1.0,
                     shade: 1.0,
                     river_accumulation: Some(*accumulation),
                 })

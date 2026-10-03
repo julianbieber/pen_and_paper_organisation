@@ -5,8 +5,8 @@
 //! a fixture and hoped for.
 
 use campaign::tiles::{
-    self, CellFacts, ChunkScratch, HeightRamp, LAND_BANDS, MapTile, SHADE_STRENGTH, TILE_COUNT,
-    TileKind,
+    self, CellFacts, ChunkScratch, ClaimedCell, DENSITY_STRENGTH, HeightRamp, MOUNTAIN_LINE,
+    SHADE_STRENGTH, SNOW_LINE, TILE_COUNT, TileKind,
 };
 use glam::UVec2;
 use watershed::{
@@ -23,7 +23,8 @@ fn land(height: f32) -> CellFacts {
         height,
         depth: None,
         accumulation: 0.0,
-        water_mask: 0,
+        forest: 0.0,
+        farmland: 0.0,
         dz_east: 0.0,
         dz_north: 0.0,
     }
@@ -34,6 +35,10 @@ fn water(depth: f32) -> CellFacts {
         depth: Some(depth),
         ..land(0.0)
     }
+}
+
+fn at_fraction(fraction: f32) -> CellFacts {
+    land(RAMP.low + RAMP.width() * fraction)
 }
 
 // The one invariant that keeps the art and the classifier from drifting: the strip's
@@ -61,40 +66,12 @@ fn every_tile_the_map_draws_has_exactly_one_column() {
     );
 }
 
-// A coast is only reached with a wet neighbour, so mask zero must not consume a
-// column — the bug that made the strip one tile longer than it could ever draw.
-#[test]
-fn the_coast_columns_start_at_the_first_mask_that_can_occur() {
-    assert_eq!(TileKind::Coast(1).index(), TileKind::River.index() + 1);
-    assert_eq!(TileKind::Coast(15).index(), TILE_COUNT - 1);
-}
-
 // Water beats everything, whatever the threshold says about the water's accumulation.
 #[test]
 fn standing_water_is_never_a_river() {
     let mut facts = water(1.0);
     facts.accumulation = f32::MAX;
-    assert_eq!(tiles::classify(facts, RAMP, 0.0), TileKind::ShallowWater);
-}
-
-// Depth splits at one band, and the split is stated against the ramp rather than a
-// fixed depth.
-#[test]
-fn water_deeper_than_one_band_is_drawn_deep() {
-    let band = RAMP.band_height();
-    assert_eq!(
-        tiles::classify(water(band * 0.5), RAMP, 0.0),
-        TileKind::ShallowWater
-    );
-    assert_eq!(
-        tiles::classify(water(band), RAMP, 0.0),
-        TileKind::ShallowWater,
-        "exactly one band deep is not deeper than one band"
-    );
-    assert_eq!(
-        tiles::classify(water(band * 1.5), RAMP, 0.0),
-        TileKind::DeepWater
-    );
+    assert_eq!(tiles::classify(facts, RAMP, 0.0), TileKind::Water);
 }
 
 // `watershed` reports zero accumulation off the edge of the terrain and its own
@@ -103,7 +80,7 @@ fn water_deeper_than_one_band_is_drawn_deep() {
 fn a_threshold_of_zero_does_not_make_every_cell_a_river() {
     assert_eq!(
         tiles::classify(land(10.0), RAMP, 0.0),
-        TileKind::Land(1),
+        TileKind::Grass,
         "a dry cell with no accumulation is not a channel at threshold zero"
     );
 
@@ -112,37 +89,74 @@ fn a_threshold_of_zero_does_not_make_every_cell_a_river() {
     assert_eq!(tiles::classify(flowing, RAMP, 0.0), TileKind::River);
 }
 
-// A river reaching the sea is a mouth; drawing it as coast would break the drainage.
+// The two height lines are fractions of the ramp, so mountains sit at the same place on
+// any terrain whatever its height unit.
 #[test]
-fn a_channel_beats_a_coastline() {
+fn mountain_and_snow_start_at_their_lines() {
+    let below = MOUNTAIN_LINE - 0.01;
+    assert_eq!(tiles::dry_kind(at_fraction(below), RAMP), TileKind::Grass);
+    assert_eq!(
+        tiles::dry_kind(at_fraction(MOUNTAIN_LINE), RAMP),
+        TileKind::Mountain
+    );
+    assert_eq!(
+        tiles::dry_kind(at_fraction(SNOW_LINE - 0.01), RAMP),
+        TileKind::Mountain
+    );
+    assert_eq!(
+        tiles::dry_kind(at_fraction(SNOW_LINE), RAMP),
+        TileKind::Snow
+    );
+    assert_eq!(tiles::dry_kind(at_fraction(1.0), RAMP), TileKind::Snow);
+}
+
+// Forest and farmland claim a cell only above half density, forest first, and never
+// on a mountain: the height lines are what the GM reads as terrain.
+#[test]
+fn density_above_one_half_decides_forest_and_farmland() {
     let mut facts = land(10.0);
-    facts.accumulation = 100.0;
-    facts.water_mask = 0b0100;
-    assert_eq!(tiles::classify(facts, RAMP, 10.0), TileKind::River);
-    assert_eq!(tiles::classify(facts, RAMP, 1000.0), TileKind::Coast(0b0100));
+    facts.forest = 0.5;
+    facts.farmland = 0.5;
+    assert_eq!(
+        tiles::dry_kind(facts, RAMP),
+        TileKind::Grass,
+        "exactly one half is not above it"
+    );
+
+    facts.farmland = 0.6;
+    assert_eq!(tiles::dry_kind(facts, RAMP), TileKind::Farmland);
+
+    facts.forest = 0.6;
+    assert_eq!(
+        tiles::dry_kind(facts, RAMP),
+        TileKind::Forest,
+        "forest wins over farmland"
+    );
+
+    let mut high = at_fraction(MOUNTAIN_LINE);
+    high.forest = 1.0;
+    assert_eq!(tiles::dry_kind(high, RAMP), TileKind::Mountain);
 }
 
-// Every neighbour arrangement has a tile, and none of them lands off the strip.
+// The density shading: denser woods and fields are darker, the tint stays within its
+// bound, and a tile that has no density is not tinted at all.
 #[test]
-fn every_neighbour_mask_draws_a_coast_on_the_strip() {
-    for mask in 1..=15u8 {
-        let mut facts = land(10.0);
-        facts.water_mask = mask;
-        let kind = tiles::classify(facts, RAMP, f32::MAX);
-        assert_eq!(kind, TileKind::Coast(mask));
-        assert!(kind.index() < TILE_COUNT);
-    }
-}
+fn a_denser_cell_is_drawn_darker_within_bounds() {
+    let mut sparse = land(10.0);
+    sparse.forest = 0.55;
+    let mut dense = land(10.0);
+    dense.forest = 1.0;
 
-// A terrain with no water solve reaches only the band arm, and that is not an error.
-#[test]
-fn a_dry_terrain_is_all_bands() {
-    for step in 0..=LAND_BANDS {
-        let height = RAMP.low + RAMP.width() * f32::from(step) / f32::from(LAND_BANDS);
-        let kind = tiles::classify(land(height), RAMP, f32::MAX);
-        assert!(matches!(kind, TileKind::Land(_)), "{height} gave {kind:?}");
-        assert!(kind.index() < TILE_COUNT);
+    let light = tiles::density_tint(TileKind::Forest, sparse);
+    let dark = tiles::density_tint(TileKind::Forest, dense);
+    assert!(dark < light, "{dark} is not darker than {light}");
+    for tint in [light, dark] {
+        assert!(
+            (tint - 1.0).abs() <= DENSITY_STRENGTH + f32::EPSILON,
+            "{tint}"
+        );
     }
+    assert_eq!(tiles::density_tint(TileKind::Grass, dense), 1.0);
 }
 
 // A flat terrain is constructible — `ChannelMeta::linear(v, v)` — and must not divide
@@ -154,11 +168,10 @@ fn a_ramp_with_no_width_reads_as_flat_rather_than_as_an_abyss() {
         high: 5.0,
     };
     assert_eq!(flat.width(), 0.0);
-    assert_eq!(tiles::classify(land(5.0), flat, f32::MAX), TileKind::Land(0));
+    assert_eq!(tiles::classify(land(5.0), flat, f32::MAX), TileKind::Grass);
     assert_eq!(
         tiles::classify(water(1000.0), flat, f32::MAX),
-        TileKind::ShallowWater,
-        "with no ramp to measure against, water is shallow rather than an abyss"
+        TileKind::Water
     );
     assert_eq!(tiles::shade(land(5.0), flat), 1.0);
 }
@@ -171,11 +184,11 @@ fn heights_outside_the_ramp_still_land_on_the_strip() {
         high: 0.0,
     };
     assert_eq!(inverted.width(), 0.0);
-    assert_eq!(inverted.band(30.0), 0);
+    assert_eq!(inverted.fraction(30.0), 0.0);
 
     for height in [f32::NAN, f32::INFINITY, -f32::INFINITY, -1e9, 1e9] {
-        let band = RAMP.band(height);
-        assert!(band < LAND_BANDS, "{height} gave band {band}");
+        let fraction = RAMP.fraction(height);
+        assert!((0.0..=1.0).contains(&fraction), "{height} gave {fraction}");
     }
 }
 
@@ -208,6 +221,10 @@ fn a_shade_stays_within_reach_of_one_and_never_shades_water() {
 }
 
 fn watered_terrain() -> Terrain {
+    terrain_with(None)
+}
+
+fn terrain_with(forest: Option<Vec<u8>>) -> Terrain {
     let size = UVec2::new(8, 8);
 
     let heights: Vec<u8> = (0..64u32).map(|i| ((i / 8) * 32) as u8).collect();
@@ -237,21 +254,32 @@ fn watered_terrain() -> Terrain {
         LayerTexels::from_bytes(size, 4, water).expect("8x8x4 texels"),
     );
 
-    let field = FieldInfo {
+    let mut fields = vec![FieldInfo {
         name: "height".to_owned(),
         role: FieldRole::Height,
         shift: 0,
         categorical: false,
         layer: 0,
         channel: 0,
-    };
+    }];
+    let mut layers = vec![height_layer, water_layer];
+    if let Some(forest) = forest {
+        layers.push(TerrainLayer::new(
+            Some(0),
+            vec![ChannelMeta::linear(0.0, 1.0)],
+            LayerTexels::from_bytes(size, 1, forest).expect("8x8x1 texels"),
+        ));
+        fields.push(FieldInfo {
+            name: "forest".to_owned(),
+            role: FieldRole::Custom,
+            shift: 0,
+            categorical: false,
+            layer: 2,
+            channel: 0,
+        });
+    }
 
-    Terrain::new(
-        size,
-        vec![field],
-        vec![height_layer, water_layer],
-        Some(WaterInfo { lakes: 1, layer: 1 }),
-    )
+    Terrain::new(size, fields, layers, Some(WaterInfo { lakes: 1, layer: 1 }))
 }
 
 // The terrain's rows run top to bottom and a chunk's run bottom to top; getting this
@@ -267,16 +295,17 @@ fn the_terrains_first_row_lands_at_the_top_of_the_chunk() {
     let top = chunk.tiles[(side - 1) * side + 4].expect("terrain row 0 is on the terrain");
     let bottom = chunk.tiles[(side - 8) * side + 4].expect("terrain row 7 is on the terrain");
 
-    let band = |tile: MapTile| match tile.kind {
-        TileKind::Land(band) => band,
-        other => panic!("column 4 is dry land, got {other:?}"),
-    };
-    assert!(
-        band(top) < band(bottom),
-        "the fixture's heights rise with the terrain's row index, so the lowest band \
-         must come back at the chunk's highest row — the top of the screen"
+    assert_eq!(
+        top.kind,
+        TileKind::Grass,
+        "terrain row 0 is the fixture's lowest ground"
     );
-    assert_eq!(band(top), 0, "terrain row 0 is the fixture's lowest ground");
+    assert_eq!(
+        bottom.kind,
+        TileKind::Snow,
+        "the fixture's heights rise with the terrain's row index, so its highest ground \
+         must come back at the chunk's lowest row — the bottom of the screen"
+    );
 }
 
 // A terrain is not a whole number of chunks, so most chunks have cells that are not
@@ -299,11 +328,14 @@ fn cells_off_the_terrain_are_left_undrawn() {
     assert_eq!(away.land_accumulation, None);
 }
 
-// The coastline is read from the terrain's own neighbours, and the edge of the map is
-// not one of them.
+// Forest is read from a field the terrain names `forest`, not from a role, and a terrain
+// without one is drawn without forest rather than refused.
 #[test]
-fn the_terrains_border_is_not_drawn_as_a_coastline() {
-    let terrain = watered_terrain();
+fn a_forest_field_is_read_by_name() {
+    let dense: Vec<u8> = (0..64u32)
+        .map(|i| if i % 8 == 4 { 255 } else { 0 })
+        .collect();
+    let terrain = terrain_with(Some(dense));
     let ramp = HeightRamp::of(&terrain).expect("height field");
     let mut scratch = ChunkScratch::default();
     let chunk = tiles::chunk_tiles(&terrain, ramp, 0, 0, f32::MAX, &mut scratch);
@@ -312,17 +344,49 @@ fn the_terrains_border_is_not_drawn_as_a_coastline() {
     let at = |x: usize, terrain_row: usize| {
         chunk.tiles[(side - 1 - terrain_row) * side + x].expect("on the terrain")
     };
+    assert_eq!(at(4, 1).kind, TileKind::Forest);
+    assert_eq!(at(3, 1).kind, TileKind::Grass);
+    assert_eq!(at(0, 1).kind, TileKind::Water);
 
-    assert_eq!(
-        at(2, 4).kind,
-        TileKind::Coast(0b1000),
-        "the first dry column has water to its west and land everywhere else"
-    );
+    let bare = tiles::chunk_tiles(&watered_terrain(), ramp, 0, 0, f32::MAX, &mut scratch);
     assert!(
-        matches!(at(7, 4).kind, TileKind::Land(_)),
-        "the eastern edge has no wet neighbour: off the terrain counts as land, not coast"
+        bare.tiles
+            .iter()
+            .flatten()
+            .all(|tile| tile.kind != TileKind::Forest)
     );
-    assert!(matches!(at(0, 0).kind, TileKind::ShallowWater | TileKind::DeepWater));
+}
+
+// A cell a settlement or a road claims is drawn as that tile and stays so whatever the
+// river threshold does, while standing water under a feature is still water.
+#[test]
+fn a_claimed_cell_keeps_its_tile_across_threshold_moves() {
+    let terrain = watered_terrain();
+    let ramp = HeightRamp::of(&terrain).expect("height field");
+    let mut scratch = ChunkScratch::default();
+    let mut chunk = tiles::chunk_tiles(&terrain, ramp, 0, 0, f32::MAX, &mut scratch);
+
+    let side = tiles::CHUNK_CELLS;
+    let slot = |x: u32, terrain_row: u32| (side - 1 - terrain_row) * side + x;
+    chunk.claim(&[
+        ClaimedCell {
+            slot: slot(5, 3),
+            kind: TileKind::Road,
+        },
+        ClaimedCell {
+            slot: slot(0, 3),
+            kind: TileKind::City,
+        },
+    ]);
+    chunk.apply_threshold(10.0);
+
+    let kind = |slot: u32| chunk.tiles[slot as usize].expect("on the terrain").kind;
+    assert_eq!(
+        kind(slot(5, 3)),
+        TileKind::Road,
+        "the road crosses the channel as a bridge"
+    );
+    assert_eq!(kind(slot(0, 3)), TileKind::Water);
 }
 
 // The threshold is the one runtime control, and moving it must not read the terrain

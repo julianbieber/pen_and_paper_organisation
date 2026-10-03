@@ -30,7 +30,7 @@ pub mod view;
 
 use crate::{EditorSet, OpenCampaign};
 use backdrop::Backdrop;
-use load::{MapAssets, MapState, MapTerrain, TilesetRoot};
+use load::{MapAssets, MapState, MapTerrain};
 use panel::RiverThreshold;
 use pointer::{MapPointer, PointerOverride};
 
@@ -39,14 +39,15 @@ pub struct MapPlugin;
 
 impl Plugin for MapPlugin {
     fn build(&self, app: &mut App) {
+        load::embed_strips(app);
         app.init_resource::<RiverThreshold>()
             .init_resource::<chunks::MapChunks>()
             .init_resource::<chunks::PaintedCells>()
+            .init_resource::<chunks::FeatureClaims>()
             .init_resource::<MapPointer>()
             .init_resource::<image::ImageAsset>()
             .init_resource::<PointerOverride>()
             .init_resource::<scale::ScaleFields>()
-            .insert_resource(TilesetRoot(tileset_root()))
             .add_systems(Startup, camera::spawn_camera)
             .add_systems(
                 Update,
@@ -78,6 +79,11 @@ impl Plugin for MapPlugin {
                     pointer::track_pointer.run_if(resource_exists::<Backdrop>),
                     scalebar::show_scale_bar.run_if(
                         resource_exists::<Backdrop>.and_then(resource_exists::<OpenCampaign>),
+                    ),
+                    chunks::reclaim_cells.run_if(
+                        resource_exists_and_changed::<crate::document::WorldDoc>
+                            .and_then(resource_exists::<MapTerrain>)
+                            .and_then(backdrop::backdrop_is_the_terrain),
                     ),
                     chunks::stream_chunks
                         .run_if(resource_exists::<Backdrop>.and_then(load::tileset_is_ready)),
@@ -116,8 +122,4 @@ pub fn pointer_is_over_ui(
         .values()
         .flat_map(|hits| hits.keys())
         .any(|entity| nodes.contains(*entity))
-}
-
-fn tileset_root() -> std::path::PathBuf {
-    bevy::asset::io::file::FileAssetReader::get_base_path().join("assets")
 }

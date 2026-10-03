@@ -29,7 +29,7 @@ use crate::features::select::{Dragging, Selection};
 use crate::features::token::{TokenFields, TokenGesture, TokenIntent};
 use crate::features::tool::ActiveTool;
 use crate::map::backdrop::{Backdrop, RetiredBackdrop};
-use crate::map::chunks::{ChunkCoord, MapChunks, PaintedCells};
+use crate::map::chunks::{ChunkCoord, FeatureClaims, MapChunks, PaintedCells};
 use crate::map::image::{BackdropImage, ImageAsset};
 use crate::map::load::{CombatTileset, DungeonTileset, MapAssets, MapState, MapTerrain};
 use crate::map::scale::ScaleFields;
@@ -157,6 +157,7 @@ fn close_campaign(world: &mut World) {
     world.remove_resource::<NotesWatch>();
 
     world.insert_resource(MapChunks::default());
+    world.insert_resource(FeatureClaims::default());
     world.insert_resource(PaintedCells::default());
     world.insert_resource(ImageAsset::default());
     world.insert_resource(ScaleFields::default());
