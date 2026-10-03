@@ -62,8 +62,7 @@ path field in the dialog has a *Browse…* beside it (#28): `crates/campaign/src
 decides where a walk starts, what one directory lists (hidden directories dropped, capped
 at `MAX_LISTED`) and what "up" is, and `crates/campaign_editor/src/picker.rs` is the
 feathers sheet, reading every directory on the IO pool. A campaign can be closed and
-another opened without quitting `pnp` (#29): *Close campaign* and `pnp-ctl open`/`close`
-both go through the unsaved guard in `features/prompt.rs`, `crates/campaign_editor/src/session.rs`
+another opened without quitting `pnp` (#29): `pnp-ctl open`/`close` go through the unsaved guard in `features/prompt.rs`, `crates/campaign_editor/src/session.rs`
 holds the one teardown list every resource and root a campaign brings is named on, and the
 window title comes from `campaign::title`.
 A campaign syncs with its remote in one action (#30): `campaign::repo::Repo::sync` is the
@@ -408,6 +407,8 @@ offset is unavailable in a multithreaded process on Linux. `stamp_of_ident` and
 campaign directory at once. Authoring is paused while one runs — the save has to land
 before a pull could replace what it saved — but the map keeps drawing, since only
 `authoring_is_live` is gated on it, not the camera or the chunk stream.
+The *Close campaign* button was dropped too (2026-10-03): a campaign is closed with
+`pnp-ctl close` or by quitting.
 The map shows no sync controls (2026-10-03): the *Sync* button, the Remote field and *Set
 remote* were dropped, so a sync is `pnp-ctl sync` or git itself, and `origin` is set with
 `pnp-ctl remote <url>` or git.

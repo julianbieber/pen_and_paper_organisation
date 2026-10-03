@@ -7,11 +7,7 @@
 //! the wrong document — so anything a campaign brings must be dropped here, and nothing
 //! elsewhere in the editor tears any of it down on its own.
 
-use bevy::feathers::controls::FeathersButton;
-use bevy::feathers::theme::ThemedText;
-use bevy::input_focus::InputFocus;
 use bevy::prelude::*;
-use bevy::ui_widgets::Activate;
 use bevy::window::PrimaryWindow;
 
 use crate::combat::CombatMaps;
@@ -37,8 +33,8 @@ use crate::notes::NoteJob;
 use crate::sync::SyncJob;
 use crate::{CampaignChrome, EditorSet, OpenCampaign, StatusMessage};
 
-/// What the GM has asked of the open campaign, written by the Close button and the
-/// control socket and consumed by [`ask_to_close`] and [`close_campaign`].
+/// What the GM has asked of the open campaign, written by the control socket and
+/// consumed by [`ask_to_close`] and [`close_campaign`].
 #[derive(Resource, Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub enum CampaignClose {
     #[default]
@@ -49,7 +45,7 @@ pub enum CampaignClose {
     Confirmed,
 }
 
-/// The close bar, the window title, and the campaign's own teardown.
+/// The window title, and the campaign's own teardown.
 pub struct SessionPlugin;
 
 impl Plugin for SessionPlugin {
@@ -57,7 +53,6 @@ impl Plugin for SessionPlugin {
         app.init_resource::<CampaignClose>().add_systems(
             Update,
             (
-                build_close_bar.run_if(resource_added::<OpenCampaign>),
                 ask_to_close.run_if(closing_was_asked),
                 close_campaign.run_if(closing_was_confirmed),
                 sync_title,
@@ -75,9 +70,6 @@ fn closing_was_confirmed(closing: Res<CampaignClose>) -> bool {
     *closing == CampaignClose::Confirmed
 }
 
-fn build_close_bar(mut commands: Commands) {
-    commands.spawn_scene(close_bar());
-}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum CloseDecision {
@@ -205,31 +197,6 @@ fn sync_title(
         if window.title != title {
             window.title = title.clone();
         }
-    }
-}
-
-fn close_bar() -> impl Scene {
-    bsn! {
-        Node {
-            position_type: PositionType::Absolute,
-            top: px(12),
-            left: percent(50),
-        }
-        UiTransform { translation: {Val2::new(Val::Percent(-50.0), Val::ZERO)} }
-        CampaignChrome
-        Children [ close_button() ]
-    }
-}
-
-fn close_button() -> impl Scene {
-    bsn! {
-        @FeathersButton {
-            @caption: bsn! { Text("Close campaign") ThemedText },
-        }
-        on(|_: On<Activate>, mut closing: ResMut<CampaignClose>, mut focus: ResMut<InputFocus>| {
-            *closing = CampaignClose::Asked;
-            focus.clear();
-        })
     }
 }
 
