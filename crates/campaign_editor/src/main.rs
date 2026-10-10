@@ -204,8 +204,9 @@ fn status_bar() -> impl Scene {
             left: px(12),
             right: px(12),
         }
+        ZIndex(1)
         Pickable::IGNORE
-        Children [ (Text("") ThemedText StatusLine Pickable::IGNORE) ]
+        Children [ Text("") ThemedText StatusLine Pickable::IGNORE ]
     }
 }
 
@@ -218,6 +219,6 @@ fn shell() -> impl Scene {
         }
         TabGroup
         DialogRoot
-        Children [ dialog::dialog(), picker::sheet() ]
+        Children [ @dialog::dialog() -- @picker::sheet() ]
     }
 }

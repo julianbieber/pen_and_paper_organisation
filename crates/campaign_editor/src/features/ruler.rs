@@ -187,7 +187,7 @@ fn readout() -> impl Scene {
         ThemeBackgroundColor(tokens::WINDOW_BG)
         CampaignChrome
         Children [
-            (Text("") ThemedText RulerReadout)
+            Text("") ThemedText RulerReadout
         ]
     }
 }

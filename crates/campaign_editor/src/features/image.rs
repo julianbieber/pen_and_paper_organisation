@@ -656,71 +656,62 @@ fn panel(opacity: f32) -> impl Scene {
         ImagePanel
         CampaignChrome
         Children [
-            (Text("Import") ThemedText),
-            (
-                @FeathersTextInputContainer
-                Node { width: px(200) }
-                Children [
-                    (
-                        @FeathersTextInput
-                        ImportField
-                        on(|change: On<TextEditChange>,
-                            texts: Query<&EditableText>,
-                            mut fields: ResMut<ImageFields>| {
-                            if let Ok(text) = texts.get(change.event_target()) {
-                                fields.path = text.value().to_string();
-                            }
-                        })
-                    )
-                ]
-            ),
-            (
-                Node {
-                    display: Display::None,
-                    flex_direction: FlexDirection::Row,
-                    align_items: AlignItems::Center,
-                    column_gap: px(8),
+            Text("Import") ThemedText
+            --
+            @FeathersTextInputContainer
+            Node { width: px(200) }
+            Children [
+                @FeathersTextInput
+                ImportField
+                on(|change: On<TextEditChange>,
+                    texts: Query<&EditableText>,
+                    mut fields: ResMut<ImageFields>| {
+                    if let Ok(text) = texts.get(change.event_target()) {
+                        fields.path = text.value().to_string();
+                    }
+                })
+            ]
+            --
+            Node {
+                display: Display::None,
+                flex_direction: FlexDirection::Row,
+                align_items: AlignItems::Center,
+                column_gap: px(8),
+            }
+            DeclaredRow
+            Children [
+                Text("Fade") ThemedText
+                --
+                @FeathersSlider {
+                    @min: 0.0,
+                    @max: 1.0,
                 }
-                DeclaredRow
+                SliderValue({opacity})
+                OpacitySlider
+                on(slider_self_update)
+                --
+                @FeathersButton {
+                    @caption: bsn! { Text("Calibrate") ThemedText },
+                }
+                on(|_activate: On<Activate>, mut placing: ResMut<Placing>, mut status: ResMut<StatusMessage>| {
+                    placing.calibrate();
+                    status.say("click the first of two places you know the distance between");
+                })
+                --
+                @FeathersTextInputContainer
+                Node { width: px(90) }
                 Children [
-                    (Text("Fade") ThemedText),
-                    (
-                        @FeathersSlider {
-                            @value: {opacity},
-                            @min: 0.0,
-                            @max: 1.0,
+                    @FeathersTextInput
+                    DistanceField
+                    on(|change: On<TextEditChange>,
+                        texts: Query<&EditableText>,
+                        mut fields: ResMut<ImageFields>| {
+                        if let Ok(text) = texts.get(change.event_target()) {
+                            fields.distance = text.value().to_string();
                         }
-                        OpacitySlider
-                        on(slider_self_update)
-                    ),
-                    (
-                        @FeathersButton {
-                            @caption: bsn! { Text("Calibrate") ThemedText },
-                        }
-                        on(|_activate: On<Activate>, mut placing: ResMut<Placing>, mut status: ResMut<StatusMessage>| {
-                            placing.calibrate();
-                            status.say("click the first of two places you know the distance between");
-                        })
-                    ),
-                    (
-                        @FeathersTextInputContainer
-                        Node { width: px(90) }
-                        Children [
-                            (
-                                @FeathersTextInput
-                                DistanceField
-                                on(|change: On<TextEditChange>,
-                                    texts: Query<&EditableText>,
-                                    mut fields: ResMut<ImageFields>| {
-                                    if let Ok(text) = texts.get(change.event_target()) {
-                                        fields.distance = text.value().to_string();
-                                    }
-                                })
-                            )
-                        ]
-                    )
+                    })
                 ]
-            )
+            ]
         ]
     }
 }

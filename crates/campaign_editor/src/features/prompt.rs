@@ -252,21 +252,23 @@ fn sheet() -> impl Scene {
         PromptRoot
         CampaignChrome
         Children [
-            row(
+            @row(
                 Question::UnsavedOnClose,
                 "This campaign has unsaved changes.",
                 [("Save and close", Answer::Save),
                  ("Close without saving", Answer::Discard),
                  ("Cancel", Answer::Cancel)]
-            ),
-            row(
+            )
+            --
+            @row(
                 Question::UnsavedOnCampaignClose,
                 "This campaign has unsaved changes.",
                 [("Save and close campaign", Answer::Save),
                  ("Close without saving", Answer::Discard),
                  ("Cancel", Answer::Cancel)]
-            ),
-            row(
+            )
+            --
+            @row(
                 Question::OrphansOnDelete,
                 "Other features sit inside this one.",
                 [("Delete them too", Answer::Cascade),
@@ -287,19 +289,20 @@ fn row(question: Question, caption: &'static str, answers: [(&'static str, Answe
         }
         PromptRow { question: {question} }
         Children [
-            (Text({caption.to_string()}) ThemedText),
-            (
-                Node {
-                    display: Display::Flex,
-                    flex_direction: FlexDirection::Row,
-                    column_gap: px(8),
-                }
-                Children [
-                    answer_button(answers[0].0, answers[0].1),
-                    answer_button(answers[1].0, answers[1].1),
-                    answer_button(answers[2].0, answers[2].1)
-                ]
-            )
+            Text({caption.to_string()}) ThemedText
+            --
+            Node {
+                display: Display::Flex,
+                flex_direction: FlexDirection::Row,
+                column_gap: px(8),
+            }
+            Children [
+                @answer_button(answers[0].0, answers[0].1)
+                --
+                @answer_button(answers[1].0, answers[1].1)
+                --
+                @answer_button(answers[2].0, answers[2].1)
+            ]
         ]
     }
 }

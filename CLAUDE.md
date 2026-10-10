@@ -457,8 +457,11 @@ SSH passphrase or host-key question is not covered by this and can still hold it
   `lod` and the widths in `style` are stated in cells per logical pixel either way, so they
   mean different ground in a dungeon than on the world map — which is the point of a child
   document having its own scale.
-- **Bevy 0.19. All UI is `bevy_feathers`** — the toolkit `watershed_editor` uses, so its
-  chrome and idioms carry over. No `egui`.
+- **Bevy 0.20. All UI is `bevy_feathers`** — the toolkit `watershed_editor` uses, so its
+  chrome and idioms carry over. No `egui`. Bevy 0.20 stacks UI roots of equal z in the
+  order they arrived, newest on top, so a panel spawned when a campaign opens covers
+  anything spawned at startup: the status line and the scale bar carry `ZIndex(1)`, the
+  two modal sheets `GlobalZIndex(50)`.
 - `watershed` comes in by **git URL with a pinned `rev`**, never a path — the repo has to
   build without a sibling checkout. Local watershed work goes in `.cargo/config.toml`,
   which is gitignored, as it is in `watershed` itself. It cannot go in the root

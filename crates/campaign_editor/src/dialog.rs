@@ -194,258 +194,232 @@ pub fn dialog() -> impl Scene {
         }
         ThemeBackgroundColor(tokens::WINDOW_BG)
         Children [
-            (Text("Open a campaign") ThemedText),
-            (
-                Node { display: Display::Flex, flex_direction: FlexDirection::Column,
-                       width: px(420), row_gap: px(4) }
+            Text("Open a campaign") ThemedText
+            --
+            Node { display: Display::Flex, flex_direction: FlexDirection::Column,
+                   width: px(420), row_gap: px(4) }
+            Children [
+                Text("") ThemedText RecentsHeading
+                --
+                @recent_row(0) -- @recent_row(1) -- @recent_row(2) -- @recent_row(3)
+                --
+                @recent_row(4) -- @recent_row(5) -- @recent_row(6) -- @recent_row(7)
+            ]
+            --
+            Node {
+                display: Display::Flex,
+                flex_direction: FlexDirection::Row,
+                align_items: AlignItems::Center,
+                column_gap: px(6),
+            }
+            Children [
+                Text("Campaign") ThemedText
+                --
+                @FeathersTextInputContainer
+                Node { width: px(320) }
                 Children [
-                    (Text("") ThemedText RecentsHeading),
-                    recent_row(0), recent_row(1), recent_row(2), recent_row(3),
-                    recent_row(4), recent_row(5), recent_row(6), recent_row(7)
-                ]
-            ),
-            (
-                Node {
-                    display: Display::Flex,
-                    flex_direction: FlexDirection::Row,
-                    align_items: AlignItems::Center,
-                    column_gap: px(6),
-                }
-                Children [
-                    (Text("Campaign") ThemedText),
-                    (
-                        @FeathersTextInputContainer
-                        Node { width: px(320) }
-                        Children [
-                            (
-                                @FeathersTextInput
-                                RootInput
-                                PathInput(PathField::Root)
-                                on(|change: On<TextEditChange>,
-                                    texts: Query<&EditableText>,
-                                    mut fields: ResMut<DialogFields>| {
-                                    if let Ok(text) = texts.get(change.event_target()) {
-                                        fields.root = text.value().to_string();
-                                    }
-                                })
-                            )
-                        ]
-                    ),
-                    browse_button(PathField::Root)
-                ]
-            ),
-            (
-                Node {
-                    display: Display::Flex,
-                    flex_direction: FlexDirection::Row,
-                    column_gap: px(8),
-                }
-                Children [
-                    (
-                        @FeathersButton {
-                            @caption: bsn! { Text("Open") ThemedText },
-                            @variant: ButtonVariant::Primary,
+                    @FeathersTextInput
+                    RootInput
+                    PathInput(PathField::Root)
+                    on(|change: On<TextEditChange>,
+                        texts: Query<&EditableText>,
+                        mut fields: ResMut<DialogFields>| {
+                        if let Ok(text) = texts.get(change.event_target()) {
+                            fields.root = text.value().to_string();
                         }
-                        on(|_: On<Activate>,
-                            fields: Res<DialogFields>,
-                            mut job: ResMut<OpenJob>,
-                            mut status: ResMut<StatusMessage>| {
-                            start_open(PathBuf::from(fields.root.trim()), &mut job, &mut status);
-                        })
-                    )
+                    })
                 ]
-            ),
-            (Text("Create a campaign") ThemedText),
-            (
-                Node {
-                    display: Display::Flex,
-                    flex_direction: FlexDirection::Row,
-                    align_items: AlignItems::Center,
-                    column_gap: px(6),
+                --
+                @browse_button(PathField::Root)
+            ]
+            --
+            Node {
+                display: Display::Flex,
+                flex_direction: FlexDirection::Row,
+                column_gap: px(8),
+            }
+            Children [
+                @FeathersButton {
+                    @caption: bsn! { Text("Open") ThemedText },
+                    @variant: ButtonVariant::Primary,
                 }
+                on(|_: On<Activate>,
+                    fields: Res<DialogFields>,
+                    mut job: ResMut<OpenJob>,
+                    mut status: ResMut<StatusMessage>| {
+                    start_open(PathBuf::from(fields.root.trim()), &mut job, &mut status);
+                })
+            ]
+            --
+            Text("Create a campaign") ThemedText
+            --
+            Node {
+                display: Display::Flex,
+                flex_direction: FlexDirection::Row,
+                align_items: AlignItems::Center,
+                column_gap: px(6),
+            }
+            Children [
+                Text("Name") ThemedText
+                --
+                @FeathersTextInputContainer
+                Node { width: px(320) }
                 Children [
-                    (Text("Name") ThemedText),
-                    (
-                        @FeathersTextInputContainer
-                        Node { width: px(320) }
-                        Children [
-                            (
-                                @FeathersTextInput
-                                NameInput
-                                on(|change: On<TextEditChange>,
-                                    texts: Query<&EditableText>,
-                                    mut fields: ResMut<DialogFields>| {
-                                    if let Ok(text) = texts.get(change.event_target()) {
-                                        fields.name = text.value().to_string();
-                                    }
-                                })
-                            )
-                        ]
-                    )
-                ]
-            ),
-            (
-                Node {
-                    display: Display::Flex,
-                    flex_direction: FlexDirection::Row,
-                    align_items: AlignItems::Center,
-                    column_gap: px(6),
-                }
-                Children [
-                    (Text("Where") ThemedText),
-                    (
-                        @FeathersTextInputContainer
-                        Node { width: px(320) }
-                        Children [
-                            (
-                                @FeathersTextInput
-                                PathInput(PathField::Parent)
-                                on(|change: On<TextEditChange>,
-                                    texts: Query<&EditableText>,
-                                    mut fields: ResMut<DialogFields>| {
-                                    if let Ok(text) = texts.get(change.event_target()) {
-                                        fields.parent = text.value().to_string();
-                                    }
-                                })
-                            )
-                        ]
-                    ),
-                    browse_button(PathField::Parent)
-                ]
-            ),
-            (
-                Node {
-                    display: Display::Flex,
-                    flex_direction: FlexDirection::Row,
-                    align_items: AlignItems::Center,
-                    column_gap: px(6),
-                }
-                Children [
-                    (Text("Terrain") ThemedText),
-                    (
-                        @FeathersTextInputContainer
-                        Node { width: px(320) }
-                        Children [
-                            (
-                                @FeathersTextInput
-                                TerrainInput
-                                PathInput(PathField::Terrain)
-                                on(|change: On<TextEditChange>,
-                                    texts: Query<&EditableText>,
-                                    mut fields: ResMut<DialogFields>| {
-                                    if let Ok(text) = texts.get(change.event_target()) {
-                                        fields.terrain = text.value().to_string();
-                                    }
-                                })
-                            )
-                        ]
-                    ),
-                    browse_button(PathField::Terrain)
-                ]
-            ),
-            (
-                Node {
-                    display: Display::Flex,
-                    flex_direction: FlexDirection::Row,
-                    column_gap: px(8),
-                }
-                Children [
-                    (
-                        @FeathersButton {
-                            @caption: bsn! { Text("Create") ThemedText },
+                    @FeathersTextInput
+                    NameInput
+                    on(|change: On<TextEditChange>,
+                        texts: Query<&EditableText>,
+                        mut fields: ResMut<DialogFields>| {
+                        if let Ok(text) = texts.get(change.event_target()) {
+                            fields.name = text.value().to_string();
                         }
-                        on(|_: On<Activate>,
-                            fields: Res<DialogFields>,
-                            mut job: ResMut<OpenJob>,
-                            mut status: ResMut<StatusMessage>| {
-                            start_create(&fields, &mut job, &mut status);
-                        })
-                    )
+                    })
                 ]
-            ),
-            (Text("Clone a campaign") ThemedText),
-            (
-                Node {
-                    display: Display::Flex,
-                    flex_direction: FlexDirection::Row,
-                    align_items: AlignItems::Center,
-                    column_gap: px(6),
-                }
+            ]
+            --
+            Node {
+                display: Display::Flex,
+                flex_direction: FlexDirection::Row,
+                align_items: AlignItems::Center,
+                column_gap: px(6),
+            }
+            Children [
+                Text("Where") ThemedText
+                --
+                @FeathersTextInputContainer
+                Node { width: px(320) }
                 Children [
-                    (Text("URL") ThemedText),
-                    (
-                        @FeathersTextInputContainer
-                        Node { width: px(320) }
-                        Children [
-                            (
-                                @FeathersTextInput
-                                UrlInput
-                                on(|change: On<TextEditChange>,
-                                    texts: Query<&EditableText>,
-                                    mut fields: ResMut<DialogFields>| {
-                                    if let Ok(text) = texts.get(change.event_target()) {
-                                        fields.url = text.value().to_string();
-                                    }
-                                })
-                            )
-                        ]
-                    )
-                ]
-            ),
-            (
-                Node {
-                    display: Display::Flex,
-                    flex_direction: FlexDirection::Row,
-                    align_items: AlignItems::Center,
-                    column_gap: px(6),
-                }
-                Children [
-                    (Text("Where") ThemedText),
-                    (
-                        @FeathersTextInputContainer
-                        Node { width: px(320) }
-                        Children [
-                            (
-                                @FeathersTextInput
-                                PathInput(PathField::CloneParent)
-                                on(|change: On<TextEditChange>,
-                                    texts: Query<&EditableText>,
-                                    mut fields: ResMut<DialogFields>| {
-                                    if let Ok(text) = texts.get(change.event_target()) {
-                                        fields.clone_parent = text.value().to_string();
-                                    }
-                                })
-                            )
-                        ]
-                    ),
-                    browse_button(PathField::CloneParent)
-                ]
-            ),
-            (
-                Node {
-                    display: Display::Flex,
-                    flex_direction: FlexDirection::Row,
-                    column_gap: px(8),
-                }
-                Children [
-                    (
-                        @FeathersButton {
-                            @caption: bsn! { Text("Clone") ThemedText },
+                    @FeathersTextInput
+                    PathInput(PathField::Parent)
+                    on(|change: On<TextEditChange>,
+                        texts: Query<&EditableText>,
+                        mut fields: ResMut<DialogFields>| {
+                        if let Ok(text) = texts.get(change.event_target()) {
+                            fields.parent = text.value().to_string();
                         }
-                        on(|_: On<Activate>,
-                            fields: Res<DialogFields>,
-                            mut job: ResMut<OpenJob>,
-                            mut status: ResMut<StatusMessage>| {
-                            start_clone(
-                                PathBuf::from(fields.clone_parent.trim()),
-                                fields.url.trim().to_owned(),
-                                &mut job,
-                                &mut status,
-                            );
-                        })
-                    )
+                    })
                 ]
-            )
+                --
+                @browse_button(PathField::Parent)
+            ]
+            --
+            Node {
+                display: Display::Flex,
+                flex_direction: FlexDirection::Row,
+                align_items: AlignItems::Center,
+                column_gap: px(6),
+            }
+            Children [
+                Text("Terrain") ThemedText
+                --
+                @FeathersTextInputContainer
+                Node { width: px(320) }
+                Children [
+                    @FeathersTextInput
+                    TerrainInput
+                    PathInput(PathField::Terrain)
+                    on(|change: On<TextEditChange>,
+                        texts: Query<&EditableText>,
+                        mut fields: ResMut<DialogFields>| {
+                        if let Ok(text) = texts.get(change.event_target()) {
+                            fields.terrain = text.value().to_string();
+                        }
+                    })
+                ]
+                --
+                @browse_button(PathField::Terrain)
+            ]
+            --
+            Node {
+                display: Display::Flex,
+                flex_direction: FlexDirection::Row,
+                column_gap: px(8),
+            }
+            Children [
+                @FeathersButton {
+                    @caption: bsn! { Text("Create") ThemedText },
+                }
+                on(|_: On<Activate>,
+                    fields: Res<DialogFields>,
+                    mut job: ResMut<OpenJob>,
+                    mut status: ResMut<StatusMessage>| {
+                    start_create(&fields, &mut job, &mut status);
+                })
+            ]
+            --
+            Text("Clone a campaign") ThemedText
+            --
+            Node {
+                display: Display::Flex,
+                flex_direction: FlexDirection::Row,
+                align_items: AlignItems::Center,
+                column_gap: px(6),
+            }
+            Children [
+                Text("URL") ThemedText
+                --
+                @FeathersTextInputContainer
+                Node { width: px(320) }
+                Children [
+                    @FeathersTextInput
+                    UrlInput
+                    on(|change: On<TextEditChange>,
+                        texts: Query<&EditableText>,
+                        mut fields: ResMut<DialogFields>| {
+                        if let Ok(text) = texts.get(change.event_target()) {
+                            fields.url = text.value().to_string();
+                        }
+                    })
+                ]
+            ]
+            --
+            Node {
+                display: Display::Flex,
+                flex_direction: FlexDirection::Row,
+                align_items: AlignItems::Center,
+                column_gap: px(6),
+            }
+            Children [
+                Text("Where") ThemedText
+                --
+                @FeathersTextInputContainer
+                Node { width: px(320) }
+                Children [
+                    @FeathersTextInput
+                    PathInput(PathField::CloneParent)
+                    on(|change: On<TextEditChange>,
+                        texts: Query<&EditableText>,
+                        mut fields: ResMut<DialogFields>| {
+                        if let Ok(text) = texts.get(change.event_target()) {
+                            fields.clone_parent = text.value().to_string();
+                        }
+                    })
+                ]
+                --
+                @browse_button(PathField::CloneParent)
+            ]
+            --
+            Node {
+                display: Display::Flex,
+                flex_direction: FlexDirection::Row,
+                column_gap: px(8),
+            }
+            Children [
+                @FeathersButton {
+                    @caption: bsn! { Text("Clone") ThemedText },
+                }
+                on(|_: On<Activate>,
+                    fields: Res<DialogFields>,
+                    mut job: ResMut<OpenJob>,
+                    mut status: ResMut<StatusMessage>| {
+                    start_clone(
+                        PathBuf::from(fields.clone_parent.trim()),
+                        fields.url.trim().to_owned(),
+                        &mut job,
+                        &mut status,
+                    );
+                })
+            ]
         ]
     }
 }
