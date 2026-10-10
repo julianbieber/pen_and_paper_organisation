@@ -161,19 +161,16 @@ fn panel() -> impl Scene {
         CampaignChrome
         InitiativePanel
         Children [
-            (
-                Text("Initiative")
-                TextFont { font_size: {bevy::text::FontSize::Px(SMALL_TEXT)} }
-                ThemedText
-            ),
-            (
-                Node {
-                    display: Display::Flex,
-                    flex_direction: FlexDirection::Column,
-                    row_gap: px(2),
-                }
-                InitiativeList
-            )
+            Text("Initiative")
+            TextFont { font_size: {bevy::text::FontSize::Px(SMALL_TEXT)} }
+            ThemedText
+            --
+            Node {
+                display: Display::Flex,
+                flex_direction: FlexDirection::Column,
+                row_gap: px(2),
+            }
+            InitiativeList
         ]
     }
 }
@@ -191,65 +188,60 @@ fn row(name: &str) -> impl Scene {
         }
         InitiativeRow { name: {name.clone()} }
         Children [
-            (
-                @FeathersTextInputContainer
-                Node { width: {Val::Px(ROLL_WIDTH)} }
-                Children [
-                    (
-                        @FeathersTextInput
-                        InitiativeRoll { name: {roll.clone()} }
-                        on(|change: On<TextEditChange>,
-                            inputs: Query<(&EditableText, &InitiativeRoll)>,
-                            mut maps: ResMut<CombatMaps>,
-                            mut status: ResMut<StatusMessage>| {
-                            let Ok((text, input)) = inputs.get(change.event_target()) else {
-                                return;
-                            };
-                            let roll = match initiative_of(&text.value().to_string()) {
-                                Ok(roll) => roll,
-                                Err(problem) => {
-                                    status.say(problem.to_string());
-                                    return;
-                                }
-                            };
-                            let unchanged = maps
-                                .tokens_on_screen()
-                                .and_then(|(tokens, _)| tokens.get(&input.name))
-                                .is_none_or(|token| token.initiative() == roll);
-                            if unchanged {
-                                return;
-                            }
-                            if let Some((tokens, _)) = maps.tokens_on_screen_mut()
-                                && let Err(problem) = tokens.set_initiative(&input.name, roll)
-                            {
-                                status.say(problem.to_string());
-                            }
-                        })
-                    )
-                ]
-            ),
-            (
-                @FeathersButton {
-                    @caption: bsn! {
-                        Text({pick.clone()})
-                        TextFont { font_size: {bevy::text::FontSize::Px(SMALL_TEXT)} }
-                        ThemedText
-                    },
-                }
-                Node { flex_grow: 1.0 }
-                InitiativePick { name: {pick.clone()} }
-                on(|activate: On<Activate>,
-                    picks: Query<&InitiativePick>,
-                    mut gesture: ResMut<TokenGesture>,
-                    mut focus: ResMut<InputFocus>| {
-                    let Ok(pick) = picks.get(activate.event_target()) else {
+            @FeathersTextInputContainer
+            Node { width: {Val::Px(ROLL_WIDTH)} }
+            Children [
+                @FeathersTextInput
+                InitiativeRoll { name: {roll.clone()} }
+                on(|change: On<TextEditChange>,
+                    inputs: Query<(&EditableText, &InitiativeRoll)>,
+                    mut maps: ResMut<CombatMaps>,
+                    mut status: ResMut<StatusMessage>| {
+                    let Ok((text, input)) = inputs.get(change.event_target()) else {
                         return;
                     };
-                    gesture.drag = None;
-                    gesture.selected = Some(pick.name.clone());
-                    focus.clear();
+                    let roll = match initiative_of(&text.value().to_string()) {
+                        Ok(roll) => roll,
+                        Err(problem) => {
+                            status.say(problem.to_string());
+                            return;
+                        }
+                    };
+                    let unchanged = maps
+                        .tokens_on_screen()
+                        .and_then(|(tokens, _)| tokens.get(&input.name))
+                        .is_none_or(|token| token.initiative() == roll);
+                    if unchanged {
+                        return;
+                    }
+                    if let Some((tokens, _)) = maps.tokens_on_screen_mut()
+                        && let Err(problem) = tokens.set_initiative(&input.name, roll)
+                    {
+                        status.say(problem.to_string());
+                    }
                 })
-            )
+            ]
+            --
+            @FeathersButton {
+                @caption: bsn! {
+                    Text({pick.clone()})
+                    TextFont { font_size: {bevy::text::FontSize::Px(SMALL_TEXT)} }
+                    ThemedText
+                },
+            }
+            Node { flex_grow: 1.0 }
+            InitiativePick { name: {pick.clone()} }
+            on(|activate: On<Activate>,
+                picks: Query<&InitiativePick>,
+                mut gesture: ResMut<TokenGesture>,
+                mut focus: ResMut<InputFocus>| {
+                let Ok(pick) = picks.get(activate.event_target()) else {
+                    return;
+                };
+                gesture.drag = None;
+                gesture.selected = Some(pick.name.clone());
+                focus.clear();
+            })
         ]
     }
 }

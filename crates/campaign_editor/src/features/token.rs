@@ -422,37 +422,43 @@ fn panel() -> impl Scene {
         CampaignChrome
         TokenPanel
         Children [
-            (
-                Node {
-                    display: Display::Flex,
-                    flex_direction: FlexDirection::Row,
-                    align_items: AlignItems::Center,
-                    column_gap: px(6),
-                }
-                Children [
-                    (Text("Token") ThemedText),
-                    field(TokenFieldKind::Name),
-                    size_button(1),
-                    size_button(2),
-                    size_button(3),
-                    size_button(4),
-                    intent_button("Clear tokens", TokenIntent::Clear)
-                ]
-            ),
-            (
-                Node {
-                    display: Display::Flex,
-                    flex_direction: FlexDirection::Row,
-                    align_items: AlignItems::Center,
-                    column_gap: px(6),
-                }
-                Children [
-                    (Text("no token selected") ThemedText SelectedTokenCaption),
-                    field(TokenFieldKind::Rename),
-                    (intent_button("Rename", TokenIntent::Rename) NeedsSelectedToken InteractionDisabled),
-                    (intent_button("Delete", TokenIntent::Delete) NeedsSelectedToken InteractionDisabled)
-                ]
-            )
+            Node {
+                display: Display::Flex,
+                flex_direction: FlexDirection::Row,
+                align_items: AlignItems::Center,
+                column_gap: px(6),
+            }
+            Children [
+                Text("Token") ThemedText
+                --
+                @field(TokenFieldKind::Name)
+                --
+                @size_button(1)
+                --
+                @size_button(2)
+                --
+                @size_button(3)
+                --
+                @size_button(4)
+                --
+                @intent_button("Clear tokens", TokenIntent::Clear)
+            ]
+            --
+            Node {
+                display: Display::Flex,
+                flex_direction: FlexDirection::Row,
+                align_items: AlignItems::Center,
+                column_gap: px(6),
+            }
+            Children [
+                Text("no token selected") ThemedText SelectedTokenCaption
+                --
+                @field(TokenFieldKind::Rename)
+                --
+                @intent_button("Rename", TokenIntent::Rename) NeedsSelectedToken InteractionDisabled
+                --
+                @intent_button("Delete", TokenIntent::Delete) NeedsSelectedToken InteractionDisabled
+            ]
         ]
     }
 }
@@ -462,22 +468,20 @@ fn field(kind: TokenFieldKind) -> impl Scene {
         @FeathersTextInputContainer
         Node { width: px(120) }
         Children [
-            (
-                @FeathersTextInput
-                TokenField { kind: {kind} }
-                on(|change: On<TextEditChange>,
-                    texts: Query<(&EditableText, &TokenField)>,
-                    mut fields: ResMut<TokenFields>| {
-                    let Ok((text, field)) = texts.get(change.event_target()) else {
-                        return;
-                    };
-                    let value = text.value().to_string();
-                    match field.kind {
-                        TokenFieldKind::Name => fields.name = value,
-                        TokenFieldKind::Rename => fields.rename = value,
-                    }
-                })
-            )
+            @FeathersTextInput
+            TokenField { kind: {kind} }
+            on(|change: On<TextEditChange>,
+                texts: Query<(&EditableText, &TokenField)>,
+                mut fields: ResMut<TokenFields>| {
+                let Ok((text, field)) = texts.get(change.event_target()) else {
+                    return;
+                };
+                let value = text.value().to_string();
+                match field.kind {
+                    TokenFieldKind::Name => fields.name = value,
+                    TokenFieldKind::Rename => fields.rename = value,
+                }
+            })
         ]
     }
 }

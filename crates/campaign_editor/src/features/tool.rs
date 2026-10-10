@@ -348,85 +348,106 @@ fn strip() -> impl Scene {
         ThemeBackgroundColor(tokens::WINDOW_BG)
         CampaignChrome
         Children [
-            (
-                Node {
-                    display: Display::Flex,
-                    flex_direction: FlexDirection::Row,
-                    column_gap: px(6),
-                }
-                MapToolRow
-                Children [
-                    tool_button("Select", Tool::Select, DraftShape::Point),
-                    tool_button("Point", Tool::Draw, DraftShape::Point),
-                    tool_button("Line", Tool::Draw, DraftShape::Polyline),
-                    tool_button("Area", Tool::Draw, DraftShape::Polygon),
-                    tool_button("Image", Tool::Image, DraftShape::Point),
-                    tool_button("Measure", Tool::Measure, DraftShape::Point)
-                ]
-            ),
-            (
-                Node {
-                    display: Display::None,
-                    flex_direction: FlexDirection::Row,
-                    column_gap: px(6),
-                }
-                CombatToolRow
-                Children [
-                    group_label("Tool"),
-                    tool_button("Select", Tool::Select, DraftShape::Point),
-                    tool_button("Token", Tool::Token, DraftShape::Point)
-                ]
-            ),
-            (
-                Node {
-                    display: Display::None,
-                    flex_direction: FlexDirection::Row,
-                    column_gap: px(6),
-                }
-                GridRow
-                Children [
-                    group_label("Brush"),
-                    brush_button(Brush::Freehand),
-                    brush_button(Brush::Rectangle),
-                    brush_button(Brush::Flood),
-                    brush_button(Brush::Room)
-                ]
-            ),
-            (
-                Node {
-                    display: Display::None,
-                    flex_direction: FlexDirection::Row,
-                    flex_wrap: FlexWrap::Wrap,
-                    column_gap: px(6),
-                    row_gap: px(4),
-                    max_width: px(420),
-                }
-                DungeonTileRow
-                Children [
-                    tile_button(DungeonTile::Floor),
-                    tile_button(DungeonTile::Wall),
-                    tile_button(DungeonTile::Door),
-                    tile_button(DungeonTile::SecretDoor),
-                    tile_button(DungeonTile::StairsUp),
-                    tile_button(DungeonTile::StairsDown),
-                    tile_button(DungeonTile::Water),
-                    tile_button(DungeonTile::Rubble),
-                    tile_button(DungeonTile::Empty)
-                ]
-            ),
-            combat_tile_row("Ground", [
+            Node {
+                display: Display::Flex,
+                flex_direction: FlexDirection::Row,
+                column_gap: px(6),
+            }
+            MapToolRow
+            Children [
+                @tool_button("Select", Tool::Select, DraftShape::Point)
+                --
+                @tool_button("Point", Tool::Draw, DraftShape::Point)
+                --
+                @tool_button("Line", Tool::Draw, DraftShape::Polyline)
+                --
+                @tool_button("Area", Tool::Draw, DraftShape::Polygon)
+                --
+                @tool_button("Image", Tool::Image, DraftShape::Point)
+                --
+                @tool_button("Measure", Tool::Measure, DraftShape::Point)
+            ]
+            --
+            Node {
+                display: Display::None,
+                flex_direction: FlexDirection::Row,
+                column_gap: px(6),
+            }
+            CombatToolRow
+            Children [
+                @group_label("Tool")
+                --
+                @tool_button("Select", Tool::Select, DraftShape::Point)
+                --
+                @tool_button("Token", Tool::Token, DraftShape::Point)
+            ]
+            --
+            Node {
+                display: Display::None,
+                flex_direction: FlexDirection::Row,
+                column_gap: px(6),
+            }
+            GridRow
+            Children [
+                @group_label("Brush")
+                --
+                @brush_button(Brush::Freehand)
+                --
+                @brush_button(Brush::Rectangle)
+                --
+                @brush_button(Brush::Flood)
+                --
+                @brush_button(Brush::Room)
+            ]
+            --
+            Node {
+                display: Display::None,
+                flex_direction: FlexDirection::Row,
+                flex_wrap: FlexWrap::Wrap,
+                column_gap: px(6),
+                row_gap: px(4),
+                max_width: px(420),
+            }
+            DungeonTileRow
+            Children [
+                @tile_button(DungeonTile::Floor)
+                --
+                @tile_button(DungeonTile::Wall)
+                --
+                @tile_button(DungeonTile::Door)
+                --
+                @tile_button(DungeonTile::SecretDoor)
+                --
+                @tile_button(DungeonTile::StairsUp)
+                --
+                @tile_button(DungeonTile::StairsDown)
+                --
+                @tile_button(DungeonTile::Water)
+                --
+                @tile_button(DungeonTile::Rubble)
+                --
+                @tile_button(DungeonTile::Empty)
+            ]
+            --
+            @combat_tile_row("Ground", [
                 CombatTile::Grass,
                 CombatTile::Dirt,
                 CombatTile::Road,
                 CombatTile::Sand,
                 CombatTile::Mud
-            ]),
-            combat_tile_row("Water", [CombatTile::ShallowWater, CombatTile::DeepWater]),
-            combat_tile_row("Cover", [CombatTile::Tree, CombatTile::Bush, CombatTile::Boulder]),
-            combat_tile_row("Build", [CombatTile::Wall, CombatTile::Floor]),
-            kind_row(DraftShape::Point, POINT_KINDS),
-            kind_row(DraftShape::Polyline, POLYLINE_KINDS),
-            kind_row(DraftShape::Polygon, POLYGON_KINDS)
+            ])
+            --
+            @combat_tile_row("Water", [CombatTile::ShallowWater, CombatTile::DeepWater])
+            --
+            @combat_tile_row("Cover", [CombatTile::Tree, CombatTile::Bush, CombatTile::Boulder])
+            --
+            @combat_tile_row("Build", [CombatTile::Wall, CombatTile::Floor])
+            --
+            @kind_row(DraftShape::Point, POINT_KINDS)
+            --
+            @kind_row(DraftShape::Polyline, POLYLINE_KINDS)
+            --
+            @kind_row(DraftShape::Polygon, POLYGON_KINDS)
         ]
     }
 }
@@ -437,11 +458,9 @@ fn group_label(text: &'static str) -> impl Scene {
             width: px(GROUP_LABEL_WIDTH),
         }
         Children [
-            (
-                Text({text})
-                TextFont { font_size: {bevy::text::FontSize::Px(GROUP_LABEL_TEXT)} }
-                ThemedText
-            )
+            Text({text})
+            TextFont { font_size: {bevy::text::FontSize::Px(GROUP_LABEL_TEXT)} }
+            ThemedText
         ]
     }
 }
@@ -461,7 +480,8 @@ fn combat_tile_row<const N: usize>(label: &'static str, tiles: [CombatTile; N]) 
         }
         CombatTileRow
         Children [
-            group_label(label),
+            @group_label(label)
+            --
             {buttons}
         ]
     }
@@ -566,9 +586,11 @@ fn kind_row(shape: DraftShape, kinds: [FeatureKind; 3]) -> impl Scene {
         }
         KindRow { shape: {shape} }
         Children [
-            kind_button(shape, kinds[0]),
-            kind_button(shape, kinds[1]),
-            kind_button(shape, kinds[2])
+            @kind_button(shape, kinds[0])
+            --
+            @kind_button(shape, kinds[1])
+            --
+            @kind_button(shape, kinds[2])
         ]
     }
 }

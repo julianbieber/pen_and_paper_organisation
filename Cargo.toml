@@ -11,7 +11,7 @@ repository = "https://github.com/julianbieber/pen_and_paper_organisation"
 [workspace.dependencies]
 campaign = { path = "crates/campaign" }
 watershed = { git = "https://github.com/julianbieber/watershed", rev = "cd82a30155d41e131dd8e9ceebbe6889aef54950" }
-bevy = { version = "0.19", features = ["bevy_feathers"] }
+bevy = { version = "0.20", features = ["bevy_feathers"] }
 glam = { version = "0.32", features = ["serde"] }
 # Header-only reads of an imported backdrop: the format it really is, and how big.
 # Default features off so this is the two decoders the format admits, not every one.

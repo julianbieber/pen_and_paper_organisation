@@ -276,60 +276,56 @@ pub fn sheet() -> impl Scene {
         TabGroup { order: 0, modal: true }
         PickerRoot
         Children [
-            (Text("Choose a directory") ThemedText),
-            (Text("") ThemedText PickerPath),
-            (
-                Node {
-                    display: Display::Flex,
-                    flex_direction: FlexDirection::Row,
-                    column_gap: px(8),
-                }
-                Children [ up_button() ]
-            ),
-            (
+            Text("Choose a directory") ThemedText
+            --
+            Text("") ThemedText PickerPath
+            --
+            Node {
+                display: Display::Flex,
+                flex_direction: FlexDirection::Row,
+                column_gap: px(8),
+            }
+            Children [ @up_button() ]
+            --
+            Node {
+                display: Display::Flex,
+                flex_direction: FlexDirection::Column,
+                width: px(480),
+                height: px(320),
+            }
+            Children [
+                #rows
                 Node {
                     display: Display::Flex,
                     flex_direction: FlexDirection::Column,
-                    width: px(480),
-                    height: px(320),
+                    align_items: AlignItems::Stretch,
+                    height: percent(100),
+                    overflow: Overflow::scroll_y(),
                 }
-                Children [
-                    (
-                        #rows
-                        Node {
-                            display: Display::Flex,
-                            flex_direction: FlexDirection::Column,
-                            align_items: AlignItems::Stretch,
-                            height: percent(100),
-                            overflow: Overflow::scroll_y(),
-                        }
-                        ScrollArea
-                        PickerRows
-                    ),
-                    (
-                        @FeathersScrollbar {
-                            @target: #rows,
-                            @orientation: {ControlOrientation::Vertical},
-                        }
-                        Node {
-                            position_type: PositionType::Absolute,
-                            right: px(0),
-                            top: px(0),
-                            bottom: px(0),
-                            width: px(6),
-                        }
-                    )
-                ]
-            ),
-            (Text("") ThemedText PickerNote),
-            (
+                ScrollArea
+                PickerRows
+                --
+                @FeathersScrollbar {
+                    @target: #rows,
+                    @orientation: {ControlOrientation::Vertical},
+                }
                 Node {
-                    display: Display::Flex,
-                    flex_direction: FlexDirection::Row,
-                    column_gap: px(8),
+                    position_type: PositionType::Absolute,
+                    right: px(0),
+                    top: px(0),
+                    bottom: px(0),
+                    width: px(6),
                 }
-                Children [ choose_button(), cancel_button() ]
-            )
+            ]
+            --
+            Text("") ThemedText PickerNote
+            --
+            Node {
+                display: Display::Flex,
+                flex_direction: FlexDirection::Row,
+                column_gap: px(8),
+            }
+            Children [ @choose_button() -- @cancel_button() ]
         ]
     }
 }

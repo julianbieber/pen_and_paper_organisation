@@ -521,77 +521,101 @@ fn panel() -> impl Scene {
         CampaignChrome
         CombatPanel
         Children [
-            small_text("Combat maps"),
-            field(FieldKind::Name, PANEL_WIDTH - 12.0),
-            (
-                Node {
-                    display: Display::Flex,
-                    flex_direction: FlexDirection::Row,
-                    align_items: AlignItems::Center,
-                    column_gap: px(4),
-                }
-                Children [
-                    small_text("W"),
-                    field(FieldKind::Width, 36.0),
-                    small_text("H"),
-                    field(FieldKind::Height, 36.0)
-                ]
-            ),
-            (
-                Node {
-                    display: Display::Flex,
-                    flex_direction: FlexDirection::Row,
-                    column_gap: px(4),
-                }
-                Children [
-                    new_button(),
-                    leave_button()
-                ]
-            ),
-            (
-                Node {
-                    display: Display::Flex,
-                    flex_direction: FlexDirection::Column,
-                    row_gap: px(2),
-                }
-                Children [
-                    combat_row(0),
-                    combat_row(1),
-                    combat_row(2),
-                    combat_row(3),
-                    combat_row(4),
-                    combat_row(5),
-                    combat_row(6),
-                    combat_row(7)
-                ]
-            ),
-            (
-                Node {
-                    display: Display::None,
-                    flex_direction: FlexDirection::Column,
-                    row_gap: px(2),
-                }
-                StoredList
-                Children [
-                    small_text("Stored"),
-                    stored_row(0),
-                    stored_row(1),
-                    stored_row(2),
-                    stored_row(3),
-                    stored_row(4),
-                    stored_row(5),
-                    stored_row(6),
-                    stored_row(7),
-                    stored_row(8),
-                    stored_row(9),
-                    stored_row(10),
-                    stored_row(11),
-                    stored_row(12),
-                    stored_row(13),
-                    stored_row(14),
-                    stored_row(15)
-                ]
-            )
+            @small_text("Combat maps")
+            --
+            @field(FieldKind::Name, PANEL_WIDTH - 12.0)
+            --
+            Node {
+                display: Display::Flex,
+                flex_direction: FlexDirection::Row,
+                align_items: AlignItems::Center,
+                column_gap: px(4),
+            }
+            Children [
+                @small_text("W")
+                --
+                @field(FieldKind::Width, 36.0)
+                --
+                @small_text("H")
+                --
+                @field(FieldKind::Height, 36.0)
+            ]
+            --
+            Node {
+                display: Display::Flex,
+                flex_direction: FlexDirection::Row,
+                column_gap: px(4),
+            }
+            Children [
+                @new_button()
+                --
+                @leave_button()
+            ]
+            --
+            Node {
+                display: Display::Flex,
+                flex_direction: FlexDirection::Column,
+                row_gap: px(2),
+            }
+            Children [
+                @combat_row(0)
+                --
+                @combat_row(1)
+                --
+                @combat_row(2)
+                --
+                @combat_row(3)
+                --
+                @combat_row(4)
+                --
+                @combat_row(5)
+                --
+                @combat_row(6)
+                --
+                @combat_row(7)
+            ]
+            --
+            Node {
+                display: Display::None,
+                flex_direction: FlexDirection::Column,
+                row_gap: px(2),
+            }
+            StoredList
+            Children [
+                @small_text("Stored")
+                --
+                @stored_row(0)
+                --
+                @stored_row(1)
+                --
+                @stored_row(2)
+                --
+                @stored_row(3)
+                --
+                @stored_row(4)
+                --
+                @stored_row(5)
+                --
+                @stored_row(6)
+                --
+                @stored_row(7)
+                --
+                @stored_row(8)
+                --
+                @stored_row(9)
+                --
+                @stored_row(10)
+                --
+                @stored_row(11)
+                --
+                @stored_row(12)
+                --
+                @stored_row(13)
+                --
+                @stored_row(14)
+                --
+                @stored_row(15)
+            ]
         ]
     }
 }
@@ -613,23 +637,21 @@ fn field(kind: FieldKind, width: f32) -> impl Scene {
         @FeathersTextInputContainer
         Node { width: {Val::Px(width)} }
         Children [
-            (
-                @FeathersTextInput
-                CombatField { kind: {kind} }
-                on(|change: On<TextEditChange>,
-                    texts: Query<(&EditableText, &CombatField)>,
-                    mut fields: ResMut<CombatFields>| {
-                    let Ok((text, field)) = texts.get(change.event_target()) else {
-                        return;
-                    };
-                    let value = text.value().to_string();
-                    match field.kind {
-                        FieldKind::Name => fields.name = value,
-                        FieldKind::Width => fields.width = value,
-                        FieldKind::Height => fields.height = value,
-                    }
-                })
-            )
+            @FeathersTextInput
+            CombatField { kind: {kind} }
+            on(|change: On<TextEditChange>,
+                texts: Query<(&EditableText, &CombatField)>,
+                mut fields: ResMut<CombatFields>| {
+                let Ok((text, field)) = texts.get(change.event_target()) else {
+                    return;
+                };
+                let value = text.value().to_string();
+                match field.kind {
+                    FieldKind::Name => fields.name = value,
+                    FieldKind::Width => fields.width = value,
+                    FieldKind::Height => fields.height = value,
+                }
+            })
         ]
     }
 }

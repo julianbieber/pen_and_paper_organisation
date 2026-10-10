@@ -125,18 +125,18 @@ fn bar() -> impl Scene {
             padding: px(8),
         }
         ThemeBackgroundColor(tokens::WINDOW_BG)
+        ZIndex(1)
         ScaleBarRoot
         CampaignChrome
         Children [
-            (Text("") ThemedText ScaleBarLabel),
-            (
-                Node {
-                    width: px(0),
-                    height: px(6),
-                }
-                BackgroundColor(Color::WHITE)
-                ScaleBarTrack
-            )
+            Text("") ThemedText ScaleBarLabel
+            --
+            Node {
+                width: px(0),
+                height: px(6),
+            }
+            BackgroundColor(Color::WHITE)
+            ScaleBarTrack
         ]
     }
 }
