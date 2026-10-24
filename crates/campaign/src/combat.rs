@@ -3,12 +3,11 @@
 //!
 //! It carries no features, no notes and no picture, so it shares the grid, the brushes
 //! and the paint rule with a dungeon and nothing else a [`World`](crate::world::World)
-//! holds. Where one is stored, it is stored as its grid alone, and it is refused on the
-//! way back in for the reasons a dungeon's grid is.
+//! holds. It also carries the tokens on it this session. Where one is stored, it is stored
+//! as its grid alone, and it is refused on the way back in for the reasons a dungeon's grid
+//! is.
 
 use std::path::Path;
-
-use serde::{Deserialize, Serialize};
 
 use crate::brush::TileChange;
 use crate::document::Authored;
@@ -18,6 +17,7 @@ use crate::grid::{DEFAULT_METRES_PER_CELL, GridProblem, TileGrid};
 use crate::layout;
 use crate::slug::slug_of;
 use crate::tiles::CombatTile;
+use crate::token::{Token, TokenProblem, Tokens};
 use crate::world::{WorldError, read_document, write_document};
 
 /// Cells along each side of a combat map the form opens when no size is typed.
@@ -37,13 +37,15 @@ pub enum CombatProblem {
 
 /// A named grid of combat tiles, measured five feet to the cell.
 ///
-/// Every field is private and [`CombatEdit`] is the only way to change a tile, so the
-/// panel and the control socket cannot come to mean different things. A combat map that
-/// exists always has a name with a letter or a digit in it and a coherent grid.
+/// Every field is private and [`CombatEdit`] is the only way to change a tile or a token
+/// other than its roll, so the panel and the control socket cannot come to mean different
+/// things. A combat map that exists always has a name with a letter or a digit in it and a
+/// coherent grid. Its tokens are never written: a map that is made or read starts with none.
 #[derive(Debug, Clone, PartialEq)]
 pub struct CombatMap {
     name: String,
     grid: TileGrid<CombatTile>,
+    tokens: Tokens,
 }
 
 impl CombatMap {
@@ -62,6 +64,7 @@ impl CombatMap {
         Ok(Self {
             name: name.trim().to_owned(),
             grid,
+            tokens: Tokens::default(),
         })
     }
 
@@ -73,6 +76,85 @@ impl CombatMap {
     /// The tiles it is painted with.
     pub fn grid(&self) -> &TileGrid<CombatTile> {
         &self.grid
+    }
+
+    /// The tokens on it this session.
+    pub fn tokens(&self) -> &Tokens {
+        &self.tokens
+    }
+
+    /// Its `(width, height)` in cells.
+    pub fn extent(&self) -> (u32, u32) {
+        (self.grid.width(), self.grid.height())
+    }
+
+    /// The edit placing a token named from `typed`, `size` cells a side, pressed at the cell
+    /// `at`, with its name numbered and its anchor clamped now, so a redo places exactly
+    /// this token again.
+    ///
+    /// Refuses what [`Tokens::place`] refuses.
+    pub fn place_token_edit(&self, typed: &str, size: u8, at: (i64, i64)) -> Result<CombatEdit, TokenProblem> {
+        let mut tokens = self.tokens.clone();
+        let token = tokens.place(typed, size, at, self.extent())?.clone();
+        Ok(CombatEdit::PlaceToken {
+            token,
+            at: self.tokens.len(),
+        })
+    }
+
+    /// The edit moving the token called `name` as dragging the cell `grabbed` to the cell
+    /// `now` does, or `None` when it would not move.
+    ///
+    /// Refuses what [`Tokens::move_by`] refuses.
+    pub fn move_token_edit(
+        &self,
+        name: &str,
+        grabbed: (i64, i64),
+        now: (i64, i64),
+    ) -> Result<Option<CombatEdit>, TokenProblem> {
+        let mut tokens = self.tokens.clone();
+        if !tokens.move_by(name, grabbed, now, self.extent())? {
+            return Ok(None);
+        }
+        let token = tokens.get(name).expect("the token was just moved");
+        Ok(Some(CombatEdit::MoveToken {
+            name: name.to_owned(),
+            to: (token.x(), token.y()),
+        }))
+    }
+
+    /// The edit calling the token named `from` by `to`, or `None` when that is already its
+    /// name.
+    ///
+    /// Refuses what [`Tokens::rename`] refuses.
+    pub fn rename_token_edit(&self, from: &str, to: &str) -> Result<Option<CombatEdit>, TokenProblem> {
+        let renamed = self.tokens.clone().rename(from, to)?;
+        if renamed == from {
+            return Ok(None);
+        }
+        Ok(Some(CombatEdit::RenameToken {
+            from: from.to_owned(),
+            to: renamed,
+        }))
+    }
+
+    /// The edit taking the token called `name` off the map.
+    ///
+    /// Refuses [`TokenProblem::Unknown`].
+    pub fn remove_token_edit(&self, name: &str) -> Result<CombatEdit, TokenProblem> {
+        match self.tokens.get(name) {
+            Some(_) => Ok(CombatEdit::RemoveToken { name: name.to_owned() }),
+            None => Err(TokenProblem::Unknown { name: name.to_owned() }),
+        }
+    }
+
+    /// The edit taking every token off the map, or `None` when it carries none.
+    pub fn clear_tokens_edit(&self) -> Option<CombatEdit> {
+        (!self.tokens.is_empty()).then_some(CombatEdit::ClearTokens)
+    }
+
+    pub(crate) fn set_initiative(&mut self, name: &str, roll: Option<i32>) -> Result<bool, TokenProblem> {
+        self.tokens.set_initiative(name, roll)
     }
 
     /// This map as the RON text [`CombatMap::save`] writes: the grid, run-length encoded,
@@ -109,6 +191,7 @@ impl CombatMap {
         Ok(Self {
             name: name.trim().to_owned(),
             grid,
+            tokens: Tokens::default(),
         })
     }
 
@@ -192,22 +275,79 @@ pub fn stem_of(file: &str) -> &str {
 ///
 /// Deliberately not `#[non_exhaustive]`, for the reason [`Edit`](crate::edit::Edit) is
 /// not: whatever applies or parses one should fail to compile when a variant is added.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+/// Every variant but [`CombatEdit::PaintTiles`] changes only the tokens, which are never
+/// saved, so only a stroke marks the map unsaved.
+#[derive(Debug, Clone, PartialEq)]
 pub enum CombatEdit {
     /// One brush stroke: every cell it changes, each with the tile it becomes.
     PaintTiles { changes: Vec<TileChange<CombatTile>> },
+    /// Put `token` on the map exactly as it is, at `at` in the order tokens were placed.
+    PlaceToken { token: Token, at: usize },
+    /// Take the token called `name` off the map.
+    RemoveToken { name: String },
+    /// Put the anchor of the token called `name` at `to`.
+    MoveToken { name: String, to: (u32, u32) },
+    /// Call the token named `from` by `to`.
+    RenameToken { from: String, to: String },
+    /// Take every token off the map.
+    ClearTokens,
+    /// Put `tokens` back on a map that carries none, in this order.
+    RestoreTokens { tokens: Vec<Token> },
 }
 
 impl CombatEdit {
     /// Apply this edit to `map` and hand back the edit that undoes it.
     ///
-    /// Fails [`EditError::CellOutOfGrid`] when a change names a cell outside the map and
-    /// [`EditError::EmptyPaint`] when no change would alter its cell — the refusals a
-    /// dungeon stroke gets. A refused edit leaves the map untouched.
+    /// A stroke fails [`EditError::CellOutOfGrid`] when a change names a cell outside the
+    /// map and [`EditError::EmptyPaint`] when no change would alter its cell — the refusals
+    /// a dungeon stroke gets. A token edit fails [`EditError::Token`] with what
+    /// [`Tokens`] refuses, and a restore onto a map that carries a token fails it with
+    /// [`TokenProblem::Occupied`]. A refused edit leaves the map untouched.
     pub fn apply(self, map: &mut CombatMap) -> Result<Self, EditError> {
+        let tokens = &mut map.tokens;
         match self {
             Self::PaintTiles { changes } => crate::edit::paint(&mut map.grid, changes)
                 .map(|changes| Self::PaintTiles { changes }),
+            Self::PlaceToken { token, at } => {
+                let name = token.name().to_owned();
+                tokens.insert(token, at)?;
+                Ok(Self::RemoveToken { name })
+            }
+            Self::RemoveToken { name } => {
+                let at = tokens
+                    .position(&name)
+                    .ok_or_else(|| TokenProblem::Unknown { name: name.clone() })?;
+                let token = tokens.remove(&name)?;
+                Ok(Self::PlaceToken { token, at })
+            }
+            Self::MoveToken { name, to } => {
+                let from = tokens
+                    .get(&name)
+                    .map(|token| (token.x(), token.y()))
+                    .ok_or_else(|| TokenProblem::Unknown { name: name.clone() })?;
+                tokens.move_to(&name, to)?;
+                Ok(Self::MoveToken { name, to: from })
+            }
+            Self::RenameToken { from, to } => {
+                let to = tokens.rename(&from, &to)?;
+                Ok(Self::RenameToken { from: to, to: from })
+            }
+            Self::ClearTokens => Ok(Self::RestoreTokens { tokens: tokens.clear() }),
+            Self::RestoreTokens { tokens: restored } => {
+                if let Some(token) = tokens.iter().next() {
+                    return Err(TokenProblem::Occupied {
+                        name: token.name().to_owned(),
+                    }
+                    .into());
+                }
+                let mut next = Tokens::default();
+                for token in restored {
+                    let at = next.len();
+                    next.insert(token, at)?;
+                }
+                *tokens = next;
+                Ok(Self::ClearTokens)
+            }
         }
     }
 }
@@ -218,6 +358,10 @@ impl Authored for CombatMap {
 
     fn apply_edit(&mut self, edit: CombatEdit) -> Result<CombatEdit, EditError> {
         edit.apply(self)
+    }
+
+    fn marks_unsaved(edit: &CombatEdit) -> bool {
+        matches!(edit, CombatEdit::PaintTiles { .. })
     }
 }
 

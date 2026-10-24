@@ -140,6 +140,7 @@ impl Plugin for FeaturesPlugin {
                             token::move_tokens.run_if(the_select_tool_is_active),
                             combat::combat_keys,
                         )
+                            .chain()
                             .run_if(authoring_is_live.and_then(crate::combat::a_combat_map_is_on_screen)),
                         ),
                         paint::preview_stroke,

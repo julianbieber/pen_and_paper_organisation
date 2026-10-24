@@ -403,10 +403,12 @@ pub fn paint_combat_tiles(
 
 /// Undo, redo, save and escape on the combat map on screen.
 ///
-/// Escape, an undo and a redo each abandon a stroke in flight. Escape also cancels a token
-/// drag in flight, or with none, clears the token selection. Saving writes the map on
-/// screen to its file in `combat/`, whether or not it has changed, and says where or why
-/// not on the status line.
+/// Escape, an undo and a redo each abandon a stroke and cancel a token drag in flight.
+/// Escape with no drag clears the token selection. An undo or a redo steps the map's one
+/// history, strokes and token changes alike; the token selection follows a rename it steps
+/// and is dropped when its token leaves the map. Saving writes the map on screen to its file
+/// in `combat/`, whether or not it has changed, and says where or why not on the status
+/// line.
 pub fn combat_keys(
     keys: Res<ButtonInput<KeyCode>>,
     campaign: Option<Res<OpenCampaign>>,
@@ -447,12 +449,33 @@ pub fn combat_keys(
     }
 
     stroking.abandon();
+    tokens.cancel_drag();
     let Some(map) = maps.on_screen_mut() else {
         return;
     };
+    let next = if shift { map.next_redo() } else { map.next_undo() };
+    let repaint = matches!(next, Some(CombatEdit::PaintTiles { .. }));
+    let renamed = match next {
+        Some(CombatEdit::RenameToken { from, to }) => Some((from.clone(), to.clone())),
+        _ => None,
+    };
     let stepped = if shift { map.redo() } else { map.undo() };
     match stepped {
-        Ok(true) => painted.everything = true,
+        Ok(true) => {
+            painted.everything |= repaint;
+            if let Some((from, to)) = renamed
+                && tokens.selected.as_deref() == Some(from.as_str())
+            {
+                tokens.selected = Some(to);
+            }
+            if tokens
+                .selected
+                .as_deref()
+                .is_some_and(|name| map.content().tokens().get(name).is_none())
+            {
+                tokens.selected = None;
+            }
+        }
         Ok(false) => status.say(if shift {
             "nothing to redo"
         } else {
@@ -723,5 +746,83 @@ fn stored_row(slot: usize) -> impl Scene {
             *intent = CombatIntent::OpenStored(file);
             focus.clear();
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use campaign::CombatMap;
+
+    use super::*;
+    use crate::features::token::TokenDrag;
+
+    fn app() -> App {
+        let mut maps = CombatMaps::default();
+        maps.open(CombatMap::new("Ambush", 12, 12).unwrap(), "ambush.ron".to_owned(), None);
+        let mut app = App::new();
+        app.init_resource::<ButtonInput<KeyCode>>()
+            .init_resource::<Stroking>()
+            .init_resource::<PaintedCells>()
+            .init_resource::<TokenGesture>()
+            .init_resource::<StatusMessage>()
+            .insert_resource(maps)
+            .add_systems(Update, combat_keys);
+        app
+    }
+
+    fn apply(app: &mut App, edit: impl FnOnce(&CombatMap) -> CombatEdit) {
+        let mut maps = app.world_mut().resource_mut::<CombatMaps>();
+        let map = maps.on_screen_mut().unwrap();
+        let edit = edit(map.content());
+        map.apply(edit).unwrap();
+    }
+
+    fn undo(app: &mut App) {
+        let mut keys = app.world_mut().resource_mut::<ButtonInput<KeyCode>>();
+        keys.reset_all();
+        keys.press(KeyCode::ControlLeft);
+        keys.press(KeyCode::KeyZ);
+        app.update();
+    }
+
+    fn names(app: &App) -> Vec<String> {
+        let maps = app.world().resource::<CombatMaps>();
+        maps.tokens_on_screen().unwrap().0.iter().map(|token| token.name().to_owned()).collect()
+    }
+
+    // The GM's ask, at the keys: Ctrl+Z on a combat map takes back a token change, and a
+    // drag held across it is dropped rather than landing on a token that has since moved.
+    #[test]
+    fn ctrl_z_takes_back_a_token_change_and_drops_a_held_drag() {
+        let mut app = app();
+        apply(&mut app, |map| map.place_token_edit("orc", 1, (2, 2)).unwrap());
+        app.world_mut().resource_mut::<TokenGesture>().drag = Some(TokenDrag {
+            name: "orc1".to_owned(),
+            grabbed: (2, 2),
+            latest: (5, 5),
+        });
+
+        undo(&mut app);
+
+        assert!(names(&app).is_empty());
+        assert!(app.world().resource::<TokenGesture>().drag.is_none());
+        assert!(!app.world().resource::<PaintedCells>().everything, "a token undo repaints no chunk");
+    }
+
+    // An undone rename keeps the token selected under its old name, and an undone place
+    // drops a selection of a token that is no longer on the map.
+    #[test]
+    fn the_selection_follows_an_undone_rename_and_leaves_with_its_token() {
+        let mut app = app();
+        apply(&mut app, |map| map.place_token_edit("orc", 1, (2, 2)).unwrap());
+        apply(&mut app, |map| map.rename_token_edit("orc1", "Grukk").unwrap().unwrap());
+        app.world_mut().resource_mut::<TokenGesture>().selected = Some("Grukk".to_owned());
+
+        undo(&mut app);
+        assert_eq!(names(&app), ["orc1"]);
+        assert_eq!(app.world().resource::<TokenGesture>().selected.as_deref(), Some("orc1"));
+
+        undo(&mut app);
+        assert_eq!(app.world().resource::<TokenGesture>().selected, None);
     }
 }

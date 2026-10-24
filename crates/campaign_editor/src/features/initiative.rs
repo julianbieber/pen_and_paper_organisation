@@ -1,8 +1,9 @@
 //! The initiative list beside the combat map on screen: one row per token in the order it
 //! acts, with the roll typed beside it, and a press on a row selecting that token on the map.
 //!
-//! A roll is session state on the token, as the token itself is, so the order is asked of
-//! [`campaign::token::Tokens::in_initiative_order`] and this module owns only the rows.
+//! A roll is session state on the token, never saved and on no undo history, so the order
+//! is asked of [`campaign::token::Tokens::in_initiative_order`] and this module owns only
+//! the rows.
 
 use bevy::feathers::controls::{ButtonVariant, FeathersButton, FeathersTextInput, FeathersTextInputContainer};
 use bevy::feathers::theme::{ThemeBackgroundColor, ThemedText};
@@ -214,8 +215,8 @@ fn row(name: &str) -> impl Scene {
                     if unchanged {
                         return;
                     }
-                    if let Some((tokens, _)) = maps.tokens_on_screen_mut()
-                        && let Err(problem) = tokens.set_initiative(&input.name, roll)
+                    if let Some(map) = maps.on_screen_mut()
+                        && let Err(problem) = map.set_initiative(&input.name, roll)
                     {
                         status.say(problem.to_string());
                     }

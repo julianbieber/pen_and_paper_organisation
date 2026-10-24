@@ -804,10 +804,10 @@ impl Command {
                 let Some(mut maps) = world.get_resource_mut::<CombatMaps>() else {
                     return Poll::Failed("no campaign is open".into());
                 };
-                let Some((tokens, _)) = maps.tokens_on_screen_mut() else {
+                let Some(map) = maps.on_screen_mut() else {
                     return Poll::Failed("no combat map is on screen".into());
                 };
-                match tokens.set_initiative(name, *roll) {
+                match map.set_initiative(name, *roll) {
                     Ok(_) => Poll::Done(json!({})),
                     Err(problem) => Poll::Failed(problem.to_string()),
                 }
