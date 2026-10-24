@@ -145,6 +145,10 @@ pub enum EditError {
     /// nothing is indistinguishable from one that was not noticed.
     #[error("that stroke changes no cell")]
     EmptyPaint,
+
+    /// A change to a combat map's tokens that the tokens refuse.
+    #[error(transparent)]
+    Token(#[from] crate::token::TokenProblem),
 }
 
 /// Put `changes` into `grid` and hand back the changes that undo them.

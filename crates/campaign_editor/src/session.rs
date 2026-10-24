@@ -338,8 +338,9 @@ mod tests {
         app.insert_resource(SyncJob::assume_read_origin());
         let mut combat = CombatMaps::default();
         combat.open(campaign::CombatMap::new("Ford", 4, 4).expect("a 4x4 map is valid"), "ford.ron".to_owned(), None);
-        let (tokens, extent) = combat.tokens_on_screen_mut().expect("Ford is on screen");
-        tokens.place("orc", 1, (0, 0), extent).expect("a token fits on Ford");
+        let ford = combat.on_screen_mut().expect("Ford is on screen");
+        let place = ford.content().place_token_edit("orc", 1, (0, 0)).expect("a token fits on Ford");
+        ford.apply(place).expect("a token fits on Ford");
         app.insert_resource(combat);
         app.insert_resource(TokenGesture {
             selected: Some("orc1".to_owned()),

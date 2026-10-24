@@ -13,6 +13,7 @@ use std::path::Path;
 use crate::combat::CombatMap;
 use crate::edit::{Edit, EditError};
 use crate::feature::FeatureId;
+use crate::token::TokenProblem;
 use crate::world::{World, WorldError};
 
 /// How many undone edits a document keeps.
@@ -37,6 +38,12 @@ pub trait Authored {
     /// Apply `edit` and hand back the edit that undoes it, or refuse it having changed
     /// nothing.
     fn apply_edit(&mut self, edit: Self::Edit) -> Result<Self::Edit, Self::Refusal>;
+
+    /// Whether applying `edit`, or undoing or redoing it, leaves the value differing from
+    /// what was last written. True unless the edit changes only what is never saved.
+    fn marks_unsaved(_edit: &Self::Edit) -> bool {
+        true
+    }
 }
 
 impl Authored for World {
@@ -101,6 +108,18 @@ impl<D: Authored> Document<D> {
         self.redo.len()
     }
 
+    /// The edit [`Document::undo`] would apply next, or `None` when there is nothing to
+    /// undo.
+    pub fn next_undo(&self) -> Option<&D::Edit> {
+        self.undo.back()
+    }
+
+    /// The edit [`Document::redo`] would apply next, or `None` when there is nothing to
+    /// redo.
+    pub fn next_redo(&self) -> Option<&D::Edit> {
+        self.redo.back()
+    }
+
     /// Apply `edit`, keeping what would undo it.
     ///
     /// Pushes the inverse onto the undo stack, drops the oldest entry once that stack is
@@ -108,15 +127,16 @@ impl<D: Authored> Document<D> {
     /// undone future unreachable.
     ///
     /// A refused edit changes nothing at all: not the value, not either stack, not the
-    /// dirty flag.
+    /// dirty flag. One [`Authored::marks_unsaved`] declines leaves the dirty flag as it was.
     pub fn apply(&mut self, edit: D::Edit) -> Result<(), D::Refusal> {
+        let unsaved = D::marks_unsaved(&edit);
         let inverse = self.content.apply_edit(edit)?;
         self.undo.push_back(inverse);
         if self.undo.len() > UNDO_LIMIT {
             self.undo.pop_front();
         }
         self.redo.clear();
-        self.dirty = true;
+        self.dirty |= unsaved;
         Ok(())
     }
 
@@ -151,7 +171,7 @@ impl<D: Authored> Document<D> {
                 if onto.len() > UNDO_LIMIT {
                     onto.pop_front();
                 }
-                *dirty = true;
+                *dirty |= D::marks_unsaved(&edit);
                 Ok(true)
             }
             Err(refusal) => {
@@ -201,6 +221,15 @@ impl Document<World> {
 }
 
 impl Document<CombatMap> {
+    /// Set the initiative the token called `name` rolled, or forget it with `None`, and say
+    /// whether it changed.
+    ///
+    /// A roll is not an edit: it goes on neither stack and leaves the dirty flag as it was.
+    /// Refuses [`TokenProblem::Unknown`], having changed nothing.
+    pub fn set_initiative(&mut self, name: &str, roll: Option<i32>) -> Result<bool, TokenProblem> {
+        self.content.set_initiative(name, roll)
+    }
+
     /// Write the map to `path` and mark the document saved.
     ///
     /// The dirty flag is cleared only once the write has landed, so a failed save leaves

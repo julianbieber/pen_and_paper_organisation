@@ -230,9 +230,11 @@ pub fn a_grid_is_open(doc: Option<Res<WorldDoc>>) -> bool {
     doc.is_some_and(|doc| doc.document.world().grid().is_some())
 }
 
-/// The whole cell a position in cells lies in, rounding each axis down.
+/// The whole cell a position in cells lies in: the one whose centre is nearest, since a
+/// cell's centre is its whole-numbered position. A position halfway between two cells is
+/// the higher one's.
 pub(crate) fn cell_of(cell: CellPoint) -> (i64, i64) {
-    (cell.x.floor() as i64, cell.y.floor() as i64)
+    ((cell.x + 0.5).floor() as i64, (cell.y + 0.5).floor() as i64)
 }
 
 #[cfg(test)]
@@ -285,11 +287,11 @@ mod tests {
     fn a_held_stroke_is_previewed_as_the_pointer_moves() {
         let mut app = app_painting(Brush::Rectangle);
         app.world_mut().resource_mut::<Stroking>().path = vec![(1, 1)];
-        point_at(&mut app, 2.5, 1.5);
+        point_at(&mut app, 2.0, 1.0);
         app.update();
         assert_eq!(previewed(&app), vec![(1, 1), (2, 1)]);
 
-        point_at(&mut app, 2.5, 2.5);
+        point_at(&mut app, 2.0, 2.0);
         app.update();
         assert_eq!(previewed(&app), vec![(1, 1), (1, 2), (2, 1), (2, 2)]);
     }
@@ -300,12 +302,23 @@ mod tests {
     fn the_preview_empties_when_the_stroke_ends() {
         let mut app = app_painting(Brush::Freehand);
         app.world_mut().resource_mut::<Stroking>().path = vec![(1, 1), (2, 1)];
-        point_at(&mut app, 2.5, 1.5);
+        point_at(&mut app, 2.0, 1.0);
         app.update();
         assert_eq!(previewed(&app).len(), 2);
 
         app.world_mut().resource_mut::<Stroking>().abandon();
         app.update();
         assert!(previewed(&app).is_empty());
+    }
+
+    // The GM's hitbox: a press lands on the tile drawn under the pointer. A tile's centre is
+    // its whole-numbered position, so a press on its left or upper half must not land on the
+    // neighbour, as rounding down made it.
+    #[test]
+    fn a_press_lands_on_the_cell_whose_centre_is_nearest() {
+        assert_eq!(cell_of(CellPoint::new(3.4, 3.4)), (3, 3));
+        assert_eq!(cell_of(CellPoint::new(2.6, 2.6)), (3, 3));
+        assert_eq!(cell_of(CellPoint::new(-0.4, -0.4)), (0, 0));
+        assert_eq!(cell_of(CellPoint::new(-0.6, 0.5)), (-1, 1));
     }
 }

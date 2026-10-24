@@ -83,9 +83,9 @@ notes, no picture — opened blank in one press from a *Combat maps* panel, pain
 four brushes through a second hand-drawn strip, `assets/combat_tiles.png`, whose order
 `CombatTile` fixes, and either discarded or saved to `combat/<slug>.ron` and opened again
 from the list. Tokens are named, sized 1–4 cells and otherwise alike, and are **session
-state** on the ruler's model: no `Edit`, no undo, never saved, kept while the map is parked,
-dropped on campaign close. `TileGrid<T>`, `TileChange<T>` and `brush::cells` are generic
-over `grid::TileVocabulary` — a default tile, a strip index, a serde name, and the room
+state**: never saved, kept while the map is parked, dropped on campaign close — and since
+2026-10-24 on the map's undo history all the same, see below. `TileGrid<T>`,
+`TileChange<T>` and `brush::cells` are generic over `grid::TileVocabulary` — a default tile, a strip index, a serde name, and the room
 brush's wall and floor — with the paint edit's rules in `edit::paint`, `Document<D>` generic
 over `document::Authored`, and `AtlasMeta::read` taking the tile count it checks (#42); #43
 consumes it. A blank combat map opens from the *Combat maps* panel and is painted with the
@@ -104,14 +104,23 @@ unique against the open maps and `combat/`; a reopened map is named by its file 
 *Stored*, Ctrl+S and *Save and close* write combat maps, and `pnp-ctl open-combat <name>`
 opens one. Sync does not save combat maps, and a pull does not replace an open one. Named tokens
 sit on a combat map (#45): `campaign::token` owns naming, snapping, coverage and which token
-a cell picks, `OpenCombatMap::tokens` in `crates/campaign_editor/src/combat.rs` holds a map's
-tokens beside its document — which is what keeps them while it is parked — and
-`features/token.rs` owns the placing, the drag, the token panel and the three token pens. A
-bare name is numbered one more than the highest number that name carries on the board, a
+a cell picks, `CombatMap` holds a map's tokens beside its grid — inside its document, which
+is what keeps them while it is parked — and `features/token.rs` owns the placing, the drag,
+the token panel and the three token pens. A bare name is numbered one more than the highest number that name carries on the board, a
 name typed with its own number is placed as typed, and names are unique on a board. A combat
 map offers *Select* and *Token* beside the brushes: the token tool only places, and the select
 tool selects and drags.
-A token carries its initiative roll as session state too (2026-10-04):
+**Token use is on the history and tokens never stack** (2026-10-24): placing, moving,
+renaming, deleting and clearing are each one `CombatEdit`, built resolved by `CombatMap`'s
+`*_token_edit` builders — name numbered, anchor clamped — so a redo never renumbers, and a
+change that changes nothing builds no edit. `Authored::marks_unsaved` keeps a token edit from
+marking the map unsaved, so the close guard still asks about strokes only. Ctrl+Z steps
+strokes and token changes in one history, cancels a held drag, and keeps the selection
+through an undone rename. `TokenProblem::Occupied` refuses a token placed or dragged onto a
+cell another covers, and `draw_tokens` shows a refused landing in red. A roll is not an
+edit: `Document<CombatMap>::set_initiative` changes it with no history, and nothing else
+may change a token outside one, because a refused inverse stays on the undo stack.
+A token carries its initiative roll as session state too, off the history (2026-10-04):
 `Tokens::in_initiative_order` puts the highest roll first and the unrolled last, ties in
 placement order, and `features/initiative.rs` lists the tokens that way beside the *Combat
 maps* panel, a roll typed into each row and a press on a row selecting that token on the
@@ -456,7 +465,10 @@ SSH passphrase or host-key question is not covered by this and can still hold it
   dungeon it is a grid cell and the grid holds its own `metres_per_cell`. The thresholds in
   `lod` and the widths in `style` are stated in cells per logical pixel either way, so they
   mean different ground in a dungeon than on the world map — which is the point of a child
-  document having its own scale.
+  document having its own scale. A cell's **centre** is its whole-numbered position, so the
+  whole cell under the pointer is the nearest one, not the floor: `paint::cell_of` rounds,
+  for the brushes and the token tools alike (2026-10-24). Flooring put a press on a tile's
+  left or upper half on its neighbour.
 - **Bevy 0.20. All UI is `bevy_feathers`** — the toolkit `watershed_editor` uses, so its
   chrome and idioms carry over. No `egui`. Bevy 0.20 stacks UI roots of equal z in the
   order they arrived, newest on top, so a panel spawned when a campaign opens covers

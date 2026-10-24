@@ -1,14 +1,14 @@
 //! How the GM handles the tokens on the combat map on screen, and how those tokens look.
 //!
-//! A token is session state and nothing else, as a measurement is. It becomes no
-//! [`CombatEdit`](campaign::CombatEdit), sits on no undo stack and is never saved, so moving
-//! one back is dragging it back. The tokens themselves live on their map in
-//! [`CombatMaps`], which is what keeps them while the map is parked; only what the GM has
-//! typed, chosen and is holding lives here, and the holding is cleared wherever every other
-//! gesture is.
+//! A token is never saved, but every placement, move, rename and removal of one is a
+//! [`CombatEdit`] on its map's undo stack, so a misclick is one press of undo. The tokens
+//! themselves live in their map's document in [`CombatMaps`], which is what keeps them while
+//! the map is parked; only what the GM has typed, chosen and is holding lives here, and the
+//! holding is cleared wherever every other gesture is.
 //!
 //! What a token is called, where it lands, what it covers and which one a cell picks are all
-//! asked of [`campaign::token`]. This module owns the clicks, the panel and the pixels.
+//! asked of [`campaign::token`], and the edit for each change of [`campaign::CombatMap`].
+//! This module owns the clicks, the panel and the pixels.
 
 use bevy::camera::Projection;
 use bevy::color::palettes::css;
@@ -21,8 +21,10 @@ use bevy::text::{EditableText, TextEditChange};
 use bevy::ui::InteractionDisabled;
 use bevy::ui_widgets::Activate;
 use campaign::token::{MAX_TOKEN_SIZE, MIN_TOKEN_SIZE};
+use campaign::{CombatEdit, CombatMap, Document};
 
 use crate::combat::CombatMaps;
+use crate::document;
 use crate::features::PointerOverUi;
 use crate::features::paint::cell_of;
 use crate::features::pens::{
@@ -141,9 +143,10 @@ pub fn the_token_tool_is_active(active: Res<ActiveTool>) -> bool {
 }
 
 /// Places a token on the combat map on screen at each press of the left button, named and
-/// sized from [`TokenFields`], and selects it.
+/// sized from [`TokenFields`], as one edit, and selects it.
 ///
-/// A press over the UI places nothing. A refusal is said on the status line.
+/// A press over the UI places nothing. A refusal — a press whose token would cover another
+/// among them — is said on the status line.
 pub fn place_tokens(
     buttons: Res<ButtonInput<MouseButton>>,
     pointer: Res<MapPointer>,
@@ -156,24 +159,33 @@ pub fn place_tokens(
     if !buttons.just_pressed(MouseButton::Left) || over_ui.0 {
         return;
     }
-    let (Some(cell), Some((tokens, extent))) = (pointer.cell, maps.tokens_on_screen_mut()) else {
+    let (Some(cell), Some(map)) = (pointer.cell, maps.on_screen()) else {
         return;
     };
-    match tokens.place(&fields.name, fields.size, cell_of(cell), extent) {
-        Ok(token) => {
-            status.say(format!("placed {}", token.name()));
-            gesture.drag = None;
-            gesture.selected = Some(token.name().to_owned());
+    let edit = match map.content().place_token_edit(&fields.name, fields.size, cell_of(cell)) {
+        Ok(edit) => edit,
+        Err(problem) => {
+            status.say(problem.to_string());
+            return;
         }
-        Err(problem) => status.say(problem.to_string()),
+    };
+    let CombatEdit::PlaceToken { token, .. } = &edit else {
+        unreachable!("a place edit places a token");
+    };
+    let name = token.name().to_owned();
+    if apply_token_edit(&mut maps, edit, &mut status) {
+        status.say(format!("placed {name}"));
+        gesture.drag = None;
+        gesture.selected = Some(name);
     }
 }
 
 /// Selects the topmost token under a press on the combat map on screen and carries a drag
-/// of it until release, when it lands on whole cells.
+/// of it until release, when it lands on whole cells as one edit.
 ///
 /// A press on no token selects none. A press over the UI does nothing, but a release over
-/// it still lands the drag.
+/// it still lands the drag. A drag that would land on another token leaves it where it was
+/// and says which token is in the way.
 pub fn move_tokens(
     buttons: Res<ButtonInput<MouseButton>>,
     pointer: Res<MapPointer>,
@@ -213,25 +225,31 @@ pub fn move_tokens(
     let Some(drag) = gesture.drag.take() else {
         return;
     };
-    let Some((tokens, extent)) = maps.tokens_on_screen_mut() else {
+    let Some(map) = maps.on_screen() else {
         return;
     };
-    match tokens.move_by(&drag.name, drag.grabbed, drag.latest, extent) {
-        Ok(true) => {
-            if let Some(token) = tokens.get(&drag.name) {
-                status.say(format!("moved {} to ({}, {})", token.name(), token.x(), token.y()));
-            }
+    let edit = match map.content().move_token_edit(&drag.name, drag.grabbed, drag.latest) {
+        Ok(Some(edit)) => edit,
+        Ok(None) => return,
+        Err(problem) => {
+            status.say(problem.to_string());
+            return;
         }
-        Ok(false) => {}
-        Err(problem) => status.say(problem.to_string()),
+    };
+    let CombatEdit::MoveToken { to, .. } = edit else {
+        unreachable!("a move edit moves a token");
+    };
+    if apply_token_edit(&mut maps, edit, &mut status) {
+        status.say(format!("moved {} to ({}, {})", drag.name, to.0, to.1));
     }
 }
 
-/// Renames, deletes or clears as [`TokenIntent`] asks, on the combat map on screen, and says
-/// the outcome on the status line.
+/// Renames, deletes or clears as [`TokenIntent`] asks, on the combat map on screen, as one
+/// edit each, and says the outcome on the status line.
 ///
-/// A rename or a delete with no token selected, or any intent with no combat map on screen,
-/// is said and does nothing.
+/// A rename or a delete with no token selected, a clear of a map carrying none, or any
+/// intent with no combat map on screen, is said and does nothing. A rename to the name the
+/// token already has does nothing.
 pub fn apply_token_intent(
     mut intent: ResMut<TokenIntent>,
     fields: Res<TokenFields>,
@@ -243,37 +261,68 @@ pub fn apply_token_intent(
     if asked == TokenIntent::Nothing {
         return;
     }
-    let Some((tokens, _)) = maps.tokens_on_screen_mut() else {
+    let Some(map) = maps.on_screen().map(Document::content) else {
         status.say("no combat map is on screen");
         return;
     };
     if asked == TokenIntent::Clear {
-        let count = tokens.len();
-        tokens.clear();
-        gesture.clear();
-        status.say(format!("cleared {count} token(s)"));
+        let count = map.tokens().len();
+        let Some(edit) = map.clear_tokens_edit() else {
+            status.say("there are no tokens to clear");
+            return;
+        };
+        if apply_token_edit(&mut maps, edit, &mut status) {
+            gesture.clear();
+            status.say(format!("cleared {count} token(s)"));
+        }
         return;
     }
     let Some(selected) = gesture.selected.clone() else {
         status.say("select a token first");
         return;
     };
-    match asked {
-        TokenIntent::Rename => match tokens.rename(&selected, &fields.rename) {
-            Ok(name) => {
-                status.say(format!("renamed {selected} to {name}"));
-                gesture.selected = Some(name);
-            }
-            Err(problem) => status.say(problem.to_string()),
-        },
-        TokenIntent::Delete => match tokens.remove(&selected) {
-            Ok(token) => {
-                status.say(format!("deleted {}", token.name()));
-                gesture.clear();
-            }
-            Err(problem) => status.say(problem.to_string()),
-        },
-        TokenIntent::Nothing | TokenIntent::Clear => {}
+    let edit = match asked {
+        TokenIntent::Rename => map.rename_token_edit(&selected, &fields.rename),
+        TokenIntent::Delete => map.remove_token_edit(&selected).map(Some),
+        TokenIntent::Nothing | TokenIntent::Clear => return,
+    };
+    let edit = match edit {
+        Ok(Some(edit)) => edit,
+        Ok(None) => return,
+        Err(problem) => {
+            status.say(problem.to_string());
+            return;
+        }
+    };
+    let renamed = match &edit {
+        CombatEdit::RenameToken { to, .. } => Some(to.clone()),
+        _ => None,
+    };
+    if !apply_token_edit(&mut maps, edit, &mut status) {
+        return;
+    }
+    match renamed {
+        Some(name) => {
+            status.say(format!("renamed {selected} to {name}"));
+            gesture.selected = Some(name);
+        }
+        None => {
+            status.say(format!("deleted {selected}"));
+            gesture.clear();
+        }
+    }
+}
+
+fn apply_token_edit(maps: &mut CombatMaps, edit: CombatEdit, status: &mut StatusMessage) -> bool {
+    let Some(map) = maps.on_screen_mut() else {
+        return false;
+    };
+    match map.apply(edit) {
+        Ok(()) => true,
+        Err(refusal) => {
+            document::report(status, &refusal);
+            false
+        }
     }
 }
 
@@ -296,7 +345,7 @@ pub fn release_focus_on_map_press(
 
 /// Strokes every token on the combat map on screen: the square it covers, a ring, and its
 /// name at a fixed size on screen, the selected token in gold and a dragged one where it
-/// would land.
+/// would land — in red when it would land on another token and so stay where it is.
 pub fn draw_tokens(
     backdrop: Res<Backdrop>,
     maps: Res<CombatMaps>,
@@ -304,9 +353,10 @@ pub fn draw_tokens(
     camera: Single<&Projection, With<MapCamera>>,
     mut pens: TokenPens,
 ) {
-    let Some((tokens, extent)) = maps.tokens_on_screen() else {
+    let Some(map) = maps.on_screen().map(Document::content) else {
         return;
     };
+    let (tokens, extent) = (map.tokens(), map.extent());
     let Projection::Orthographic(orthographic) = *camera else {
         return;
     };
@@ -327,7 +377,14 @@ pub fn draw_tokens(
             .min(side * TOKEN_LABEL_WIDTH_SHARE / (letters * TOKEN_LETTER_ASPECT));
         let centre = view.cell_corner_to_world(x as f32, y as f32) + Vec2::new(side / 2.0, -side / 2.0);
         let selected = gesture.selected.as_deref() == Some(token.name());
-        let colour = if selected { Color::from(css::GOLD) } else { Color::WHITE };
+        let blocked = dragged.is_some() && lands_on_another(map, gesture.drag.as_ref());
+        let colour = if blocked {
+            Color::from(css::RED)
+        } else if selected {
+            Color::from(css::GOLD)
+        } else {
+            Color::WHITE
+        };
 
         pens.ring.rect_2d(centre, Vec2::splat(side), colour.with_alpha(0.5));
         pens.ring.circle_2d(centre, side * 0.42, colour);
@@ -335,6 +392,10 @@ pub fn draw_tokens(
         pens.shadow.text(at, token.name(), lettering, Vec2::ZERO, Color::BLACK.with_alpha(0.8));
         pens.label.text(at, token.name(), lettering, Vec2::ZERO, Color::WHITE);
     }
+}
+
+fn lands_on_another(map: &CombatMap, drag: Option<&TokenDrag>) -> bool {
+    drag.is_some_and(|drag| map.move_token_edit(&drag.name, drag.grabbed, drag.latest).is_err())
 }
 
 /// Hangs the token panel over the map, hidden until a combat map is on screen.
@@ -569,13 +630,13 @@ mod tests {
         app.update();
     }
 
-    // A token is session state: placing one names it on the map on screen and leaves the
-    // map's document clean with nothing to undo, so a close after a fight asks nothing.
+    // A token is never saved: placing one names it on the map on screen and is one step of
+    // undo each, but leaves the map's document clean, so a close after a fight asks nothing.
     #[test]
-    fn clicks_with_the_token_tool_place_numbered_tokens_and_author_nothing() {
+    fn clicks_with_the_token_tool_place_numbered_tokens_on_the_history_only() {
         let mut app = app();
         app.add_systems(Update, place_tokens);
-        for x in [1.2, 5.7] {
+        for x in [1.2, 4.8] {
             point_at(&mut app, x, 1.0);
             press(&mut app);
             release(&mut app);
@@ -587,8 +648,26 @@ mod tests {
         assert_eq!(placed, [("orc1", 1, 2), ("orc2", 5, 2)]);
         let document = maps.on_screen().unwrap();
         assert!(!document.is_dirty());
-        assert_eq!(document.undo_depth(), 0);
+        assert_eq!(document.undo_depth(), 2);
         assert_eq!(app.world().resource::<TokenGesture>().selected.as_deref(), Some("orc2"));
+    }
+
+    // The mistake seen at the table: a second click on a token with the token tool placed
+    // another of the same kind under it. It now places nothing and says what is there.
+    #[test]
+    fn a_click_with_the_token_tool_on_a_token_places_nothing() {
+        let mut app = app();
+        app.add_systems(Update, place_tokens);
+        for x in [1.2, 1.6] {
+            point_at(&mut app, x, 1.0);
+            press(&mut app);
+            release(&mut app);
+        }
+
+        let maps = app.world().resource::<CombatMaps>();
+        assert_eq!(maps.tokens_on_screen().unwrap().0.len(), 1);
+        assert_eq!(maps.on_screen().unwrap().undo_depth(), 1);
+        assert_eq!(app.world().resource::<StatusMessage>().0, "orc1 is already there");
     }
 
     // The acceptance's drag: a token follows the pointer's cell, not its fraction, so it
@@ -598,14 +677,15 @@ mod tests {
         let mut app = app();
         {
             let mut maps = app.world_mut().resource_mut::<CombatMaps>();
-            let (tokens, extent) = maps.tokens_on_screen_mut().unwrap();
-            tokens.place("orc", 2, (5, 1), extent).unwrap();
+            let map = maps.on_screen_mut().unwrap();
+            let place = map.content().place_token_edit("orc", 2, (5, 1)).unwrap();
+            map.apply(place).unwrap();
         }
         app.add_systems(Update, move_tokens);
 
-        point_at(&mut app, 6.5, 2.5);
+        point_at(&mut app, 6.2, 2.4);
         press(&mut app);
-        point_at(&mut app, 9.9, 2.1);
+        point_at(&mut app, 9.4, 2.1);
         hold(&mut app);
         let anchor = |app: &App| {
             let (tokens, _) = app.world().resource::<CombatMaps>().tokens_on_screen().unwrap();

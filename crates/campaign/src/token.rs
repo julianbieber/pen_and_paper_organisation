@@ -1,8 +1,9 @@
 //! The tokens on one combat map, and every rule deciding where one sits and what it is
 //! called.
 //!
-//! A token is session state: it becomes no [`Edit`](crate::edit::Edit), sits on no undo
-//! stack and is never written to a file, so nothing here is serde.
+//! A token is session state: it is never written to a file, so nothing here is serde. On
+//! a combat map's document it changes through a [`CombatEdit`](crate::combat::CombatEdit)
+//! on that map's undo stack, except for its initiative roll.
 
 /// The fewest cells along a side a token may cover.
 pub const MIN_TOKEN_SIZE: u8 = 1;
@@ -58,6 +59,10 @@ pub enum TokenProblem {
     /// An initiative roll that is not a whole number.
     #[error("{typed:?} is not an initiative roll; type a whole number")]
     BadInitiative { typed: String },
+
+    /// A square that would cover a cell another token already covers.
+    #[error("{name} is already there")]
+    Occupied { name: String },
 }
 
 /// One named token, anchored on its top-left cell and covering `size × size` cells.
@@ -100,6 +105,11 @@ impl Token {
     pub fn covers(&self, x: i64, y: i64) -> bool {
         let (left, top, side) = (i64::from(self.x), i64::from(self.y), i64::from(self.size));
         (left..left + side).contains(&x) && (top..top + side).contains(&y)
+    }
+
+    fn overlaps(&self, x: u32, y: u32, size: u8) -> bool {
+        let (side, other) = (u32::from(self.size), u32::from(size));
+        self.x < x + other && x < self.x + side && self.y < y + other && y < self.y + side
     }
 
     /// Every cell it covers, row by row.
@@ -196,7 +206,7 @@ pub fn anchor(at: (i64, i64), size: u8, width: u32, height: u32) -> (u32, u32) {
 /// an earlier.
 ///
 /// Every name on it is unique, every token lies wholly on the map it was placed against,
-/// and it never holds more than [`MAX_TOKENS`].
+/// no two tokens cover the same cell, and it never holds more than [`MAX_TOKENS`].
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Tokens {
     tokens: Vec<Token>,
@@ -207,8 +217,9 @@ impl Tokens {
     /// the cell `at` on a map of `extent` `(width, height)` cells, and hand it back.
     ///
     /// The anchor is clamped onto the map by [`anchor`]. Refuses, in this order,
-    /// [`TokenProblem::BadSize`], [`TokenProblem::TooBig`], [`TokenProblem::Full`], then
-    /// whatever [`next_name`] refuses. A refusal places nothing.
+    /// [`TokenProblem::BadSize`], [`TokenProblem::TooBig`], [`TokenProblem::Full`],
+    /// whatever [`next_name`] refuses, then [`TokenProblem::Occupied`] when the clamped
+    /// square covers a cell another token covers. A refusal places nothing.
     pub fn place(
         &mut self,
         typed: &str,
@@ -228,6 +239,7 @@ impl Tokens {
         }
         let name = next_name(typed, self.tokens.iter().map(Token::name))?;
         let (x, y) = anchor(at, size, width, height);
+        self.refuse_occupied(None, x, y, size)?;
         self.tokens.push(Token {
             name,
             x,
@@ -253,7 +265,9 @@ impl Tokens {
     /// Move the token called `name` to where [`Tokens::dragged`] says, and say whether its
     /// anchor changed.
     ///
-    /// Refuses [`TokenProblem::Unknown`], having changed nothing.
+    /// Refuses [`TokenProblem::Unknown`], then [`TokenProblem::Occupied`] naming the token in
+    /// the way when the moved square would cover a cell another token covers, having changed
+    /// nothing.
     pub fn move_by(
         &mut self,
         name: &str,
@@ -261,12 +275,26 @@ impl Tokens {
         now: (i64, i64),
         extent: (u32, u32),
     ) -> Result<bool, TokenProblem> {
-        let Some((x, y)) = self.dragged(name, grabbed, now, extent) else {
+        let Some(to) = self.dragged(name, grabbed, now, extent) else {
             return Err(TokenProblem::Unknown { name: name.to_owned() });
         };
-        let token = self.find_mut(name).expect("dragged found the token");
-        let moved = (token.x, token.y) != (x, y);
-        (token.x, token.y) = (x, y);
+        self.move_to(name, to)
+    }
+
+    /// Put the anchor of the token called `name` at `to`, a cell it stood on before, and
+    /// say whether it changed.
+    ///
+    /// `to` is not clamped: the caller hands back an anchor this map once held. Refuses
+    /// [`TokenProblem::Unknown`], then [`TokenProblem::Occupied`] when another token covers a
+    /// cell of the square at `to`, having changed nothing.
+    pub fn move_to(&mut self, name: &str, to: (u32, u32)) -> Result<bool, TokenProblem> {
+        let Some(token) = self.get(name) else {
+            return Err(TokenProblem::Unknown { name: name.to_owned() });
+        };
+        self.refuse_occupied(Some(name), to.0, to.1, token.size)?;
+        let token = self.find_mut(name).expect("the token was just found");
+        let moved = (token.x, token.y) != to;
+        (token.x, token.y) = to;
         Ok(moved)
     }
 
@@ -324,9 +352,34 @@ impl Tokens {
         }
     }
 
-    /// Take every token off the map.
-    pub fn clear(&mut self) {
-        self.tokens.clear();
+    /// Take every token off the map and hand them back, in the order they were placed.
+    pub fn clear(&mut self) -> Vec<Token> {
+        std::mem::take(&mut self.tokens)
+    }
+
+    /// Where the token called `name` sits in the order tokens were placed.
+    pub fn position(&self, name: &str) -> Option<usize> {
+        self.tokens.iter().position(|token| token.name == name)
+    }
+
+    /// Put `token` back exactly as it was — name, anchor, size and roll — at `at` in the
+    /// order tokens were placed, or last when `at` is past the end.
+    ///
+    /// `token` is one this map held, so it is not held to the naming or the size rules
+    /// again. Refuses [`TokenProblem::Taken`] when a token already has its name,
+    /// [`TokenProblem::Occupied`] when another covers a cell of its square, and
+    /// [`TokenProblem::Full`] at [`MAX_TOKENS`], having changed nothing.
+    pub fn insert(&mut self, token: Token, at: usize) -> Result<(), TokenProblem> {
+        if self.get(&token.name).is_some() {
+            return Err(TokenProblem::Taken { name: token.name });
+        }
+        self.refuse_occupied(None, token.x, token.y, token.size)?;
+        if self.tokens.len() >= MAX_TOKENS {
+            return Err(TokenProblem::Full);
+        }
+        let at = at.min(self.tokens.len());
+        self.tokens.insert(at, token);
+        Ok(())
     }
 
     /// The token called `name`.
@@ -352,6 +405,19 @@ impl Tokens {
     /// The token drawn topmost over the cell `(x, y)`: the last placed that covers it.
     pub fn topmost_at(&self, x: i64, y: i64) -> Option<&Token> {
         self.tokens.iter().rev().find(|token| token.covers(x, y))
+    }
+
+    fn refuse_occupied(&self, moving: Option<&str>, x: u32, y: u32, size: u8) -> Result<(), TokenProblem> {
+        match self
+            .tokens
+            .iter()
+            .find(|token| Some(token.name.as_str()) != moving && token.overlaps(x, y, size))
+        {
+            Some(token) => Err(TokenProblem::Occupied {
+                name: token.name.clone(),
+            }),
+            None => Ok(()),
+        }
     }
 
     fn find_mut(&mut self, name: &str) -> Option<&mut Token> {

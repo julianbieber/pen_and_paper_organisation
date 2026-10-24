@@ -318,3 +318,100 @@ fn a_combat_document_is_clean_only_once_its_save_lands() {
     assert!(!document.is_dirty());
     assert_eq!(document.undo_depth(), 1);
 }
+
+fn token_names(document: &Document<CombatMap>) -> Vec<String> {
+    document.content().tokens().iter().map(|token| token.name().to_owned()).collect()
+}
+
+fn anchor_of(document: &Document<CombatMap>, name: &str) -> (u32, u32) {
+    let token = document.content().tokens().get(name).expect("the token is on the map");
+    (token.x(), token.y())
+}
+
+// The GM's ask: token use goes on the history. Each of place, move, rename, delete and
+// clear is one press of undo, and undoing all of them in turn walks back to an empty
+// board, keeping every roll typed in between.
+#[test]
+fn every_token_change_is_one_step_of_undo_and_redo() {
+    let mut document = Document::new(map());
+    for x in [1, 5] {
+        let place = document.content().place_token_edit("orc", 2, (x, 1)).unwrap();
+        document.apply(place).unwrap();
+    }
+    document.set_initiative("orc1", Some(14)).unwrap();
+    let moved = document.content().move_token_edit("orc1", (1, 1), (1, 6)).unwrap().unwrap();
+    document.apply(moved).unwrap();
+    let renamed = document.content().rename_token_edit("orc2", "Grukk").unwrap().unwrap();
+    document.apply(renamed).unwrap();
+    document.set_initiative("Grukk", Some(3)).unwrap();
+    let removed = document.content().remove_token_edit("orc1").unwrap();
+    document.apply(removed).unwrap();
+    document.apply(document.content().clear_tokens_edit().unwrap()).unwrap();
+    assert!(document.content().tokens().is_empty());
+    assert_eq!(document.undo_depth(), 6);
+
+    document.undo().unwrap();
+    assert_eq!(token_names(&document), ["Grukk"]);
+    assert_eq!(document.content().tokens().get("Grukk").unwrap().initiative(), Some(3));
+    document.undo().unwrap();
+    assert_eq!(token_names(&document), ["orc1", "Grukk"]);
+    assert_eq!(document.content().tokens().get("orc1").unwrap().initiative(), Some(14));
+    document.undo().unwrap();
+    assert_eq!(token_names(&document), ["orc1", "orc2"]);
+    document.undo().unwrap();
+    assert_eq!(anchor_of(&document, "orc1"), (1, 1));
+    document.undo().unwrap();
+    document.undo().unwrap();
+    assert!(document.content().tokens().is_empty());
+
+    while document.redo().unwrap() {}
+    assert!(document.content().tokens().is_empty());
+    document.undo().unwrap();
+    assert_eq!(token_names(&document), ["Grukk"]);
+}
+
+// Tokens are never saved, so a token change must not make the close guard ask: placing,
+// undoing and redoing one after a save leaves the map clean, while a stroke still dirties.
+#[test]
+fn a_token_change_never_marks_the_map_unsaved() {
+    let mut document = Document::new(map());
+    document.apply(stroke(document.content(), Brush::Freehand, (0, 0), (0, 0), CombatTile::Tree)).unwrap();
+    let root = tempfile::tempdir().unwrap();
+    document.save(&root.path().join("bridge.ron")).unwrap();
+
+    let place = document.content().place_token_edit("orc", 1, (3, 3)).unwrap();
+    document.apply(place).unwrap();
+    document.undo().unwrap();
+    document.redo().unwrap();
+    document.set_initiative("orc1", Some(5)).unwrap();
+    assert!(!document.is_dirty());
+
+    document.apply(stroke(document.content(), Brush::Freehand, (1, 1), (1, 1), CombatTile::Tree)).unwrap();
+    assert!(document.is_dirty());
+}
+
+// An entry on the history always undoes something, as an empty stroke is refused: a drag
+// that lands where it started, a rename to the same name and a clear of an empty board
+// push nothing.
+#[test]
+fn a_token_change_that_changes_nothing_makes_no_edit() {
+    let mut document = Document::new(map());
+    document.apply(document.content().place_token_edit("orc", 1, (3, 3)).unwrap()).unwrap();
+    let content = document.content();
+    assert_eq!(content.move_token_edit("orc1", (3, 3), (3, 3)), Ok(None));
+    assert_eq!(content.rename_token_edit("orc1", " orc1 "), Ok(None));
+    assert_eq!(CombatMap::new("Empty", 4, 4).unwrap().clear_tokens_edit(), None);
+}
+
+// A stored map is its grid alone, so tokens on it do not survive a save and a load.
+#[test]
+fn a_saved_map_carries_no_token() {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("bridge.ron");
+    let mut document = Document::new(map());
+    document.apply(document.content().place_token_edit("orc", 1, (3, 3)).unwrap()).unwrap();
+    document.save(&path).unwrap();
+    let loaded = CombatMap::load(&path, "bridge").unwrap();
+    assert!(loaded.tokens().is_empty());
+    assert_eq!(loaded.grid(), document.content().grid());
+}

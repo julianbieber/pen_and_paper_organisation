@@ -126,15 +126,76 @@ fn a_token_pressed_past_an_edge_is_clamped_onto_the_map() {
     assert_eq!((token.x(), token.y()), (8, 8));
 }
 
-// Tokens may overlap, and a click picks the one drawn on top.
+// A click on a token's square picks it, and a click beside it picks nothing.
 #[test]
-fn the_later_of_two_overlapping_tokens_is_topmost() {
+fn a_click_picks_the_token_whose_square_covers_it() {
     let mut tokens = Tokens::default();
     place(&mut tokens, "orc", (2, 2));
-    place(&mut tokens, "orc", (3, 3));
-    assert_eq!(tokens.topmost_at(3, 3).unwrap().name(), "orc2");
-    assert_eq!(tokens.topmost_at(2, 2).unwrap().name(), "orc1");
-    assert!(tokens.topmost_at(6, 6).is_none());
+    place(&mut tokens, "orc", (6, 2));
+    assert_eq!(tokens.topmost_at(3, 3).unwrap().name(), "orc1");
+    assert_eq!(tokens.topmost_at(6, 3).unwrap().name(), "orc2");
+    assert!(tokens.topmost_at(4, 4).is_none());
+}
+
+// The mistake the GM made at the table: a second click on a token placed another of the
+// same kind under it. Placing onto any covered cell is refused and names what is there.
+#[test]
+fn a_token_is_never_placed_over_another() {
+    let mut tokens = Tokens::default();
+    place(&mut tokens, "orc", (2, 2));
+    assert_eq!(
+        tokens.place("orc", 2, (3, 3), EXTENT).unwrap_err(),
+        TokenProblem::Occupied { name: "orc1".to_owned() }
+    );
+    assert_eq!(tokens.len(), 1);
+    place(&mut tokens, "orc", (4, 2));
+}
+
+// The clamp onto the map happens before the check, so a press past the edge cannot slide a
+// token onto the one already sitting in the corner.
+#[test]
+fn a_press_clamped_onto_a_token_at_the_edge_is_refused() {
+    let mut tokens = Tokens::default();
+    place(&mut tokens, "orc", (10, 10));
+    assert_eq!(
+        tokens.place("orc", 2, (40, 40), EXTENT).unwrap_err(),
+        TokenProblem::Occupied { name: "orc1".to_owned() }
+    );
+}
+
+// A drag onto another token leaves the dragged one where it was, but a token moved by less
+// than its own size is not refused against its own old square.
+#[test]
+fn a_token_cannot_be_dragged_onto_another_but_may_overlap_its_own_square() {
+    let mut tokens = Tokens::default();
+    place(&mut tokens, "orc", (1, 1));
+    place(&mut tokens, "orc", (5, 1));
+    assert_eq!(
+        tokens.move_by("orc1", (1, 1), (4, 1), EXTENT),
+        Err(TokenProblem::Occupied { name: "orc2".to_owned() })
+    );
+    let orc1 = tokens.get("orc1").unwrap();
+    assert_eq!((orc1.x(), orc1.y()), (1, 1));
+    assert_eq!(tokens.move_by("orc1", (1, 1), (2, 2), EXTENT), Ok(true));
+}
+
+// What undo puts back is the token as it was, in the place it held in the order.
+#[test]
+fn an_inserted_token_returns_to_its_place_in_the_order() {
+    let mut tokens = Tokens::default();
+    for x in [1, 4, 7] {
+        place(&mut tokens, "orc", (x, 1));
+    }
+    tokens.set_initiative("orc2", Some(9)).unwrap();
+    let at = tokens.position("orc2").unwrap();
+    let removed = tokens.remove("orc2").unwrap();
+    tokens.insert(removed.clone(), at).unwrap();
+    assert_eq!(names(&tokens), ["orc1", "orc2", "orc3"]);
+    assert_eq!(tokens.get("orc2").unwrap().initiative(), Some(9));
+    assert_eq!(
+        tokens.insert(removed, 0),
+        Err(TokenProblem::Taken { name: "orc2".to_owned() })
+    );
 }
 
 // The acceptance's drag: a token lands on whole cells and never leaves the map.
@@ -183,11 +244,11 @@ fn removing_an_unknown_token_is_refused() {
 #[test]
 fn a_full_board_refuses_another_token() {
     let mut tokens = Tokens::default();
-    for _ in 0..MAX_TOKENS {
-        tokens.place("orc", 1, (0, 0), EXTENT).unwrap();
+    for cell in 0..MAX_TOKENS as i64 {
+        tokens.place("orc", 1, (cell % 12, cell / 12), EXTENT).unwrap();
     }
-    assert_eq!(tokens.place("orc", 1, (0, 0), EXTENT).unwrap_err(), TokenProblem::Full);
-    tokens.clear();
+    assert_eq!(tokens.place("orc", 1, (11, 11), EXTENT).unwrap_err(), TokenProblem::Full);
+    assert_eq!(tokens.clear().len(), MAX_TOKENS);
     assert!(tokens.is_empty());
 }
 
